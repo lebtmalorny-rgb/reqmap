@@ -280,7 +280,6 @@
     {
       "component_ids": [
         "kolla_ansible",
-        "host_os_chrony",
         "host_os_nftables",
         "host_os_networking",
         "host_os_package_management",
@@ -291,8 +290,21 @@
       "local_path": "sources/SRC-KOLLA-BOOTSTRAP-2025.1.md",
       "provenance": "official",
       "retrieved_at": "2026-08-20",
-      "sha256": "7a46d02ca999abb8e9528f4e1a32a2ddbe6f17f785f63b1f1711257f25ef17dc",
+      "sha256": "b4738957db3365a48146b752c3de0ac986783c709a245267d9c2c59d4653ff30",
       "source_url": "https://docs.openstack.org/kolla-ansible/2025.1/reference/deployment-and-bootstrapping/bootstrap-servers.html",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "kolla_ansible",
+        "host_os_chrony"
+      ],
+      "id": "SRC-KOLLA-CHRONY-REMOVAL-2025.1",
+      "local_path": "sources/SRC-KOLLA-CHRONY-REMOVAL-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "d8c089c52ce57984fa198f73761a232d856784f8a677e61770aa42fd984e6dc1",
+      "source_url": "https://opendev.org/openstack/kolla-ansible/raw/branch/stable/2025.1/releasenotes/notes/remove-chrony-role-90f164df8090f916.yaml",
       "version": "2025.1"
     },
     {

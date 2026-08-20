@@ -76,10 +76,25 @@ def test_chrony_official_evidence_is_a_negative_specific_support_boundary() -> N
 
     assert official
     assert all(evidence.polarity is EvidencePolarity.NEGATIVE for evidence in official)
+    assert {evidence.source_id for evidence in official} == {"SRC-KOLLA-CHRONY-REMOVAL-2025.1"}
+    assert all(
+        "Support for deployment of chrony has been removed." in evidence.claim_ru
+        for evidence in official
+    )
     assert policy and all(evidence.polarity is EvidencePolarity.POSITIVE for evidence in policy)
     capability = kb.capabilities["CAP-HOST-CHRONY-AUTOMATION"]
     assert capability.name_ru == "Граница Chrony-specific автоматизации хоста"
     assert capability.terms == ("chrony", "chrony-specific role", "граница автоматизации chrony")
+    removal = kb.sources["SRC-KOLLA-CHRONY-REMOVAL-2025.1"]
+    assert removal.source_url == (
+        "https://opendev.org/openstack/kolla-ansible/raw/branch/stable/2025.1/"
+        "releasenotes/notes/remove-chrony-role-90f164df8090f916.yaml"
+    )
+    assert {"host_os_chrony", "kolla_ansible"} <= set(removal.component_ids)
+    assert "host_os_chrony" not in kb.sources["SRC-KOLLA-BOOTSTRAP-2025.1"].component_ids
+    excerpt = (SNAPSHOT / removal.local_path).read_text(encoding="utf-8")
+    assert "Support for deployment of chrony has been removed." in excerpt
+    assert "generic NTP" not in excerpt
 
 
 def test_networking_capability_is_limited_to_etc_hosts_and_sysctl_has_own_source() -> None:
