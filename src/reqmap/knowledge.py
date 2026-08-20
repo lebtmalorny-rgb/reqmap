@@ -89,6 +89,7 @@ def load_knowledge(path: Path, verify_snapshot_hash: bool = True) -> KnowledgeBa
         _raise("KNOWLEDGE_PATH", "KB", f"Каталог базы знаний не найден: {root}")
 
     metadata = _json_object(root / "metadata.json")
+    _reject_unknown_fields(metadata, {"openstack_release", "snapshot_sha256"}, "metadata")
     release = _required_string(metadata, "openstack_release", "metadata")
     snapshot_sha256 = _required_sha256(metadata, "snapshot_sha256", "metadata")
     components = _load_components(root / "components.json")
@@ -150,10 +151,12 @@ def snapshot_digest(root: Path, names: Iterable[str] = _SNAPSHOT_NAMES) -> str:
 
 def _load_components(path: Path) -> dict[str, ComponentRecord]:
     raw = _json_object(path)
+    _reject_unknown_fields(raw, {"components"}, "components.json")
     records = _required_list(raw, "components", "components.json")
     result: dict[str, ComponentRecord] = {}
     for index, item in enumerate(records):
         record = _require_object(item, f"components[{index}]")
+        _reject_unknown_fields(record, {"id", "display_name", "kind", "release"}, f"components[{index}]")
         component_id = _required_string(record, "id", f"components[{index}]")
         _reject_duplicate(result, component_id, "component")
         result[component_id] = ComponentRecord(
@@ -169,6 +172,7 @@ def _load_capabilities(path: Path) -> dict[str, CapabilityRecord]:
     result: dict[str, CapabilityRecord] = {}
     for index, item in enumerate(_json_lines(path)):
         record = _require_object(item, f"capabilities line {index}")
+        _reject_unknown_fields(record, {"id", "component_id", "name_ru", "terms"}, f"capabilities line {index}")
         capability_id = _required_string(record, "id", f"capabilities line {index}")
         _reject_duplicate(result, capability_id, "capability")
         result[capability_id] = CapabilityRecord(
@@ -182,10 +186,25 @@ def _load_capabilities(path: Path) -> dict[str, CapabilityRecord]:
 
 def _load_sources(path: Path) -> dict[str, SourceRecord]:
     raw = _json_object(path)
+    _reject_unknown_fields(raw, {"sources"}, "source-manifest.json")
     records = _required_list(raw, "sources", "source-manifest.json")
     result: dict[str, SourceRecord] = {}
     for index, item in enumerate(records):
         record = _require_object(item, f"sources[{index}]")
+        _reject_unknown_fields(
+            record,
+            {
+                "id",
+                "component_ids",
+                "source_url",
+                "retrieved_at",
+                "version",
+                "sha256",
+                "local_path",
+                "provenance",
+            },
+            f"sources[{index}]",
+        )
         source_id = _required_string(record, "id", f"sources[{index}]")
         _reject_duplicate(result, source_id, "source")
         provenance = _required_string(record, "provenance", source_id)
@@ -194,10 +213,8 @@ def _load_sources(path: Path) -> dict[str, SourceRecord]:
         source_url = record.get("source_url")
         if provenance == "official" and (not isinstance(source_url, str) or not source_url):
             _raise("SOURCE_URL", source_id, "Для official источника требуется source_url")
-        if provenance == "project_policy" and source_url is not None and (
-            not isinstance(source_url, str) or not source_url
-        ):
-            _raise("SOURCE_URL", source_id, "source_url project_policy должен быть null или непустой строкой")
+        if provenance == "project_policy" and source_url is not None:
+            _raise("SOURCE_URL", source_id, "source_url project_policy должен быть строго null")
         result[source_id] = SourceRecord(
             source_id=source_id,
             component_ids=_string_tuple(record.get("component_ids"), f"{source_id}.component_ids"),
@@ -215,6 +232,21 @@ def _load_evidence(path: Path, sources: Mapping[str, SourceRecord]) -> dict[str,
     result: dict[str, Evidence] = {}
     for index, item in enumerate(_json_lines(path)):
         record = _require_object(item, f"evidence line {index}")
+        _reject_unknown_fields(
+            record,
+            {
+                "id",
+                "component_id",
+                "capability_id",
+                "polarity",
+                "strength",
+                "claim_ru",
+                "source_id",
+                "locator",
+                "version_constraint",
+            },
+            f"evidence line {index}",
+        )
         evidence_id = _required_string(record, "id", f"evidence line {index}")
         _reject_duplicate(result, evidence_id, "evidence")
         source_id = _required_string(record, "source_id", evidence_id)
@@ -232,7 +264,13 @@ def _load_evidence(path: Path, sources: Mapping[str, SourceRecord]) -> dict[str,
             capability_id=_required_string(record, "capability_id", evidence_id),
             polarity=polarity,
             strength=strength,
-            claim_ru=_required_string(record, "claim_ru", evidence_id, empty_message="пустое утверждение evidence"),
+            claim_ru=_required_string(
+                record,
+                "claim_ru",
+                evidence_id,
+                empty_message="пустое утверждение evidence",
+                reject_whitespace=True,
+            ),
             source_id=source_id,
             locator=_required_string(record, "locator", evidence_id),
             version_constraint=_required_string(record, "version_constraint", evidence_id),
@@ -305,6 +343,14 @@ def _validate_references(kb: KnowledgeBase) -> list[KnowledgeIssue]:
             issues.append(KnowledgeIssue("EVIDENCE_COMPONENT_CAPABILITY_MISMATCH", evidence.evidence_id, "Evidence ссылается на capability другого компонента"))
         if evidence.source_id not in kb.sources:
             issues.append(KnowledgeIssue("EVIDENCE_SOURCE_UNKNOWN", evidence.evidence_id, f"Evidence ссылается на неизвестный источник: {evidence.source_id}"))
+        elif evidence.component_id not in kb.sources[evidence.source_id].component_ids:
+            issues.append(
+                KnowledgeIssue(
+                    "EVIDENCE_SOURCE_COMPONENT_MISMATCH",
+                    evidence.evidence_id,
+                    "Компонент evidence отсутствует в component_ids его источника",
+                )
+            )
         if not evidence.claim_ru:
             issues.append(KnowledgeIssue("EVIDENCE_CLAIM_EMPTY", evidence.evidence_id, "Evidence содержит пустое утверждение"))
     return issues
@@ -314,10 +360,31 @@ def _validate_source_hashes(kb: KnowledgeBase) -> list[KnowledgeIssue]:
     issues: list[KnowledgeIssue] = []
     for source in kb.sources.values():
         path = _safe_source_path(kb.root, source.local_path)
-        if not path.is_file():
+        try:
+            is_file = path.is_file()
+        except OSError:
+            issues.append(
+                KnowledgeIssue(
+                    "SOURCE_FILE_READ",
+                    source.source_id,
+                    f"Не удалось проверить локальный источник: {source.local_path}",
+                )
+            )
+            continue
+        if not is_file:
             issues.append(KnowledgeIssue("SOURCE_FILE_MISSING", source.source_id, f"Локальный источник отсутствует: {source.local_path}"))
             continue
-        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            issues.append(
+                KnowledgeIssue(
+                    "SOURCE_FILE_READ",
+                    source.source_id,
+                    f"Не удалось прочитать локальный источник: {source.local_path}",
+                )
+            )
+            continue
         if actual != source.sha256:
             issues.append(KnowledgeIssue("SOURCE_SHA256_MISMATCH", source.source_id, f"SHA-256 локального источника не совпадает: {source.local_path}"))
     return issues
@@ -325,8 +392,8 @@ def _validate_source_hashes(kb: KnowledgeBase) -> list[KnowledgeIssue]:
 
 def _json_object(path: Path) -> dict[str, Any]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = _strict_json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         _raise("KNOWLEDGE_JSON", path.name, f"Не удалось прочитать JSON базы знаний: {path.name}", exc)
     return _require_object(value, path.name)
 
@@ -341,8 +408,8 @@ def _json_lines(path: Path) -> tuple[Any, ...]:
         if not line:
             _raise("KNOWLEDGE_JSONL", path.name, f"Пустая строка JSONL не допускается: {path.name}:{number}")
         try:
-            result.append(json.loads(line))
-        except json.JSONDecodeError as exc:
+            result.append(_strict_json_loads(line))
+        except (ValueError, json.JSONDecodeError) as exc:
             _raise("KNOWLEDGE_JSONL", path.name, f"Некорректная строка JSONL: {path.name}:{number}", exc)
     return tuple(result)
 
@@ -360,11 +427,22 @@ def _require_object(value: object, location: str) -> dict[str, Any]:
     return value
 
 
+def _reject_unknown_fields(value: Mapping[str, Any], allowed: set[str], location: str) -> None:
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        _raise("KNOWLEDGE_SCHEMA", location, f"Неизвестные поля {location}: {', '.join(unknown)}")
+
+
 def _required_string(
-    value: Mapping[str, Any], key: str, location: str, *, empty_message: str | None = None
+    value: Mapping[str, Any],
+    key: str,
+    location: str,
+    *,
+    empty_message: str | None = None,
+    reject_whitespace: bool = False,
 ) -> str:
     result = value.get(key)
-    if not isinstance(result, str) or not result:
+    if not isinstance(result, str) or not result or (reject_whitespace and not result.strip()):
         _raise("KNOWLEDGE_SCHEMA", location, empty_message or f"{location}.{key} должен быть непустой строкой")
     return result
 
@@ -384,19 +462,45 @@ def _required_sha256(value: Mapping[str, Any], key: str, location: str) -> str:
 
 def _required_relative_path(value: Mapping[str, Any], key: str, location: str) -> str:
     result = _required_string(value, key, location)
-    candidate = Path(result)
+    if "\0" in result:
+        _raise("SOURCE_PATH", location, "local_path источника не должен содержать NUL")
+    try:
+        candidate = Path(result)
+    except (OSError, ValueError) as exc:
+        _raise("SOURCE_PATH", location, "Некорректный local_path источника", exc)
     if candidate.is_absolute() or ".." in candidate.parts:
         _raise("SOURCE_PATH", location, "local_path источника должен быть относительным путём внутри snapshot")
     return result
 
 
 def _safe_source_path(root: Path, local_path: str) -> Path:
-    path = (root / local_path).resolve()
     try:
+        path = (root / local_path).resolve()
         path.relative_to(root)
-    except ValueError:
-        _raise("SOURCE_PATH", local_path, "local_path источника выходит за пределы snapshot")
+    except (OSError, ValueError) as exc:
+        _raise("SOURCE_PATH", local_path, "local_path источника выходит за пределы snapshot", exc)
     return path
+
+
+def _strict_json_loads(payload: str) -> object:
+    return json.loads(
+        payload,
+        object_pairs_hook=_unique_json_object,
+        parse_constant=_reject_json_constant,
+    )
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Дублирующийся ключ JSON: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"Недопустимая JSON-константа: {value}")
 
 
 def _reject_duplicate(records: Mapping[str, object], identifier: str, kind: str) -> None:

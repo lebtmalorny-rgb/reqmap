@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from reqmap import knowledge as knowledge_module
 from reqmap.knowledge import KnowledgeError, load_knowledge, validate_knowledge
 
 
@@ -92,6 +93,14 @@ def test_load_knowledge_rejects_empty_evidence_claim(kb_path: Path) -> None:
         load_knowledge(kb_path, verify_snapshot_hash=False)
 
 
+def test_load_knowledge_rejects_whitespace_only_evidence_claim(kb_path: Path) -> None:
+    """Whitespace is not an auditable evidence claim and must not be normalized into one."""
+    _replace_evidence_field(kb_path / "evidence.jsonl", "claim_ru", " \t\n")
+
+    with pytest.raises(KnowledgeError, match="пустое утверждение"):
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+
 def test_load_knowledge_rejects_missing_local_source(kb_path: Path) -> None:
     """A manifest without local bytes breaks offline evidence auditability."""
     _replace_manifest_source_field(kb_path / "source-manifest.json", "local_path", "sources/missing.md")
@@ -106,6 +115,35 @@ def test_load_knowledge_rejects_mismatched_local_source_hash(kb_path: Path) -> N
 
     with pytest.raises(KnowledgeError, match="SHA-256 локального источника"):
         load_knowledge(kb_path, verify_snapshot_hash=False)
+
+
+def test_load_knowledge_wraps_invalid_source_path_as_domain_error(kb_path: Path) -> None:
+    """An embedded NUL must not leak a raw Path resolution exception to callers."""
+    _replace_manifest_source_field(kb_path / "source-manifest.json", "local_path", "sources/\x00bad.md")
+
+    with pytest.raises(KnowledgeError) as error:
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+    assert error.value.code == "SOURCE_PATH"
+
+
+def test_load_knowledge_wraps_source_read_oserror_as_domain_error(
+    kb_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A filesystem read failure must be a diagnostics result, never a leaked OSError."""
+    original_read_bytes = Path.read_bytes
+
+    def fail_source_read(path: Path) -> bytes:
+        if path.name == "nova-api.md":
+            raise OSError("synthetic source read failure")
+        return original_read_bytes(path)
+
+    monkeypatch.setattr(knowledge_module.Path, "read_bytes", fail_source_read)
+
+    with pytest.raises(KnowledgeError) as error:
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+    assert error.value.code == "SOURCE_FILE_READ"
 
 
 def test_load_knowledge_rejects_snapshot_hash_at_runtime(kb_path: Path) -> None:
@@ -132,3 +170,75 @@ def test_official_source_requires_url_and_policy_allows_null_url(kb_path: Path) 
 
     _replace_manifest_source_field(kb_path / "source-manifest.json", "provenance", "project_policy")
     assert load_knowledge(kb_path, verify_snapshot_hash=False).sources["SRC-NOVA-API"].source_url is None
+
+
+def test_project_policy_rejects_official_url(kb_path: Path) -> None:
+    """A policy source with an upstream URL has ambiguous provenance and must fail closed."""
+    _replace_manifest_source_field(kb_path / "source-manifest.json", "provenance", "project_policy")
+
+    with pytest.raises(KnowledgeError) as error:
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+    assert error.value.code == "SOURCE_URL"
+
+
+def test_evidence_component_must_belong_to_its_source(kb_path: Path) -> None:
+    """Evidence cannot use a source excerpt that was recorded for another component."""
+    components_path = kb_path / "components.json"
+    components = json.loads(components_path.read_text(encoding="utf-8"))
+    components["components"].append(
+        {
+            "id": "glance",
+            "display_name": "Glance",
+            "kind": "openstack_service",
+            "release": "2025.1",
+        }
+    )
+    components_path.write_text(
+        json.dumps(components, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    _replace_manifest_source_field(kb_path / "source-manifest.json", "component_ids", ["glance"])
+
+    with pytest.raises(KnowledgeError) as error:
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+    assert error.value.code == "EVIDENCE_SOURCE_COMPONENT_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    ("path_name", "payload", "message"),
+    [
+        ("metadata.json", '{"openstack_release":"2025.1","snapshot_sha256":"' + "0" * 64 + '","extra":true}', "Неизвестные поля"),
+        ("components.json", '{"components":[],"extra":true}', "Неизвестные поля"),
+        ("capabilities.jsonl", '{"id":"CAP-NOVA-SERVER-API","component_id":"nova","name_ru":"API","terms":["api"],"extra":true}\n', "Неизвестные поля"),
+        ("source-manifest.json", '{"sources":[],"extra":true}', "Неизвестные поля"),
+        ("evidence.jsonl", '{"id":"E-NOVA-API-001","component_id":"nova","capability_id":"CAP-NOVA-SERVER-API","polarity":"positive","strength":"direct","claim_ru":"claim","source_id":"SRC-NOVA-API","locator":"section","version_constraint":"2025.1","extra":true}\n', "Неизвестные поля"),
+    ],
+)
+def test_load_knowledge_rejects_unknown_schema_fields(
+    kb_path: Path, path_name: str, payload: str, message: str
+) -> None:
+    """Typos and unreviewed schema extensions must not silently alter a runtime snapshot."""
+    (kb_path / path_name).write_text(payload, encoding="utf-8")
+
+    with pytest.raises(KnowledgeError, match=message):
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+
+@pytest.mark.parametrize(
+    ("path_name", "payload", "code"),
+    [
+        ("metadata.json", '{"openstack_release":"2025.1","openstack_release":"2025.1","snapshot_sha256":"' + "0" * 64 + '"}', "KNOWLEDGE_JSON"),
+        ("evidence.jsonl", '{"id":"E-NOVA-API-001","id":"E-NOVA-API-001"}\n', "KNOWLEDGE_JSONL"),
+    ],
+)
+def test_load_knowledge_rejects_duplicate_json_object_keys(
+    kb_path: Path, path_name: str, payload: str, code: str
+) -> None:
+    """JSON duplicate keys would otherwise overwrite auditable data before validation."""
+    (kb_path / path_name).write_text(payload, encoding="utf-8")
+
+    with pytest.raises(KnowledgeError) as error:
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+    assert error.value.code == code
