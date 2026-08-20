@@ -15,3 +15,7 @@ class ReqmapError(Exception):
 
 class ConfigError(ReqmapError):
     """Ошибка чтения или проверки конфигурации."""
+
+
+class InputProfileError(ReqmapError):
+    """Ошибка безопасного определения или применения входного XLSX-профиля."""
