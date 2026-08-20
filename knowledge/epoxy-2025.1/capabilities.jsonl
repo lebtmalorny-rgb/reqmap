@@ -21,9 +21,9 @@
 {"id":"CAP-TROVE-DATABASES","component_id":"trove","name_ru":"Предоставление и управление экземплярами баз данных","terms":["database as a service","database instance","база данных","trove"]}
 {"id":"CAP-WATCHER-OPTIMIZATION","component_id":"watcher","name_ru":"Контур оптимизации ресурсов и планы действий","terms":["optimization","action plan","audit","оптимизация"]}
 {"id":"CAP-KOLLA-RECONFIGURE","component_id":"kolla_ansible","name_ru":"Design-time reconfigure конфигурации OpenStack","terms":["kolla-ansible reconfigure","globals.yml","config override","designtime"]}
-{"id":"CAP-HOST-CHRONY-AUTOMATION","component_id":"host_os_chrony","name_ru":"Автоматизация настройки службы синхронизации времени хоста","terms":["chrony","ntp","time synchronization","синхронизация времени"]}
+{"id":"CAP-HOST-CHRONY-AUTOMATION","component_id":"host_os_chrony","name_ru":"Граница Chrony-specific автоматизации хоста","terms":["chrony","chrony-specific role","граница автоматизации chrony"]}
 {"id":"CAP-HOST-NFTABLES-AUTOMATION","component_id":"host_os_nftables","name_ru":"Автоматизация firewall хоста с проверкой nftables-границы","terms":["nftables","firewall","межсетевой экран","iptables-nft"]}
-{"id":"CAP-HOST-NETWORKING-AUTOMATION","component_id":"host_os_networking","name_ru":"Автоматизация сетевой конфигурации хоста","terms":["host networking","/etc/hosts","network interface","сеть хоста"]}
+{"id":"CAP-HOST-NETWORKING-AUTOMATION","component_id":"host_os_networking","name_ru":"Автоматизация записей /etc/hosts","terms":["/etc/hosts","hostname resolution","host entries","имена хостов"]}
 {"id":"CAP-HOST-SYSCTL-AUTOMATION","component_id":"host_os_kernel_sysctl","name_ru":"Автоматизация kernel sysctl хоста","terms":["sysctl","kernel parameter","параметр ядра","ansible role"]}
 {"id":"CAP-HOST-PACKAGES-AUTOMATION","component_id":"host_os_package_management","name_ru":"Автоматизация установки и удаления пакетов хоста","terms":["package installation","apt","dnf","пакеты ОС"]}
 {"id":"CAP-HOST-STORAGE-AUTOMATION","component_id":"host_os_storage","name_ru":"Автоматизация параметров storage хоста для container engine","terms":["storage driver","data-root","docker storage","хранилище хоста"]}

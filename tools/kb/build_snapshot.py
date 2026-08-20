@@ -23,12 +23,29 @@ SNAPSHOT_FILES = (
 
 def _read_json_object(path: Path) -> dict[str, object]:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         raise SystemExit(f"Не удалось прочитать JSON: {path}") from exc
     if not isinstance(value, dict):
         raise SystemExit(f"Ожидался JSON-объект: {path}")
     return value
+
+
+def _unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Дублирующийся ключ JSON: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"Недопустимая JSON-константа: {value}")
 
 
 def _atomic_json_write(path: Path, value: object) -> None:

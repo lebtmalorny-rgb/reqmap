@@ -283,7 +283,6 @@
         "host_os_chrony",
         "host_os_nftables",
         "host_os_networking",
-        "host_os_kernel_sysctl",
         "host_os_package_management",
         "host_os_storage",
         "host_os_identity_access"
@@ -292,7 +291,7 @@
       "local_path": "sources/SRC-KOLLA-BOOTSTRAP-2025.1.md",
       "provenance": "official",
       "retrieved_at": "2026-08-20",
-      "sha256": "f4c9dd26600f091d1da6626893c6127a5daf11ba4a6f64fd299bd918f26c3a4c",
+      "sha256": "7a46d02ca999abb8e9528f4e1a32a2ddbe6f17f785f63b1f1711257f25ef17dc",
       "source_url": "https://docs.openstack.org/kolla-ansible/2025.1/reference/deployment-and-bootstrapping/bootstrap-servers.html",
       "version": "2025.1"
     },
@@ -324,7 +323,7 @@
       "local_path": "sources/SRC-POLICY-HOST-OS-KOLLA.md",
       "provenance": "project_policy",
       "retrieved_at": "2026-08-20",
-      "sha256": "35ae892e881c8f7ababe3d3031e9d8f67eda62a7f9a3f6d0c86d7376631046a3",
+      "sha256": "11e566015863a84640b58ef9d16ab4e85eda777c1055bc611e6a9164b0bcfc49",
       "source_url": null,
       "version": "2025.1"
     }
