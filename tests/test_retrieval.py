@@ -10,8 +10,8 @@ from types import MappingProxyType
 import pytest
 
 from reqmap.knowledge import load_knowledge
-from reqmap.models import SourceHint, to_dict
-from reqmap.retrieval import candidate_score, retrieve
+from reqmap.models import EvidenceStrength, SourceHint, to_dict
+from reqmap.retrieval import _contains_phrase, candidate_score, retrieve
 
 
 SNAPSHOT = Path("knowledge/epoxy-2025.1")
@@ -123,3 +123,58 @@ def test_host_policy_is_not_emitted_without_official_kolla_evidence(kb) -> None:
 
     kolla = next(item for item in candidates if item.component_id == "kolla_ansible")
     assert kolla.evidence_ids == ()
+
+
+@pytest.mark.parametrize(
+    ("text", "phrase", "expected"),
+    [
+        ("Nova/API", "nova api", True),
+        ("supernova", "nova", False),
+        ("cloudkittycat", "cloudkitty", False),
+        ("barbicanary", "barbican", False),
+        ("horizonless", "horizon", False),
+    ],
+)
+def test_phrase_matching_uses_complete_token_boundaries(text: str, phrase: str, expected: bool) -> None:
+    assert _contains_phrase(text, phrase) is expected
+
+
+@pytest.mark.parametrize("text", ["supernova", "cloudkittycat", "barbicanary", "horizonless"])
+def test_substring_component_names_do_not_return_proved_candidates(kb, text: str) -> None:
+    assert all(candidate.evidence_ids == () for candidate in retrieve(kb, text, (), 5))
+
+
+def test_hint_only_host_selection_does_not_create_kolla_evidence(kb) -> None:
+    candidates = retrieve(kb, "неопределённая функция", (SourceHint("sysctl", "подсистема"),), 1)
+
+    host = next(item for item in candidates if item.component_id == "host_os_kernel_sysctl")
+    kolla = next(item for item in candidates if item.component_id == "kolla_ansible")
+    assert host.evidence_ids == ()
+    assert kolla.evidence_ids == ()
+
+
+def test_evidence_only_host_selection_does_not_create_kolla_evidence(kb) -> None:
+    candidates = retrieve(kb, "существует", (), 1)
+
+    host = next(item for item in candidates if item.component_id == "host_os_kernel_sysctl")
+    kolla = next(item for item in candidates if item.component_id == "kolla_ansible")
+    assert host.evidence_ids == ()
+    assert kolla.evidence_ids == ()
+
+
+@pytest.mark.parametrize("text", ["группа безопасности", "пакеты данных", "данные"])
+def test_common_or_inflected_overlap_does_not_create_direct_evidence(kb, text: str) -> None:
+    assert all(candidate.evidence_ids == () for candidate in retrieve(kb, text, (), 8))
+
+
+def test_trusted_match_includes_official_indirect_evidence(kb) -> None:
+    original = kb.evidence["E-NOVA-SCOPE-001"]
+    indirect = replace(
+        original,
+        evidence_id="E-NOVA-INDIRECT-TEST",
+        strength=EvidenceStrength.INDIRECT,
+    )
+    indirect_only = replace(kb, evidence=MappingProxyType({indirect.evidence_id: indirect}))
+
+    nova = next(item for item in retrieve(indirect_only, "nova", (), 5) if item.component_id == "nova")
+    assert nova.evidence_ids == ("E-NOVA-INDIRECT-TEST",)
