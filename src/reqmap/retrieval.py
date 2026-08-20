@@ -65,7 +65,7 @@ def retrieve(
             _contains_phrase(query.normalized, value)
             for value in (_normalize(component.component_id), _normalize(component.display_name))
         )
-        synonym_hits = _synonym_hits(query, capability_tokens | _tokens(component.component_id))
+        synonym_hits = _synonym_hits(query, component.component_id, component.display_name, capability)
         capability_overlap = float(len(query.expanded_tokens & capability_tokens))
         evidence_overlap = float(len(query.expanded_tokens & evidence_tokens))
         hint_match = int(_has_hint(component.component_id, component.display_name, capability, hints, kb))
@@ -83,7 +83,7 @@ def retrieve(
             component_display_match
             or synonym_hits
             or _has_complete_capability_term(query.normalized, capability)
-            or capability_overlap >= 2.0
+            or len(query.raw_tokens & capability_tokens) >= 2
         )
         candidates.append(
             Candidate(
@@ -108,20 +108,22 @@ def retrieve(
 @dataclass(frozen=True)
 class _Query:
     normalized: str
+    raw_tokens: frozenset[str]
     expanded_tokens: frozenset[str]
     synonym_groups: tuple[tuple[str, ...], ...]
 
 
 def _query(text: str, kb: KnowledgeBase) -> _Query:
     normalized = _normalize(text)
-    expanded = set(_tokens(normalized))
+    raw_tokens = frozenset(_tokens(normalized) - _GENERIC_TOKENS)
+    expanded = set(raw_tokens)
     matched_groups: list[tuple[str, ...]] = []
     for group in _synonym_groups(kb):
         if any(_contains_registered_synonym_phrase(normalized, phrase) for phrase in group):
             matched_groups.append(group)
             for phrase in group:
                 expanded.update(_tokens(phrase))
-    return _Query(normalized, frozenset(expanded - _GENERIC_TOKENS), tuple(matched_groups))
+    return _Query(normalized, raw_tokens, frozenset(expanded - _GENERIC_TOKENS), tuple(matched_groups))
 
 
 def _synonym_groups(kb: KnowledgeBase) -> tuple[tuple[str, ...], ...]:
@@ -131,11 +133,23 @@ def _synonym_groups(kb: KnowledgeBase) -> tuple[tuple[str, ...], ...]:
     )
 
 
-def _synonym_hits(query: _Query, vocabulary: frozenset[str]) -> int:
+def _synonym_hits(
+    query: _Query,
+    component_id: str,
+    display_name: str,
+    capability: CapabilityRecord,
+) -> int:
+    """Count only whole candidate phrases equal to a matched synonym phrase."""
+    candidate_phrases = {
+        _normalize(component_id),
+        _normalize(display_name),
+        _normalize(capability.name_ru),
+        *(_normalize(term) for term in capability.terms),
+    }
     return sum(
         1
         for group in query.synonym_groups
-        if any(_tokens(phrase) & vocabulary for phrase in group)
+        if candidate_phrases.intersection(group)
     )
 
 

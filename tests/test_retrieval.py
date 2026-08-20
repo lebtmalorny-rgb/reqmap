@@ -178,3 +178,24 @@ def test_trusted_match_includes_official_indirect_evidence(kb) -> None:
 
     nova = next(item for item in retrieve(indirect_only, "nova", (), 5) if item.component_id == "nova")
     assert nova.evidence_ids == ("E-NOVA-INDIRECT-TEST",)
+
+
+def test_complete_object_storage_synonym_trusts_only_swift(kb) -> None:
+    candidates = retrieve(kb, "объектное хранилище", (), 8)
+
+    swift = next(item for item in candidates if item.component_id == "swift")
+    assert swift.evidence_ids == ("E-SWIFT-SCOPE-001",)
+    for component_id in ("host_os_storage", "gnocchi", "cinder"):
+        candidate = next((item for item in candidates if item.component_id == component_id), None)
+        assert candidate is None or candidate.evidence_ids == ()
+    kolla = next((item for item in candidates if item.component_id == "kolla_ansible"), None)
+    assert kolla is None or kolla.evidence_ids == ()
+
+
+def test_complete_virtual_machine_synonym_trusts_only_nova(kb) -> None:
+    candidates = retrieve(kb, "виртуальная машина", (), 8)
+
+    nova = next(item for item in candidates if item.component_id == "nova")
+    assert nova.evidence_ids == ("E-NOVA-SCOPE-001",)
+    trove = next((item for item in candidates if item.component_id == "trove"), None)
+    assert trove is None or trove.evidence_ids == ()
