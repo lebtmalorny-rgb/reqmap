@@ -15,7 +15,7 @@
 - Поддерживаемая предметная версия — только OpenStack Epoxy 2025.1.
 - Целевая платформа — обычный Linux с Python 3.11 или новее, без Docker/Podman.
 - После получения Git-репозитория штатная установка и анализ не требуют PyPI или внешнего Интернета.
-- В `vendor/wheels` допускаются только universal pure-Python wheels с тегом `py3-none-any`.
+- В `vendor/wheels` допускаются только universal pure-Python wheels с ABI/platform-тегом `none-any`; Python-тег `py2.py3` допустим при успешной установке и тестах на Python 3.11.
 - Конфигурация `config.yaml` в v1 использует строгий JSON-compatible YAML 1.2 с полнострочными русскими комментариями `#` и читается стандартным `json`-парсером после удаления только таких строк; inline comments запрещены.
 - Локальная LLM доступна через OpenAI-compatible Chat Completions API.
 - Исходный XLSX открывается только для чтения, не изменяется и не включается в поставку как эталонный набор.
@@ -223,7 +223,7 @@ wheel==0.45.1
 python3 -m venv .venv
 .venv/bin/python -m pip download --only-binary=:all: --platform any --implementation py --abi none --python-version 311 --dest vendor/wheels -r requirements-vendor.lock
 .venv/bin/python -m pip install --no-index --find-links vendor/wheels -e '.[dev]'
-find vendor/wheels -name '*.whl' ! -name '*-py3-none-any.whl' -print
+find vendor/wheels -name '*.whl' ! -name '*-none-any.whl' -print
 ```
 
 Последняя команда не должна вывести ни одного файла.
@@ -1978,7 +1978,7 @@ Run:
 .venv/bin/python -m pytest -v
 .venv/bin/python -m compileall -q src tools tests
 git diff --check
-find vendor/wheels -name '*.whl' ! -name '*-py3-none-any.whl' -print
+find vendor/wheels -name '*.whl' ! -name '*-none-any.whl' -print
 rg -n 'TO[D]O|TB[D]|FIX[M]E|PLACE[H]OLDER' src tests tools knowledge .agents README.md INSTALL_OFFLINE.md RUNBOOK.md KNOWLEDGE_BASE.md OUTPUT_SCHEMA.md CLIENTS_CODEX_OPENCODE.md TROUBLESHOOTING.md
 ```
 
