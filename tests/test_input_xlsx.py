@@ -105,7 +105,7 @@ def test_xlsx_keeps_coordinate_and_configured_source_context(tmp_path: Path) -> 
     assert result[0].coordinate.source_name == "requirements.xlsx"
     assert result[0].coordinate.sheet == "Требования"
     assert result[0].coordinate.row == 2
-    assert result[0].parent_id == "5"
+    assert result[0].parent_id is None
     assert result[0].source_fields == (
         SourceField(column="Приоритет", value="P1"),
         SourceField(column="Ожидаемый", value="Результат"),

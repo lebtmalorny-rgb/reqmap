@@ -87,11 +87,6 @@ def _load_profiled_workbook(
 
             ordinal = len(requirements) + 1
             source_id = _optional_value(row[columns[profile.id_column]].value)
-            parent_id = (
-                _optional_value(row[columns[profile.parent_column]].value)
-                if profile.parent_column is not None
-                else None
-            )
             source_fields = tuple(
                 SourceField(column=column, value=_string_value(row[columns[column]].value))
                 for column in _source_field_columns(profile)
@@ -111,7 +106,6 @@ def _load_profiled_workbook(
                         sheet=sheet.title,
                         row=text_cell.row,
                     ),
-                    parent_id=parent_id,
                     source_fields=source_fields,
                     source_hints=source_hints,
                 )
