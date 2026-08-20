@@ -210,7 +210,9 @@ def _load_sources(path: Path) -> dict[str, SourceRecord]:
         provenance = _required_string(record, "provenance", source_id)
         if provenance not in {"official", "project_policy"}:
             _raise("SOURCE_PROVENANCE", source_id, "provenance источника должен быть official или project_policy")
-        source_url = record.get("source_url")
+        if "source_url" not in record:
+            _raise("SOURCE_URL", source_id, "Для источника обязательно поле source_url")
+        source_url = record["source_url"]
         if provenance == "official" and (not isinstance(source_url, str) or not source_url):
             _raise("SOURCE_URL", source_id, "Для official источника требуется source_url")
         if provenance == "project_policy" and source_url is not None:
@@ -351,7 +353,7 @@ def _validate_references(kb: KnowledgeBase) -> list[KnowledgeIssue]:
                     "Компонент evidence отсутствует в component_ids его источника",
                 )
             )
-        if not evidence.claim_ru:
+        if not evidence.claim_ru.strip():
             issues.append(KnowledgeIssue("EVIDENCE_CLAIM_EMPTY", evidence.evidence_id, "Evidence содержит пустое утверждение"))
     return issues
 

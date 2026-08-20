@@ -1,6 +1,8 @@
 import json
 import shutil
+from dataclasses import replace
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
@@ -26,6 +28,12 @@ def _replace_json_field(path: Path, field: str, value: object) -> None:
 def _replace_manifest_source_field(path: Path, field: str, value: object) -> None:
     data = json.loads(path.read_text(encoding="utf-8"))
     data["sources"][0][field] = value
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _remove_manifest_source_field(path: Path, field: str) -> None:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["sources"][0][field]
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -99,6 +107,27 @@ def test_load_knowledge_rejects_whitespace_only_evidence_claim(kb_path: Path) ->
 
     with pytest.raises(KnowledgeError, match="пустое утверждение"):
         load_knowledge(kb_path, verify_snapshot_hash=False)
+
+
+def test_validate_knowledge_reports_whitespace_only_claim_without_mutating_it(
+    kb_path: Path,
+) -> None:
+    """Direct validator users must receive the same empty-claim diagnostic as the loader."""
+    kb = load_knowledge(kb_path)
+    original = kb.evidence["E-NOVA-API-001"]
+    whitespace_claim = replace(original, claim_ru=" \t")
+    invalid_kb = replace(
+        kb,
+        evidence=MappingProxyType({whitespace_claim.evidence_id: whitespace_claim}),
+    )
+
+    issues = validate_knowledge(invalid_kb)
+
+    assert [(issue.code, issue.object_id) for issue in issues] == [
+        ("EVIDENCE_CLAIM_EMPTY", "E-NOVA-API-001")
+    ]
+    assert invalid_kb.evidence["E-NOVA-API-001"].claim_ru == " \t"
+    assert kb.evidence["E-NOVA-API-001"].claim_ru == original.claim_ru
 
 
 def test_load_knowledge_rejects_missing_local_source(kb_path: Path) -> None:
@@ -175,6 +204,17 @@ def test_official_source_requires_url_and_policy_allows_null_url(kb_path: Path) 
 def test_project_policy_rejects_official_url(kb_path: Path) -> None:
     """A policy source with an upstream URL has ambiguous provenance and must fail closed."""
     _replace_manifest_source_field(kb_path / "source-manifest.json", "provenance", "project_policy")
+
+    with pytest.raises(KnowledgeError) as error:
+        load_knowledge(kb_path, verify_snapshot_hash=False)
+
+    assert error.value.code == "SOURCE_URL"
+
+
+def test_project_policy_requires_explicit_null_source_url(kb_path: Path) -> None:
+    """Omitting source_url must not be treated as an approved local-policy declaration."""
+    _replace_manifest_source_field(kb_path / "source-manifest.json", "provenance", "project_policy")
+    _remove_manifest_source_field(kb_path / "source-manifest.json", "source_url")
 
     with pytest.raises(KnowledgeError) as error:
         load_knowledge(kb_path, verify_snapshot_hash=False)
