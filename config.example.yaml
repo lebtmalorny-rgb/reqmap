@@ -1,0 +1,16 @@
+# Параметры локального OpenAI-compatible сервера
+{
+  "model": {
+    "base_url": "http://127.0.0.1:8000/v1",
+    "model": "local-model",
+    "api_key_env": "REQMAP_API_KEY",
+    "timeout_seconds": 60,
+    "retries": 2,
+    "supports_response_format": true,
+    "seed": 1,
+    "max_prompt_chars": 50000,
+    "max_response_bytes": 1048576
+  },
+  "knowledge_path": "knowledge/epoxy-2025.1",
+  "top_k": 8
+}
