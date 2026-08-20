@@ -1,4 +1,13 @@
 .worktrees/
 .superpowers/
+.venv/
+__pycache__/
+.pytest_cache/
+.hypothesis/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+results/
 /Требования к PV Stack v3.xlsx
 /для СБТ_clean.xlsx
