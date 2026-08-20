@@ -1,7 +1,9 @@
 from pathlib import Path
+import math
 
 import pytest
 
+from reqmap import config as config_module
 from reqmap.config import ConfigError, load_config
 
 
@@ -84,3 +86,56 @@ def test_load_config_rejects_invalid_model_or_limits(
 
     with pytest.raises(ConfigError, match=expected_message):
         load_config(path, {})
+
+
+@pytest.mark.parametrize(
+    ("numeric_field", "constant"),
+    [
+        ('"timeout_seconds":', "NaN"),
+        ('"retries":', "Infinity"),
+        ('"max_prompt_chars":', "-Infinity"),
+    ],
+)
+def test_load_config_rejects_non_finite_json_constants(
+    tmp_path: Path, numeric_field: str, constant: str
+) -> None:
+    """Принятие NaN или Infinity нарушило бы строгую JSON-совместимость."""
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        '{"model":{"base_url":"http://llm/v1","model":"local",'
+        + numeric_field
+        + constant
+        + '},"knowledge_path":"knowledge/epoxy-2025.1","top_k":8}',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError) as error:
+        load_config(path, {})
+
+    assert error.value.code == "CONFIG_INVALID"
+
+
+def test_load_config_rejects_non_finite_timeout_after_decoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Проверка timeout не должна зависеть только от строгого JSON-декодера."""
+    path = tmp_path / "config.yaml"
+    path.write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(
+        config_module.json,
+        "loads",
+        lambda _, **__: {
+            "model": {
+                "base_url": "http://llm/v1",
+                "model": "local",
+                "timeout_seconds": math.nan,
+            },
+            "knowledge_path": "knowledge/epoxy-2025.1",
+            "top_k": 8,
+        },
+    )
+
+    with pytest.raises(ConfigError) as error:
+        load_config(path, {})
+
+    assert error.value.code == "CONFIG_INVALID"

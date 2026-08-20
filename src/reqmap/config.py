@@ -1,6 +1,7 @@
 """Строгая автономная загрузка JSON-compatible YAML конфигурации."""
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
@@ -57,8 +58,8 @@ def load_config(path: Path, environ: Mapping[str, str]) -> AppConfig:
         without_comments = "\n".join(
             line for line in source.splitlines() if not line.lstrip().startswith("#")
         )
-        raw = json.loads(without_comments)
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = json.loads(without_comments, parse_constant=_reject_non_finite_constant)
+    except (OSError, ValueError) as exc:
         raise ConfigError(
             "CONFIG_INVALID", f"Не удалось прочитать конфигурацию: {exc}"
         ) from exc
@@ -119,6 +120,8 @@ def _build_model(raw: object, environ: Mapping[str, str]) -> ModelConfig:
 
     timeout_seconds = raw.get("timeout_seconds", 60.0)
     _require_number(timeout_seconds, "model.timeout_seconds")
+    if not math.isfinite(timeout_seconds):
+        _invalid("model.timeout_seconds должен быть конечным числом")
     if timeout_seconds <= 0:
         _invalid("model.timeout_seconds должен быть больше нуля")
     retries = raw.get("retries", 2)
@@ -247,3 +250,7 @@ def _string_tuple(value: object, field: str) -> tuple[str, ...]:
 
 def _invalid(message: str) -> None:
     raise ConfigError("CONFIG_INVALID", message)
+
+
+def _reject_non_finite_constant(value: str) -> object:
+    raise ValueError(f"Недопустимая нечисловая JSON-константа: {value}")
