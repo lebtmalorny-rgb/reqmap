@@ -1,0 +1,332 @@
+{
+  "sources": [
+    {
+      "component_ids": [
+        "aodh"
+      ],
+      "id": "SRC-AODH-SCOPE-2025.1",
+      "local_path": "sources/SRC-AODH-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "969a74c1821e48f69cab5bd890aa7216ce08be6da4e7ab69bf9b739e2d241192",
+      "source_url": "https://docs.openstack.org/aodh/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "barbican"
+      ],
+      "id": "SRC-BARBICAN-SCOPE-2025.1",
+      "local_path": "sources/SRC-BARBICAN-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "07616d7a8c22334b4e0b5ab481a5b80c75727fbb77dcb9e03c3e857f704b0d4a",
+      "source_url": "https://docs.openstack.org/barbican/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "ceilometer"
+      ],
+      "id": "SRC-CEILOMETER-SCOPE-2025.1",
+      "local_path": "sources/SRC-CEILOMETER-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "66e72d04ac956a18a1b2714b44017e53a839e2fd04f23d2eac83ae13a25ad458",
+      "source_url": "https://docs.openstack.org/ceilometer/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "cinder"
+      ],
+      "id": "SRC-CINDER-SCOPE-2025.1",
+      "local_path": "sources/SRC-CINDER-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "01465c81c1f5d61fd3ae3c2bd9619c37ca176b2c3578629b0bc706e92614c005",
+      "source_url": "https://docs.openstack.org/cinder/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "cloudkitty"
+      ],
+      "id": "SRC-CLOUDKITTY-SCOPE-2025.1",
+      "local_path": "sources/SRC-CLOUDKITTY-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "0fc3911cc0e5b4420d90d4dea83e7958c420b143049fe88c91256ee842978f48",
+      "source_url": "https://docs.openstack.org/cloudkitty/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "designate"
+      ],
+      "id": "SRC-DESIGNATE-SCOPE-2025.1",
+      "local_path": "sources/SRC-DESIGNATE-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "84f5d8de2d5a20c904ab4a017de4c2110fab13c79f4d24eb80da7648bfc7911a",
+      "source_url": "https://docs.openstack.org/designate/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "glance"
+      ],
+      "id": "SRC-GLANCE-SCOPE-2025.1",
+      "local_path": "sources/SRC-GLANCE-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "19ee052a45550f10e69bf1d7e03bb22bdfe8e9ef7e80972548ab363aebf64951",
+      "source_url": "https://docs.openstack.org/glance/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "gnocchi",
+        "kolla_ansible"
+      ],
+      "id": "SRC-GNOCCHI-KOLLA-2025.1",
+      "local_path": "sources/SRC-GNOCCHI-KOLLA-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "6a04e07e7c380a00418d0ebf2300c8f3026c76a81ebf5576ff941b182a4167f7",
+      "source_url": "https://docs.openstack.org/kolla-ansible/2025.1/reference/storage/external-ceph-guide.html",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "heat"
+      ],
+      "id": "SRC-HEAT-SCOPE-2025.1",
+      "local_path": "sources/SRC-HEAT-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "842a36f1fbd0f5cd37e3eb0a6added11b3edf477884a9b57d36dc1f880c51d3d",
+      "source_url": "https://docs.openstack.org/heat/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "horizon"
+      ],
+      "id": "SRC-HORIZON-SCOPE-2025.1",
+      "local_path": "sources/SRC-HORIZON-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "b70e53351fe1e50e1ae56343ff82b952a0f23aa009a999e7a74d972de0070c5c",
+      "source_url": "https://docs.openstack.org/horizon/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "ironic"
+      ],
+      "id": "SRC-IRONIC-SCOPE-2025.1",
+      "local_path": "sources/SRC-IRONIC-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "71a047b4259979f43aa0e2282e903f9bfb8890228ed096da40d46c7f29cf3877",
+      "source_url": "https://docs.openstack.org/ironic/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "keystone"
+      ],
+      "id": "SRC-KEYSTONE-SCOPE-2025.1",
+      "local_path": "sources/SRC-KEYSTONE-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "dc2ca2354cb9f8ad73a2e55c59d378d8d94e0c2d5700d57e4e5c27903759e72b",
+      "source_url": "https://docs.openstack.org/keystone/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "magnum"
+      ],
+      "id": "SRC-MAGNUM-SCOPE-2025.1",
+      "local_path": "sources/SRC-MAGNUM-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "b43936ce56a194df4f881794e8f3b8431895366485ab4399764f797aea5ca190",
+      "source_url": "https://docs.openstack.org/magnum/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "manila"
+      ],
+      "id": "SRC-MANILA-SCOPE-2025.1",
+      "local_path": "sources/SRC-MANILA-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "2ef46a768bff1d32293b19e0dcd03e7f7bd0b1ad2aadd25a70ae1a207174ad30",
+      "source_url": "https://docs.openstack.org/manila/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "masakari"
+      ],
+      "id": "SRC-MASAKARI-SCOPE-2025.1",
+      "local_path": "sources/SRC-MASAKARI-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "706215c27576e17746ac99b2072349deffec6691c85e4baa3b879ce99bfd4753",
+      "source_url": "https://docs.openstack.org/masakari/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "neutron"
+      ],
+      "id": "SRC-NEUTRON-SCOPE-2025.1",
+      "local_path": "sources/SRC-NEUTRON-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "52c2bbf0bbbf16e1b1649ae8a6a75ee3d5c1181944ba95747f7a589a409e06c5",
+      "source_url": "https://docs.openstack.org/neutron/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "nova"
+      ],
+      "id": "SRC-NOVA-SCOPE-2025.1",
+      "local_path": "sources/SRC-NOVA-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "920f656af32a8d57ec985011e985ec1dce0abcd128e31dd44a72310e703f08ae",
+      "source_url": "https://docs.openstack.org/nova/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "octavia"
+      ],
+      "id": "SRC-OCTAVIA-SCOPE-2025.1",
+      "local_path": "sources/SRC-OCTAVIA-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "6430a912ff5d50d66f5d6abfbf63012cb0ab8ec48b157f4f1ab41728bdac50f1",
+      "source_url": "https://docs.openstack.org/octavia/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "placement"
+      ],
+      "id": "SRC-PLACEMENT-SCOPE-2025.1",
+      "local_path": "sources/SRC-PLACEMENT-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "bab6957cc046533c5ead73e59ac4dd7b5493427b4d39d5bde25e5bbba33a906c",
+      "source_url": "https://docs.openstack.org/placement/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "swift"
+      ],
+      "id": "SRC-SWIFT-SCOPE-2025.1",
+      "local_path": "sources/SRC-SWIFT-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "26441b7f9a6f222d8820c36f69f627b7139999f8f3782a40e7a6ff05b9c79960",
+      "source_url": "https://docs.openstack.org/swift/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "trove"
+      ],
+      "id": "SRC-TROVE-SCOPE-2025.1",
+      "local_path": "sources/SRC-TROVE-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "51b178294137d0e90a4167f3c07dcf70ed16d15e9ecf1a8393c54ca0ad1c0463",
+      "source_url": "https://docs.openstack.org/trove/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "watcher"
+      ],
+      "id": "SRC-WATCHER-SCOPE-2025.1",
+      "local_path": "sources/SRC-WATCHER-SCOPE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "0b546ac675a679d651f1480d8656cab2b66aec71657aa0c3c63ba61e26f8bb8c",
+      "source_url": "https://docs.openstack.org/watcher/2025.1/",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "kolla_ansible"
+      ],
+      "id": "SRC-KOLLA-OPERATING-2025.1",
+      "local_path": "sources/SRC-KOLLA-OPERATING-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "e26876f968547e7fca3d4702c8e247063a50895bb6fd957e61c369b5f33b88aa",
+      "source_url": "https://docs.openstack.org/kolla-ansible/2025.1/user/operating-kolla.html",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "kolla_ansible",
+        "host_os_chrony",
+        "host_os_nftables",
+        "host_os_networking",
+        "host_os_kernel_sysctl",
+        "host_os_package_management",
+        "host_os_storage",
+        "host_os_identity_access"
+      ],
+      "id": "SRC-KOLLA-BOOTSTRAP-2025.1",
+      "local_path": "sources/SRC-KOLLA-BOOTSTRAP-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "f4c9dd26600f091d1da6626893c6127a5daf11ba4a6f64fd299bd918f26c3a4c",
+      "source_url": "https://docs.openstack.org/kolla-ansible/2025.1/reference/deployment-and-bootstrapping/bootstrap-servers.html",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "kolla_ansible",
+        "host_os_kernel_sysctl"
+      ],
+      "id": "SRC-KOLLA-SYSCTL-ROLE-2025.1",
+      "local_path": "sources/SRC-KOLLA-SYSCTL-ROLE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-08-20",
+      "sha256": "e6e2abd2120c9f19f2c0e67415d1b5d7c3aed76bde8c82bf16a8488c69308400",
+      "source_url": "https://opendev.org/openstack/kolla-ansible/src/branch/stable/2025.1/ansible/roles",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "kolla_ansible",
+        "host_os_chrony",
+        "host_os_nftables",
+        "host_os_networking",
+        "host_os_kernel_sysctl",
+        "host_os_package_management",
+        "host_os_storage",
+        "host_os_identity_access"
+      ],
+      "id": "SRC-POLICY-HOST-OS-KOLLA",
+      "local_path": "sources/SRC-POLICY-HOST-OS-KOLLA.md",
+      "provenance": "project_policy",
+      "retrieved_at": "2026-08-20",
+      "sha256": "35ae892e881c8f7ababe3d3031e9d8f67eda62a7f9a3f6d0c86d7376631046a3",
+      "source_url": null,
+      "version": "2025.1"
+    }
+  ]
+}

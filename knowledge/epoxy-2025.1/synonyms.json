@@ -1,0 +1,14 @@
+{
+  "балансировщик": ["load balancer", "octavia"],
+  "блочное хранилище": ["volume", "cinder"],
+  "виртуальная машина": ["instance", "server", "nova"],
+  "высокая доступность ВМ": ["instance high availability", "masakari"],
+  "доменное имя": ["DNS", "zone", "designate"],
+  "образ": ["image", "glance"],
+  "общая файловая система": ["shared filesystem", "share", "manila"],
+  "объектное хранилище": ["object storage", "swift"],
+  "секрет": ["secret", "key manager", "barbican"],
+  "телеметрия": ["metrics", "ceilometer", "gnocchi"],
+  "учёт стоимости": ["rating", "chargeback", "cloudkitty"],
+  "хостовая ОС": ["host OS", "kolla-ansible", "baremetal role"]
+}

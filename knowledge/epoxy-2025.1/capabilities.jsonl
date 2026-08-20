@@ -1,0 +1,30 @@
+{"id":"CAP-AODH-ALARMING","component_id":"aodh","name_ru":"Правила и действия сигнализации по метрикам и событиям","terms":["alarm","alarming","сигнализация","правило метрики"]}
+{"id":"CAP-BARBICAN-SECRETS","component_id":"barbican","name_ru":"Хранение и управление секретами","terms":["secret","key manager","сертификат","ключ"]}
+{"id":"CAP-CEILOMETER-COLLECTION","component_id":"ceilometer","name_ru":"Сбор и нормализация телеметрических данных","terms":["telemetry","metering","метрики","сбор данных"]}
+{"id":"CAP-CINDER-VOLUMES-API","component_id":"cinder","name_ru":"Блочные тома через REST API","terms":["volume","block storage","том","cinder api"]}
+{"id":"CAP-CLOUDKITTY-RATING-API","component_id":"cloudkitty","name_ru":"Рейтинг потребления через API","terms":["rating","chargeback","тарификация","стоимость"]}
+{"id":"CAP-DESIGNATE-DNS-API","component_id":"designate","name_ru":"Мультитенантный DNSaaS через REST API","terms":["dns","zone","recordset","designate api"]}
+{"id":"CAP-GLANCE-IMAGES-API","component_id":"glance","name_ru":"Образы и их метаданные через REST API","terms":["image","образ","image metadata","glance api"]}
+{"id":"CAP-GNOCCHI-METRICS-STORAGE","component_id":"gnocchi","name_ru":"Хранение метрик с настраиваемым backend","terms":["gnocchi","metrics storage","хранилище метрик","ceph"]}
+{"id":"CAP-HEAT-ORCHESTRATION-API","component_id":"heat","name_ru":"Шаблонная оркестрация через REST API","terms":["orchestration","stack","heat template","оркестрация"]}
+{"id":"CAP-HORIZON-DASHBOARD","component_id":"horizon","name_ru":"Веб-интерфейс OpenStack Dashboard","terms":["dashboard","web ui","панель управления","horizon"]}
+{"id":"CAP-IRONIC-BAREMETAL","component_id":"ironic","name_ru":"Управление и развёртывание bare metal","terms":["bare metal","bmc","физический сервер","ironic"]}
+{"id":"CAP-KEYSTONE-IDENTITY-API","component_id":"keystone","name_ru":"Аутентификация, discovery и авторизация Identity API","terms":["identity","authentication","authorization","keystone api"]}
+{"id":"CAP-MAGNUM-CLUSTERS-API","component_id":"magnum","name_ru":"Кластеры контейнерной оркестрации через REST API","terms":["cluster template","kubernetes","container orchestration","magnum"]}
+{"id":"CAP-MANILA-SHARES-API","component_id":"manila","name_ru":"Общие файловые системы через REST API","terms":["share","shared filesystem","общая файловая система","manila api"]}
+{"id":"CAP-MASAKARI-INSTANCE-HA","component_id":"masakari","name_ru":"Высокая доступность экземпляров и compute-процессов","terms":["instance ha","host failure","высокая доступность","masakari"]}
+{"id":"CAP-NEUTRON-NETWORKING-API","component_id":"neutron","name_ru":"Сетевая связность через Networking API","terms":["network","subnet","port","neutron api"]}
+{"id":"CAP-NOVA-COMPUTE-API","component_id":"nova","name_ru":"Compute instances через REST API","terms":["instance","server","виртуальная машина","nova api"]}
+{"id":"CAP-OCTAVIA-LOAD-BALANCING","component_id":"octavia","name_ru":"Сетевая балансировка нагрузки","terms":["load balancer","listener","pool","балансировщик"]}
+{"id":"CAP-PLACEMENT-INVENTORY-API","component_id":"placement","name_ru":"Инвентарь и usage resource providers через REST API","terms":["resource provider","inventory","trait","placement api"]}
+{"id":"CAP-SWIFT-OBJECTS-API","component_id":"swift","name_ru":"Распределённое объектное хранилище через REST API","terms":["object storage","container","object","swift api"]}
+{"id":"CAP-TROVE-DATABASES","component_id":"trove","name_ru":"Предоставление и управление экземплярами баз данных","terms":["database as a service","database instance","база данных","trove"]}
+{"id":"CAP-WATCHER-OPTIMIZATION","component_id":"watcher","name_ru":"Контур оптимизации ресурсов и планы действий","terms":["optimization","action plan","audit","оптимизация"]}
+{"id":"CAP-KOLLA-RECONFIGURE","component_id":"kolla_ansible","name_ru":"Design-time reconfigure конфигурации OpenStack","terms":["kolla-ansible reconfigure","globals.yml","config override","designtime"]}
+{"id":"CAP-HOST-CHRONY-AUTOMATION","component_id":"host_os_chrony","name_ru":"Автоматизация настройки службы синхронизации времени хоста","terms":["chrony","ntp","time synchronization","синхронизация времени"]}
+{"id":"CAP-HOST-NFTABLES-AUTOMATION","component_id":"host_os_nftables","name_ru":"Автоматизация firewall хоста с проверкой nftables-границы","terms":["nftables","firewall","межсетевой экран","iptables-nft"]}
+{"id":"CAP-HOST-NETWORKING-AUTOMATION","component_id":"host_os_networking","name_ru":"Автоматизация сетевой конфигурации хоста","terms":["host networking","/etc/hosts","network interface","сеть хоста"]}
+{"id":"CAP-HOST-SYSCTL-AUTOMATION","component_id":"host_os_kernel_sysctl","name_ru":"Автоматизация kernel sysctl хоста","terms":["sysctl","kernel parameter","параметр ядра","ansible role"]}
+{"id":"CAP-HOST-PACKAGES-AUTOMATION","component_id":"host_os_package_management","name_ru":"Автоматизация установки и удаления пакетов хоста","terms":["package installation","apt","dnf","пакеты ОС"]}
+{"id":"CAP-HOST-STORAGE-AUTOMATION","component_id":"host_os_storage","name_ru":"Автоматизация параметров storage хоста для container engine","terms":["storage driver","data-root","docker storage","хранилище хоста"]}
+{"id":"CAP-HOST-IDENTITY-AUTOMATION","component_id":"host_os_identity_access","name_ru":"Автоматизация пользователей, групп, SSH и sudoers хоста","terms":["user","group","ssh key","sudoers"]}
