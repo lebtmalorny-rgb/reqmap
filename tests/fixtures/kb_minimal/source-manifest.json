@@ -1,0 +1,14 @@
+{
+  "sources": [
+    {
+      "id": "SRC-NOVA-API",
+      "component_ids": ["nova"],
+      "source_url": "https://docs.openstack.org/api-ref/compute/",
+      "retrieved_at": "2026-08-20",
+      "version": "2025.1",
+      "sha256": "abd0020bbea3a57584e43b6f28ebd969681e4f8ffde7d184f2eb8dc70bceb612",
+      "local_path": "sources/nova-api.md",
+      "provenance": "official"
+    }
+  ]
+}

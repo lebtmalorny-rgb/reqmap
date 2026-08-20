@@ -1,0 +1,10 @@
+{
+  "components": [
+    {
+      "id": "nova",
+      "display_name": "Nova",
+      "kind": "openstack_service",
+      "release": "2025.1"
+    }
+  ]
+}

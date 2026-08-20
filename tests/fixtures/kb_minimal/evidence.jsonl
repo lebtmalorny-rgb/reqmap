@@ -1,0 +1,1 @@
+{"id":"E-NOVA-API-001","component_id":"nova","capability_id":"CAP-NOVA-SERVER-API","polarity":"positive","strength":"direct","claim_ru":"Nova API управляет жизненным циклом серверов","source_id":"SRC-NOVA-API","locator":"раздел Servers","version_constraint":"2025.1"}
