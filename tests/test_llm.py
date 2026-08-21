@@ -431,28 +431,34 @@ def test_http_error_and_invalid_model_output_redact_key_echo(
         assert "top-secret" not in str(error)
         assert "top-secret" not in repr(error)
         assert "top-secret" not in str(error.details)
-    assert "top-secret" not in output_error.value.raw_response
-    assert "<redacted>" in output_error.value.raw_response
+    _assert_keyed_output_discards_raw(output_error.value, "top-secret")
 
 
-@pytest.mark.parametrize("ensure_ascii", [False, True])
-def test_model_output_redacts_plain_and_json_escaped_api_key_before_bounding(
-    fake_llm_server: FakeLlmServer, ensure_ascii: bool
+@pytest.mark.parametrize(
+    ("api_key", "content"),
+    [
+        ("redacted", '{"echo":"redacted","bad":NaN}'),
+        ("a", '{"echo":"a","bad":NaN}'),
+        ("<", '{"echo":"<","bad":NaN}'),
+        (">", '{"echo":">","bad":NaN}'),
+        ("töken", '{"echo":"t\\u00F6ken","bad":NaN}'),
+        ("path/key", '{"echo":"path\\/key","bad":NaN}'),
+        ('q"\\ö', '{"echo":"q\\\\\\"\\\\\\\\\\\\\\\\u00f6","bad":NaN}'),
+    ],
+)
+def test_keyed_model_output_discards_raw_for_plain_and_escaped_secrets(
+    fake_llm_server: FakeLlmServer, api_key: str, content: str
 ) -> None:
-    """Redaction до truncate не должна пропускать plain или JSON-escaped секрет."""
-    api_key = "töken"
-    encoded_key = json.dumps(api_key, ensure_ascii=ensure_ascii)[1:-1]
-    content = '{"echo":"' + encoded_key + '","bad":NaN}'
+    """Raw malformed output запрещён при ключе, независимо от encoding секрета."""
     fake_llm_server.enqueue(chat_response(content))
 
     with pytest.raises(ModelOutputError) as caught:
         client_for(fake_llm_server, api_key=api_key).complete_json("mapping", "s", {})
 
-    _assert_secret_free_exception(caught.value, api_key, encoded_key)
-    assert "<redacted>" in caught.value.raw_response
+    _assert_keyed_output_discards_raw(caught.value, api_key)
 
 
-def test_model_output_redacts_secret_crossing_raw_response_boundary(
+def test_keyed_model_output_discards_raw_at_response_boundary(
     fake_llm_server: FakeLlmServer,
 ) -> None:
     """Секрет на границе 4096 символов нельзя частично раскрыть при truncate."""
@@ -463,12 +469,24 @@ def test_model_output_redacts_secret_crossing_raw_response_boundary(
     with pytest.raises(ModelOutputError) as caught:
         client_for(fake_llm_server, api_key=api_key).complete_json("mapping", "s", {})
 
-    _assert_secret_free_exception(caught.value, api_key)
-    assert len(caught.value.raw_response) <= 4108
+    _assert_keyed_output_discards_raw(caught.value, api_key)
+
+
+def test_model_without_api_key_preserves_bounded_raw_diagnostic(
+    fake_llm_server: FakeLlmServer,
+) -> None:
+    """Отключение raw должно зависеть от key, а не скрывать offline debugging всегда."""
+    content = "x" * 5_000
+    fake_llm_server.enqueue(chat_response(content))
+
+    with pytest.raises(ModelOutputError) as caught:
+        client_for(fake_llm_server, api_key=None).complete_json("mapping", "s", {})
+
+    assert caught.value.raw_response == "x" * 4096 + "…[truncated]"
 
 
 @pytest.mark.parametrize("layers", [2, 5])
-def test_malformed_outer_envelope_redacts_repeatedly_json_escaped_api_key(
+def test_keyed_malformed_outer_envelope_discards_repeatedly_escaped_api_key(
     fake_llm_server: FakeLlmServer, layers: int
 ) -> None:
     """Repeated JSON escaping ключа не должно оставить recoverable raw diagnostic."""
@@ -479,8 +497,7 @@ def test_malformed_outer_envelope_redacts_repeatedly_json_escaped_api_key(
     with pytest.raises(ModelOutputError) as caught:
         client_for(fake_llm_server, api_key=api_key).complete_json("mapping", "s", {})
 
-    _assert_secret_free_exception(caught.value, *representations)
-    assert "<redacted>" in caught.value.raw_response
+    _assert_keyed_output_discards_raw(caught.value, *representations)
 
 
 @pytest.mark.parametrize("location", ["preflight", "envelope", "content"])
@@ -639,6 +656,11 @@ def _assert_secret_free_exception(error: BaseException, *secrets: str) -> None:
             pending.append(current.__cause__)
         if current.__context__ is not None:
             pending.append(current.__context__)
+
+
+def _assert_keyed_output_discards_raw(error: ModelOutputError, *secrets: str) -> None:
+    _assert_secret_free_exception(error, *secrets)
+    assert error.raw_response == ""
 
 
 def _repeated_json_escape_representations(secret: str, layers: int) -> tuple[str, ...]:

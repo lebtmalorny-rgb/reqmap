@@ -259,15 +259,11 @@ class OpenAICompatibleClient:
         )
 
     def _sanitize_raw(self, raw: str) -> str:
-        limit = 4096
-        redacted = raw
         if self._config.api_key:
-            for representation in _secret_representations(
-                self._config.api_key, len(raw)
-            ):
-                redacted = redacted.replace(representation, "<redacted>")
-        bounded = redacted[:limit]
-        if len(redacted) > limit:
+            return ""
+        limit = 4096
+        bounded = raw[:limit]
+        if len(raw) > limit:
             bounded += "…[truncated]"
         return bounded
 
@@ -338,18 +334,3 @@ def _require_string_mapping_keys(value: object, active: set[int]) -> None:
                 _require_string_mapping_keys(nested, active)
         finally:
             active.remove(marker)
-
-
-def _secret_representations(secret: str, max_length: int) -> tuple[str, ...]:
-    """Возвращает plain и все релевантные вложенные JSON-экранирования секрета."""
-    known = {secret}
-    pending = [secret]
-    while pending:
-        current = pending.pop()
-        for ensure_ascii in (False, True):
-            encoded = json.dumps(current, ensure_ascii=ensure_ascii)[1:-1]
-            if not encoded or len(encoded) > max_length or encoded in known:
-                continue
-            known.add(encoded)
-            pending.append(encoded)
-    return tuple(sorted(known, key=len, reverse=True))
