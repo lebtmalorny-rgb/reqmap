@@ -229,7 +229,7 @@ class OpenAICompatibleClient:
     def _parse_object_or_preflight_error(self, raw: str) -> dict[str, object]:
         try:
             parsed = _strict_object(raw)
-        except ValueError:
+        except (RecursionError, ValueError):
             invalid_json = True
         else:
             invalid_json = False
@@ -243,7 +243,7 @@ class OpenAICompatibleClient:
     def _parse_output_object(self, raw: str) -> dict[str, object]:
         try:
             parsed = _strict_object(raw)
-        except ValueError:
+        except (RecursionError, ValueError):
             invalid_json = True
         else:
             invalid_json = False
@@ -262,7 +262,9 @@ class OpenAICompatibleClient:
         limit = 4096
         redacted = raw
         if self._config.api_key:
-            for representation in _secret_representations(self._config.api_key):
+            for representation in _secret_representations(
+                self._config.api_key, len(raw)
+            ):
                 redacted = redacted.replace(representation, "<redacted>")
         bounded = redacted[:limit]
         if len(redacted) > limit:
@@ -338,9 +340,16 @@ def _require_string_mapping_keys(value: object, active: set[int]) -> None:
             active.remove(marker)
 
 
-def _secret_representations(secret: str) -> tuple[str, ...]:
-    representations = [secret]
-    for ensure_ascii in (False, True):
-        encoded = json.dumps(secret, ensure_ascii=ensure_ascii)
-        representations.append(encoded[1:-1])
-    return tuple(dict.fromkeys(representations))
+def _secret_representations(secret: str, max_length: int) -> tuple[str, ...]:
+    """Возвращает plain и все релевантные вложенные JSON-экранирования секрета."""
+    known = {secret}
+    pending = [secret]
+    while pending:
+        current = pending.pop()
+        for ensure_ascii in (False, True):
+            encoded = json.dumps(current, ensure_ascii=ensure_ascii)[1:-1]
+            if not encoded or len(encoded) > max_length or encoded in known:
+                continue
+            known.add(encoded)
+            pending.append(encoded)
+    return tuple(sorted(known, key=len, reverse=True))

@@ -12,6 +12,7 @@ import pytest
 
 from reqmap.config import ModelConfig
 from reqmap.errors import ModelError, ModelOutputError
+from reqmap import llm as llm_module
 from reqmap.llm import OpenAICompatibleClient
 
 
@@ -466,6 +467,60 @@ def test_model_output_redacts_secret_crossing_raw_response_boundary(
     assert len(caught.value.raw_response) <= 4108
 
 
+@pytest.mark.parametrize("layers", [2, 5])
+def test_malformed_outer_envelope_redacts_repeatedly_json_escaped_api_key(
+    fake_llm_server: FakeLlmServer, layers: int
+) -> None:
+    """Repeated JSON escaping ключа не должно оставить recoverable raw diagnostic."""
+    api_key = 'q"\\ö'
+    representations = _repeated_json_escape_representations(api_key, layers)
+    fake_llm_server.enqueue_text('{"echo":"' + representations[-1] + '",}')
+
+    with pytest.raises(ModelOutputError) as caught:
+        client_for(fake_llm_server, api_key=api_key).complete_json("mapping", "s", {})
+
+    _assert_secret_free_exception(caught.value, *representations)
+    assert "<redacted>" in caught.value.raw_response
+
+
+@pytest.mark.parametrize("location", ["preflight", "envelope", "content"])
+def test_decoder_recursion_is_typed_nonretryable_failure(
+    fake_llm_server: FakeLlmServer, location: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deep JSON under byte limit не должен выйти как RecursionError или retry."""
+    deep_json = _deep_json_object(1_100)
+    original_decode = llm_module.json.JSONDecoder.decode
+
+    def decoder_with_nested_recursion(decoder: object, raw: str) -> object:
+        if raw == deep_json:
+            raise RecursionError("deep JSON")
+        return original_decode(decoder, raw)
+
+    monkeypatch.setattr(llm_module.json.JSONDecoder, "decode", decoder_with_nested_recursion)
+    if location == "preflight":
+        fake_llm_server.enqueue_text(deep_json)
+        operation = lambda: client_for(fake_llm_server, retries=2).preflight()
+        error_type: type[ModelError] = ModelError
+        code = "MODEL_PREFLIGHT_INVALID"
+    elif location == "envelope":
+        fake_llm_server.enqueue_text(deep_json)
+        operation = lambda: client_for(fake_llm_server, retries=2).complete_json("mapping", "s", {})
+        error_type = ModelOutputError
+        code = "MODEL_OUTPUT_INVALID"
+    else:
+        fake_llm_server.enqueue(chat_response(deep_json))
+        operation = lambda: client_for(fake_llm_server, retries=2).complete_json("mapping", "s", {})
+        error_type = ModelOutputError
+        code = "MODEL_OUTPUT_INVALID"
+
+    with pytest.raises(error_type) as caught:
+        operation()
+
+    assert caught.value.code == code
+    assert len(fake_llm_server.requests) == 1
+    _assert_secret_free_exception(caught.value)
+
+
 def test_preflight_invalid_json_has_no_raw_secret_in_exception_graph(
     fake_llm_server: FakeLlmServer,
 ) -> None:
@@ -584,3 +639,16 @@ def _assert_secret_free_exception(error: BaseException, *secrets: str) -> None:
             pending.append(current.__cause__)
         if current.__context__ is not None:
             pending.append(current.__context__)
+
+
+def _repeated_json_escape_representations(secret: str, layers: int) -> tuple[str, ...]:
+    values = [secret]
+    current = secret
+    for _ in range(layers):
+        current = json.dumps(current, ensure_ascii=True)[1:-1]
+        values.append(current)
+    return tuple(values)
+
+
+def _deep_json_object(depth: int) -> str:
+    return '{"x":' * depth + "0" + "}" * depth
