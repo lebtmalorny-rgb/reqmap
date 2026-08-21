@@ -212,7 +212,9 @@ def kb() -> KnowledgeBase:
         capabilities=MappingProxyType(capabilities),
         evidence=MappingProxyType(items),
         sources=MappingProxyType(sources),
-        synonyms=MappingProxyType({}),
+        synonyms=MappingProxyType(
+            {"виртуальная машина": ("instance", "server", "nova")}
+        ),
     )
 
 
@@ -236,11 +238,21 @@ def step(
     command: str | None = None,
     api_operation: str | None = None,
     mechanism: str | None = None,
-    action_ru: str = "Выполнить синтетическое действие",
+    action_ru: str | None = None,
 ) -> dict[str, object]:
+    resolved_mechanism = mechanism or (
+        "openstack_api" if phase == "runtime" else "kolla_ansible"
+    )
+    if action_ru is None:
+        if api_operation is not None:
+            action_ru = f"Вызвать {api_operation}"
+        elif command is not None:
+            action_ru = f"Выполнить {command}"
+        else:
+            action_ru = f"Настроить {resolved_mechanism}"
     return {
         "action_ru": action_ru,
-        "mechanism": mechanism or ("openstack_api" if phase == "runtime" else "kolla_ansible"),
+        "mechanism": resolved_mechanism,
         "command": command,
         "api_operation": api_operation,
     }
@@ -249,7 +261,7 @@ def step(
 def design_steps(
     config_mechanism: str,
     *,
-    action_ru: str = "Настроить параметр компонента",
+    action_ru: str | None = None,
 ) -> list[dict[str, object]]:
     return [
         step(
@@ -276,6 +288,7 @@ def raw_mapping(
     mechanism: str | None = None,
     support_status: str = "supported",
     steps: list[dict[str, object]] | None = None,
+    role_ru: str | None = None,
 ) -> dict[str, object]:
     if steps is None:
         if phase == "runtime":
@@ -296,9 +309,22 @@ def raw_mapping(
                 "host_os_nftables": "nftables",
             }.get(component_id, "config_override")
             steps = design_steps(config_mechanism)
+    if role_ru is None:
+        role_ru = {
+            "nova": "Nova server API",
+            "neutron": "Neutron networking API",
+            "kolla_ansible": "Kolla-Ansible reconfigure",
+            "host_os_kernel_sysctl": "Kernel sysctl",
+            "host_os_chrony": "Chrony",
+            "host_os_nftables": "nftables",
+            "host_os_networking": "/etc/hosts",
+            "host_os_package_management": "package installation",
+            "host_os_storage": "data-root",
+            "host_os_identity_access": "sudoers",
+        }.get(component_id, component_id.replace("_", " "))
     return {
         "component_id": component_id,
-        "role_ru": "Реализует проверяемое обязательство",
+        "role_ru": role_ru,
         "relation": relation,
         "phase": phase,
         "implementation_source": implementation_source,
@@ -341,7 +367,7 @@ def canonical_mapping(
             ImplementationStep(
                 order=1,
                 phase=phase,
-                action_ru="Выполнить действие",
+                action_ru=f"Вызвать {api_operation}",
                 mechanism="openstack_api",
                 command=None,
                 api_operation=api_operation,
@@ -368,7 +394,7 @@ def canonical_mapping(
             ImplementationStep(
                 order=1,
                 phase=phase,
-                action_ru="Настроить параметр компонента",
+                action_ru=f"Настроить {config_mechanism}",
                 mechanism=config_mechanism,
             ),
             ImplementationStep(
@@ -383,7 +409,14 @@ def canonical_mapping(
         mapping_id="REQ-0001-A001-M001",
         atom_id="REQ-0001-A001",
         component_id=component_id,
-        role_ru="Роль компонента",
+        role_ru={
+            "nova": "Nova server API",
+            "neutron": "Neutron networking API",
+            "kolla_ansible": "Kolla-Ansible reconfigure",
+            "host_os_kernel_sysctl": "Kernel sysctl",
+            "host_os_chrony": "Chrony",
+            "host_os_nftables": "nftables",
+        }.get(component_id, component_id.replace("_", " ")),
         relation=relation,
         phase=phase,
         implementation_source=source,
@@ -631,7 +664,7 @@ def test_kolla_candidate_may_carry_host_policy_only_as_relational_context(kb) ->
 
     mapped = map_atom(
         model,
-        atom("Применить конфигурацию"),
+        atom("Применить kolla-ansible reconfigure"),
         (
             candidate(
                 "kolla_ansible",
@@ -753,6 +786,89 @@ def test_broad_real_scope_evidence_does_not_prove_invented_endpoint() -> None:
     assert len(model.calls) == 1
 
 
+@pytest.mark.parametrize("api_operation", ["API", "server", "instance", "REST API"])
+def test_real_nova_scope_generic_nouns_do_not_ground_runtime_operation(
+    api_operation: str,
+) -> None:
+    real_kb = load_knowledge(Path("knowledge/epoxy-2025.1"))
+    proposed = raw_mapping(
+        "nova",
+        ("E-NOVA-SCOPE-001",),
+        steps=[step("runtime", api_operation=api_operation)],
+    )
+    model = FakeModel([response(proposed)])
+
+    mapped = map_atom(
+        model,
+        atom(),
+        (
+            candidate(
+                "nova",
+                "E-NOVA-SCOPE-001",
+                capability_id="CAP-NOVA-COMPUTE-API",
+            ),
+        ),
+        real_kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert len(model.calls) == 1
+
+
+def test_runtime_role_semantics_must_be_grounded_by_owned_official_evidence(kb) -> None:
+    role = "Поддерживает квантовую телепортацию"
+    proposed = {**raw_mapping(), "role_ru": role}
+    model = FakeModel([response(proposed, supported_aspects=(role,))])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.supported_aspects == ()
+    assert mapped.unconfirmed_aspects == (role,)
+    assert len(model.calls) == 1
+
+
+def test_unrelated_atom_cannot_claim_supported_known_runtime_mapping(kb) -> None:
+    model = FakeModel([response(raw_mapping())])
+
+    mapped = map_atom(
+        model,
+        atom("Выполнить квантовую телепортацию"),
+        (candidate("nova", "E-NOVA"),),
+        kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+
+
+def test_boilerplate_only_role_and_action_do_not_ground_mapping(kb) -> None:
+    proposed = {
+        **raw_mapping(
+            steps=[
+                step(
+                    "runtime",
+                    api_operation="POST /servers",
+                    action_ru="Выполнить действие",
+                )
+            ]
+        ),
+        "role_ru": "Роль",
+    }
+    model = FakeModel([response(proposed)])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+
+
 def test_specific_synthetic_runtime_operation_is_supported_when_phrase_is_owned(kb) -> None:
     model = FakeModel([response(raw_mapping())])
 
@@ -814,6 +930,52 @@ def test_invented_designtime_identifiers_never_remain_supported(
 
     assert mapped.analysis_state is AnalysisState.COMPLETED
     assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert len(model.calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("role_ru", "action_ru"),
+    [
+        ("настроить raid", "Настроить параметр компонента"),
+        ("изменить ovs", "Настроить параметр компонента"),
+        ("Реализует проверяемое обязательство", "включить unicorn mode"),
+    ],
+)
+def test_lowercase_designtime_semantics_cannot_bypass_grounding(
+    kb, role_ru: str, action_ru: str
+) -> None:
+    host = {
+        **raw_mapping(
+            "host_os_kernel_sysctl",
+            ("E-SYSCTL",),
+            phase="designtime",
+            relation="host_os_change",
+            implementation_source="kolla_ansible",
+            steps=design_steps("sysctl", action_ru=action_ru),
+        ),
+        "role_ru": role_ru,
+    }
+    kolla = raw_mapping(
+        "kolla_ansible",
+        ("E-KOLLA",),
+        phase="designtime",
+        implementation_source="kolla_ansible",
+    )
+    model = FakeModel([response(host, kolla)])
+
+    mapped = map_atom(
+        model,
+        atom("Изменить sysctl"),
+        (
+            candidate("host_os_kernel_sysctl", "E-SYSCTL"),
+            candidate("kolla_ansible", "E-KOLLA"),
+        ),
+        kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert len(model.calls) == 1
 
 
@@ -936,7 +1098,12 @@ def test_standalone_kolla_mapping_is_valid_for_non_host_designtime_change(kb) ->
     )
     model = FakeModel([response(kolla)])
 
-    mapped = map_atom(model, atom("Применить конфигурацию сервиса"), (candidate("kolla_ansible", "E-KOLLA"),), kb)
+    mapped = map_atom(
+        model,
+        atom("Применить kolla-ansible reconfigure"),
+        (candidate("kolla_ansible", "E-KOLLA"),),
+        kb,
+    )
 
     assert mapped.analysis_state is AnalysisState.COMPLETED
     assert mapped.support_status is SupportStatus.SUPPORTED
@@ -1040,6 +1207,87 @@ def test_valid_host_mapping_has_kolla_and_subsystem_with_reconfigure(kb) -> None
     assert mapped.support_status is SupportStatus.SUPPORTED
 
 
+@pytest.mark.parametrize(
+    ("component_id", "official_id", "policy_id", "capability_id", "mechanism"),
+    [
+        (
+            "host_os_networking",
+            "E-HOST-NETWORKING-OFFICIAL-001",
+            "E-HOST-NETWORKING-POLICY-001",
+            "CAP-HOST-NETWORKING-AUTOMATION",
+            "/etc/hosts",
+        ),
+        (
+            "host_os_package_management",
+            "E-HOST-PACKAGES-OFFICIAL-001",
+            "E-HOST-PACKAGES-POLICY-001",
+            "CAP-HOST-PACKAGES-AUTOMATION",
+            "package installation",
+        ),
+        (
+            "host_os_storage",
+            "E-HOST-STORAGE-OFFICIAL-001",
+            "E-HOST-STORAGE-POLICY-001",
+            "CAP-HOST-STORAGE-AUTOMATION",
+            "data-root",
+        ),
+        (
+            "host_os_identity_access",
+            "E-HOST-IDENTITY-OFFICIAL-001",
+            "E-HOST-IDENTITY-POLICY-001",
+            "CAP-HOST-IDENTITY-AUTOMATION",
+            "sudoers",
+        ),
+    ],
+)
+def test_real_host_subsystem_grounding_is_separate_from_kolla_delivery(
+    component_id: str,
+    official_id: str,
+    policy_id: str,
+    capability_id: str,
+    mechanism: str,
+) -> None:
+    real_kb = load_knowledge(Path("knowledge/epoxy-2025.1"))
+    host = raw_mapping(
+        component_id,
+        (official_id, policy_id),
+        phase="designtime",
+        relation="host_os_change",
+        implementation_source="kolla_ansible",
+        steps=design_steps(mechanism, action_ru=f"Настроить {mechanism}"),
+    )
+    kolla = raw_mapping(
+        "kolla_ansible",
+        ("E-KOLLA-RECONFIGURE-001", policy_id),
+        phase="designtime",
+        implementation_source="kolla_ansible",
+    )
+    model = FakeModel([response(host, kolla)])
+
+    mapped = map_atom(
+        model,
+        atom(f"Настроить {mechanism} в подсистеме host OS"),
+        (
+            candidate(component_id, official_id, policy_id, capability_id=capability_id),
+            candidate(
+                "kolla_ansible",
+                "E-KOLLA-RECONFIGURE-001",
+                policy_id,
+                capability_id="CAP-KOLLA-RECONFIGURE",
+            ),
+        ),
+        real_kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.SUPPORTED
+    assert [item.support_status for item in mapped.mappings] == [
+        SupportStatus.SUPPORTED,
+        SupportStatus.SUPPORTED,
+    ]
+    assert len(model.calls) == 1
+
+
 def test_project_policy_alone_downgrades_supported_without_correction(kb) -> None:
     model = FakeModel([response(raw_mapping(evidence_ids=("E-POLICY",)))])
 
@@ -1120,12 +1368,49 @@ def test_negative_chrony_and_nftables_evidence_preserves_not_supported(
         mapping_id="REQ-0001-A001-M002",
     )
     validated = validate_atom_result(
-        AtomResult(atom(), AnalysisState.COMPLETED, SupportStatus.NOT_SUPPORTED, (mapping, kolla)),
+        AtomResult(
+            atom(f"Настроить {component_id.removeprefix('host_os_')}"),
+            AnalysisState.COMPLETED,
+            SupportStatus.NOT_SUPPORTED,
+            (mapping, kolla),
+        ),
         kb,
     )
 
     assert validated.support_status is SupportStatus.NOT_SUPPORTED
     assert validated.mappings[0].support_status is SupportStatus.NOT_SUPPORTED
+
+
+def test_unrelated_atom_cannot_claim_not_supported_from_negative_host_evidence(kb) -> None:
+    host = raw_mapping(
+        "host_os_chrony",
+        ("E-CHRONY-NEG",),
+        phase="designtime",
+        relation="host_os_change",
+        implementation_source="kolla_ansible",
+        support_status="not_supported",
+    )
+    kolla = raw_mapping(
+        "kolla_ansible",
+        ("E-KOLLA",),
+        phase="designtime",
+        implementation_source="kolla_ansible",
+    )
+    model = FakeModel([response(host, kolla, status="not_supported")])
+
+    mapped = map_atom(
+        model,
+        atom("Выполнить квантовую телепортацию"),
+        (
+            candidate("host_os_chrony", "E-CHRONY-NEG"),
+            candidate("kolla_ansible", "E-KOLLA"),
+        ),
+        kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
 
 
 def test_version_conflict_is_derived_from_evidence_not_model_boolean(kb) -> None:
@@ -1157,7 +1442,7 @@ def test_partial_with_positive_official_evidence_preserves_aspects(kb) -> None:
             response(
                 raw_mapping(support_status="partial"),
                 status="partial",
-                supported_aspects=("Реализует проверяемое обязательство",),
+                supported_aspects=("Nova server API",),
                 unconfirmed_aspects=("Расширенное планирование",),
             )
         ]
@@ -1166,7 +1451,7 @@ def test_partial_with_positive_official_evidence_preserves_aspects(kb) -> None:
     mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
 
     assert mapped.support_status is SupportStatus.PARTIAL
-    assert mapped.supported_aspects == ("Реализует проверяемое обязательство",)
+    assert mapped.supported_aspects == ("Nova server API",)
     assert mapped.unconfirmed_aspects == ("Расширенное планирование",)
 
 
@@ -1191,7 +1476,7 @@ def test_partial_unlinked_supported_aspect_downgrades_instead_of_any_mapping_pro
 
 
 def test_partial_moves_only_unlinked_aspects_and_keeps_exact_role_link(kb) -> None:
-    role = "Реализует проверяемое обязательство"
+    role = "Nova server API"
     model = FakeModel(
         [
             response(
@@ -1208,6 +1493,21 @@ def test_partial_moves_only_unlinked_aspects_and_keeps_exact_role_link(kb) -> No
     assert mapped.support_status is SupportStatus.PARTIAL
     assert mapped.supported_aspects == (role,)
     assert mapped.unconfirmed_aspects == ("Не подтверждено", "Чужой аспект")
+
+
+def test_supported_status_downgrades_when_its_only_promised_aspect_is_unproved(kb) -> None:
+    promised = "Квантовая телепортация"
+    model = FakeModel(
+        [response(raw_mapping(), supported_aspects=(promised,))]
+    )
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.supported_aspects == ()
+    assert mapped.unconfirmed_aspects == (promised,)
+    assert len(model.calls) == 1
 
 
 @pytest.mark.parametrize("status", ["supported", "partial", "not_supported"])
@@ -1289,6 +1589,24 @@ def test_public_validator_converts_malformed_canonical_field_types_to_validation
             validate_atom_result(result(item), kb)
 
 
+@pytest.mark.parametrize(
+    "diagnostics",
+    [
+        ["сообщение"],
+        (StringSubclass("сообщение"),),
+        ("",),
+        (1,),
+    ],
+)
+def test_public_validator_requires_exact_nonempty_builtin_diagnostic_strings(
+    kb, diagnostics: object
+) -> None:
+    invalid = replace(result(canonical_mapping()), diagnostics=diagnostics)
+
+    with pytest.raises(ValidationError):
+        validate_atom_result(invalid, kb)  # type: ignore[arg-type]
+
+
 def test_noncompleted_result_cannot_retain_confirmed_aspects(kb) -> None:
     invalid = AtomResult(
         atom(),
@@ -1312,7 +1630,12 @@ def test_real_epoxy_snapshot_supports_broad_nova_neutron_many_to_many_scope() ->
                 raw_mapping(
                     "nova",
                     ("E-NOVA-SCOPE-001",),
-                    steps=[step("runtime", api_operation="REST API")],
+                    steps=[
+                        step(
+                            "runtime",
+                            api_operation="Compute instances через REST API",
+                        )
+                    ],
                 ),
                 raw_mapping(
                     "neutron",
@@ -1325,7 +1648,9 @@ def test_real_epoxy_snapshot_supports_broad_nova_neutron_many_to_many_scope() ->
 
     mapped = map_atom(
         model,
-        atom("Создать VM и сетевой порт через API"),
+        atom(
+            "Создать виртуальную машину через Nova API и network port через Neutron API"
+        ),
         (
             candidate(
                 "nova", "E-NOVA-SCOPE-001", capability_id="CAP-NOVA-COMPUTE-API"
@@ -1372,7 +1697,11 @@ def test_real_epoxy_negative_host_boundaries_remain_not_supported(
 
     mapped = map_atom(
         model,
-        atom("Изменить подсистему host OS"),
+        atom(
+            "Настроить chrony в подсистеме host OS"
+            if component_id == "host_os_chrony"
+            else "Настроить nftables в подсистеме host OS"
+        ),
         (
             candidate(
                 component_id,

@@ -29,6 +29,7 @@ from reqmap.models import (
     to_dict,
 )
 from reqmap.prompts import MAPPING_PROMPT
+from reqmap.retrieval import retrieve
 
 
 _TOP_LEVEL_KEYS = frozenset(
@@ -56,7 +57,45 @@ _CANDIDATE_REASON_POLICY = (
     "но никогда не являются evidence."
 )
 _WORD = re.compile(r"[^\W_]+", re.UNICODE)
-_ASCII_IDENTIFIER = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9_.-]*(?![A-Za-z0-9_.-])")
+_GENERIC_RUNTIME_OPERATIONS = frozenset(
+    {
+        "api",
+        "rest api",
+        "server",
+        "servers",
+        "instance",
+        "instances",
+    }
+)
+_SEMANTIC_BOILERPLATE = frozenset(
+    {
+        "включить",
+        "выполнить",
+        "вызвать",
+        "действие",
+        "изменение",
+        "изменить",
+        "компонент",
+        "компонента",
+        "конфигурацию",
+        "конфигурация",
+        "настроить",
+        "настройка",
+        "обязательство",
+        "параметр",
+        "параметры",
+        "поддержать",
+        "поддерживает",
+        "применить",
+        "проверяемое",
+        "проверяемый",
+        "реализовать",
+        "реализует",
+        "роль",
+        "синтетическое",
+        "установить",
+    }
+)
 
 
 def map_atom(
@@ -137,13 +176,19 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
         _fail("COMPLETED_WITHOUT_STATUS", "Завершённый анализ обязан содержать support status.")
 
     _validate_aspects(result)
+    atom_candidates = retrieve(
+        kb,
+        result.atom.text,
+        (),
+        max(1, len(kb.capabilities)),
+    )
     normalized: list[Mapping] = []
     downgraded = False
     for ordinal, item in enumerate(result.mappings, start=1):
         if type(item) is not Mapping:
             _fail("MAPPING_TYPE", "mappings должен содержать только canonical Mapping.")
         _validate_mapping_record(item, result.atom, ordinal, kb)
-        replacement = _normalize_mapping_support(item, kb)
+        replacement = _normalize_mapping_support(item, kb, atom_candidates)
         if replacement.support_status is not item.support_status:
             downgraded = True
         normalized.append(replacement)
@@ -156,7 +201,7 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
         for item in normalized
         if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
         and _has_positive_official(item, kb)
-        and _mapping_grounded(item, kb)
+        and _mapping_grounded(item, kb, atom_candidates)
     }
     supported_aspects = tuple(
         aspect for aspect in result.supported_aspects if aspect in grounded_roles
@@ -167,7 +212,11 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
     unconfirmed_aspects = tuple(
         dict.fromkeys((*result.unconfirmed_aspects, *unproved_aspects))
     )
-    if result.support_status is SupportStatus.PARTIAL and not supported_aspects:
+    if (
+        result.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
+        and result.supported_aspects
+        and not supported_aspects
+    ):
         normalized = [
             _downgrade_mapping(item)
             if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
@@ -202,7 +251,7 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
         unconfirmed_aspects=unconfirmed_aspects,
         diagnostics=diagnostics,
     )
-    _validate_confirmed_aspects(normalized_result, kb)
+    _validate_confirmed_aspects(normalized_result, kb, atom_candidates)
     return normalized_result
 
 
@@ -703,17 +752,29 @@ def _validate_result_shape(result: AtomResult) -> None:
     ):
         if type(values) is not tuple:
             _fail("ATOM_RESULT_TYPE", f"{label} AtomResult должен быть tuple.")
+    if any(
+        type(message) is not str or not message.strip()
+        for message in result.diagnostics
+    ):
+        _fail(
+            "ATOM_RESULT_DIAGNOSTICS",
+            "diagnostics AtomResult должен содержать только непустые built-in строки.",
+        )
     if result.support_status is not None and type(result.support_status) is not SupportStatus:
         _fail("ATOM_STATUS", "support_status атома не входит в канонический enum.")
 
 
-def _validate_confirmed_aspects(result: AtomResult, kb: KnowledgeBase) -> None:
+def _validate_confirmed_aspects(
+    result: AtomResult,
+    kb: KnowledgeBase,
+    atom_candidates: tuple[Candidate, ...],
+) -> None:
     grounded_roles = {
         item.role_ru
         for item in result.mappings
         if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
         and _has_positive_official(item, kb)
-        and _mapping_grounded(item, kb)
+        and _mapping_grounded(item, kb, atom_candidates)
     }
     if any(aspect not in grounded_roles for aspect in result.supported_aspects):
         _fail(
@@ -722,14 +783,21 @@ def _validate_confirmed_aspects(result: AtomResult, kb: KnowledgeBase) -> None:
         )
 
 
-def _normalize_mapping_support(item: Mapping, kb: KnowledgeBase) -> Mapping:
+def _normalize_mapping_support(
+    item: Mapping,
+    kb: KnowledgeBase,
+    atom_candidates: tuple[Candidate, ...],
+) -> Mapping:
     if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}:
-        if not (_has_positive_official(item, kb) and _mapping_grounded(item, kb)):
+        if not (
+            _has_positive_official(item, kb)
+            and _mapping_grounded(item, kb, atom_candidates)
+        ):
             return _downgrade_mapping(item)
     elif item.support_status is SupportStatus.NOT_SUPPORTED:
         if not (
             (_has_negative_official_direct(item, kb) or _has_version_conflict(item, kb))
-            and _mapping_grounded(item, kb)
+            and _mapping_grounded(item, kb, atom_candidates)
         ):
             return _downgrade_mapping(item)
     return item
@@ -787,37 +855,51 @@ def _official_owned(evidence: Evidence, component_id: str, kb: KnowledgeBase) ->
     )
 
 
-def _mapping_grounded(item: Mapping, kb: KnowledgeBase) -> bool:
+def _mapping_grounded(
+    item: Mapping,
+    kb: KnowledgeBase,
+    atom_candidates: tuple[Candidate, ...],
+) -> bool:
+    if not _atom_mapping_grounded(item, kb, atom_candidates):
+        return False
+
     corpus = _official_component_corpus(item, kb)
     if not corpus:
         return False
     if item.phase is Phase.RUNTIME:
-        return all(
-            type(step.api_operation) is str
-            and bool(step.api_operation.strip())
-            and _phrase_in_corpus(step.api_operation, corpus)
-            for step in item.steps
+        return (
+            all(
+                type(step.api_operation) is str
+                and bool(step.api_operation.strip())
+                and _runtime_operation_grounded(step.api_operation, corpus)
+                and _semantic_text_grounded(step.action_ru, corpus)
+                for step in item.steps
+            )
+            and _semantic_text_grounded(item.role_ru, corpus)
         )
 
-    if item.component_id != "kolla_ansible":
-        config_steps = tuple(
-            step
-            for step in item.steps
-            if step.command is None and step.mechanism != "kolla_ansible"
+    if item.component_id == "kolla_ansible":
+        return (
+            all(
+                step.command is None
+                or _phrase_in_corpus(step.command, corpus)
+                for step in item.steps
+            )
+            and _semantic_text_grounded(item.role_ru, corpus)
+            and all(_semantic_text_grounded(step.action_ru, corpus) for step in item.steps)
         )
-        if not config_steps or any(
-            not _phrase_in_corpus(step.mechanism, corpus) for step in config_steps
-        ):
-            return False
 
-    grounded_text = " ".join(
-        (
-            item.role_ru,
-            item.mechanism,
-            *(value for step in item.steps for value in (step.action_ru, step.mechanism)),
-        )
+    config_steps = tuple(
+        step
+        for step in item.steps
+        if step.command is None and step.mechanism != "kolla_ansible"
     )
-    return all(_phrase_in_corpus(identifier, corpus) for identifier in _identifiers(grounded_text))
+    return (
+        bool(config_steps)
+        and all(_phrase_in_corpus(step.mechanism, corpus) for step in config_steps)
+        and _semantic_text_grounded(item.role_ru, corpus)
+        and all(_semantic_text_grounded(step.action_ru, corpus) for step in config_steps)
+    )
 
 
 def _official_component_corpus(item: Mapping, kb: KnowledgeBase) -> tuple[str, ...]:
@@ -843,21 +925,45 @@ def _phrase_in_corpus(phrase: str, corpus: tuple[str, ...]) -> bool:
     return any(needle in f" {_normalized_phrase(record)} " for record in corpus)
 
 
+def _runtime_operation_grounded(operation: str, corpus: tuple[str, ...]) -> bool:
+    normalized = _normalized_phrase(operation)
+    return (
+        normalized not in _GENERIC_RUNTIME_OPERATIONS
+        and _phrase_in_corpus(operation, corpus)
+    )
+
+
+def _semantic_text_grounded(value: str, corpus: tuple[str, ...]) -> bool:
+    significant_terms = tuple(
+        term
+        for term in _normalized_phrase(value).split()
+        if term not in _SEMANTIC_BOILERPLATE
+    )
+    return bool(significant_terms) and all(
+        _phrase_in_corpus(term, corpus) for term in significant_terms
+    )
+
+
+def _atom_mapping_grounded(
+    item: Mapping,
+    kb: KnowledgeBase,
+    atom_candidates: tuple[Candidate, ...],
+) -> bool:
+    owned_official_ids = {
+        evidence_id
+        for evidence_id in item.evidence_ids
+        if _official_owned(kb.evidence[evidence_id], item.component_id, kb)
+    }
+    return bool(owned_official_ids) and any(
+        candidate.component_id == item.component_id
+        and bool(owned_official_ids.intersection(candidate.evidence_ids))
+        for candidate in atom_candidates
+    )
+
+
 def _normalized_phrase(value: str) -> str:
     normalized = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
     return " ".join(_WORD.findall(normalized.replace("_", " ")))
-
-
-def _identifiers(value: str) -> tuple[str, ...]:
-    identifiers: list[str] = []
-    for token in _ASCII_IDENTIFIER.findall(value):
-        if (
-            any(separator in token for separator in ("_", ".", "-"))
-            or (len(token) > 1 and token.isupper())
-            or any(character.isdigit() for character in token)
-        ):
-            identifiers.append(token)
-    return tuple(dict.fromkeys(identifiers))
 
 
 def _candidate_evidence_owned(
