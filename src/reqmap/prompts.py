@@ -12,4 +12,6 @@ DECOMPOSITION_PROMPT = """Ты выполняешь только декомпо�
 
 Схема ответа: строго JSON object с единственным ключом atoms. atoms — непустой массив.
 Каждый элемент atoms — object строго с ключами text, source_quote, mandatory; text и source_quote
-— непустые строки, mandatory — JSON boolean."""
+— непустые строки, mandatory — JSON boolean. Поле text — неавторитетная метка для
+совместимости схемы: downstream атом всегда получает text, в точности равный source_quote
+из текущего requirement_text."""

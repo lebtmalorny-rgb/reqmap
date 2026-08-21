@@ -36,7 +36,7 @@ def decompose(
         "response_schema": {
             "atoms": [
                 {
-                    "text": "non-empty string",
+                    "text": "non-empty non-authoritative compatibility label",
                     "source_quote": "non-empty exact substring of requirement_text",
                     "mandatory": "boolean",
                 }
@@ -48,8 +48,10 @@ def decompose(
     for _attempt in range(2):
         try:
             response = model.complete_json("decomposition", DECOMPOSITION_PROMPT, payload)
-            if not isinstance(response, Mapping):
-                violations = ("Ответ модели должен быть JSON object верхнего уровня.",)
+            if type(response) is not dict:
+                violations = (
+                    "Ответ модели должен быть встроенным dict JSON object верхнего уровня.",
+                )
                 invalid_response: object = response
             else:
                 response_mapping = cast(Mapping[str, object], response)
@@ -82,11 +84,13 @@ def decomposition_violations(
 ) -> tuple[str, ...]:
     """Возвращает детерминированный список нарушений строгого response contract."""
     violations: list[str] = []
+    if type(response) is not dict:
+        return ("Ответ модели должен быть встроенным dict JSON object верхнего уровня.",)
     if set(response) != _TOP_LEVEL_KEYS:
         violations.append("Ответ должен содержать только ключ верхнего уровня atoms.")
 
     atoms = response.get("atoms")
-    if not isinstance(atoms, list) or not atoms:
+    if type(atoms) is not list or not atoms:
         violations.append("Поле atoms должно быть непустым массивом.")
         return tuple(violations)
 
@@ -94,8 +98,8 @@ def decomposition_violations(
     seen_quotes: set[str] = set()
     for index, atom in enumerate(atoms, start=1):
         prefix = f"Атом {index}"
-        if not isinstance(atom, Mapping):
-            violations.append(f"{prefix} должен быть object.")
+        if type(atom) is not dict:
+            violations.append(f"{prefix} должен быть встроенным dict object.")
             continue
         if set(atom) != _ATOM_KEYS:
             violations.append(
@@ -127,13 +131,18 @@ def decomposition_violations(
 
 
 def build_atoms(requirement: Requirement, response: Mapping[str, object]) -> tuple[AtomicClaim, ...]:
-    """Строит canonical atoms из уже проверенного ответа, сохраняя модельный порядок."""
-    raw_atoms = cast(list[Mapping[str, object]], response["atoms"])
+    """Строит canonical atoms из concrete JSON snapshot, сохраняя порядок модели."""
+    if type(response) is not dict or type(response.get("atoms")) is not list:
+        raise ValueError("build_atoms принимает только проверенный встроенный JSON object.")
+    raw_atoms = cast(list[dict[str, object]], response["atoms"])
+    if any(type(raw_atom) is not dict for raw_atom in raw_atoms):
+        raise ValueError("build_atoms принимает только проверенные встроенные JSON atoms.")
     return tuple(
         AtomicClaim(
             atom_id=atom_id(requirement.requirement_id, ordinal),
             requirement_id=requirement.requirement_id,
-            text=cast(str, raw_atom["text"]),
+            # Свободная label text модели не может стать canonical/downstream content.
+            text=cast(str, raw_atom["source_quote"]),
             source_quote=cast(str, raw_atom["source_quote"]),
             mandatory=cast(bool, raw_atom["mandatory"]),
             ordinal=ordinal,

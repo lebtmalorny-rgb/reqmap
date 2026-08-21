@@ -1,6 +1,7 @@
 """Контракт grounded-декомпозиции требований."""
 
 from collections import deque
+from collections.abc import Mapping
 from typing import Any
 
 import pytest
@@ -67,14 +68,36 @@ def test_decompose_preserves_multiple_obligations_and_order() -> None:
 
     assert outcome.analysis_state is AnalysisState.COMPLETED
     assert [(atom.atom_id, atom.ordinal, atom.text) for atom in outcome.atoms] == [
-        ("REQ-0001-A001", 1, "Создание ВМ через API"),
-        ("REQ-0001-A002", 2, "Настройка sysctl"),
+        ("REQ-0001-A001", 1, "создание ВМ через API"),
+        ("REQ-0001-A002", 2, "настройку sysctl"),
     ]
     assert [atom.source_quote for atom in outcome.atoms] == [
         "создание ВМ через API",
         "настройку sysctl",
     ]
     assert model.calls[0][0:2] == ("decomposition", DECOMPOSITION_PROMPT)
+
+
+def test_decompose_uses_exact_quote_not_free_model_text_as_canonical_content() -> None:
+    """Подмена model text не должна попасть в downstream canonical atom."""
+    model = FakeModel(
+        [
+            valid_atoms(
+                {
+                    "text": "Удалять все резервные копии после создания ВМ",
+                    "source_quote": "ВМ",
+                    "mandatory": True,
+                }
+            )
+        ]
+    )
+
+    outcome = decompose(model, requirement_text("Создание ВМ"), None)
+
+    assert outcome.analysis_state is AnalysisState.COMPLETED
+    assert outcome.atoms[0].text == "ВМ"
+    assert outcome.atoms[0].source_quote == "ВМ"
+    assert "Удалять" not in outcome.atoms[0].text
 
 
 def test_decompose_rejects_case_changed_or_invented_quote_after_one_correction() -> None:
@@ -141,6 +164,35 @@ def test_decomposition_violations_rejects_unknown_top_level_and_duplicate_obliga
 
     assert any("верхнего уровня" in violation for violation in violations)
     assert any("повторяет" in violation for violation in violations)
+
+
+class DivergentMapping(Mapping[str, object]):
+    """Содержит разные значения для get/item и имитирует небезопасный model object."""
+
+    def __iter__(self) -> Any:
+        return iter(("atoms",))
+
+    def __len__(self) -> int:
+        return 1
+
+    def __getitem__(self, key: str) -> object:
+        assert key == "atoms"
+        return [{"text": "invented", "source_quote": "invented", "mandatory": True}]
+
+    def get(self, key: str, default: object = None) -> object:
+        assert key == "atoms"
+        return [{"text": "safe", "source_quote": "safe", "mandatory": True}]
+
+
+def test_decompose_rejects_non_builtin_mapping_before_build_can_reread_it() -> None:
+    """Нестабильный Mapping нельзя валидировать одним способом и читать другим."""
+    model = FakeModel([DivergentMapping(), DivergentMapping()])
+
+    outcome = decompose(model, requirement_text("safe"), None)
+
+    assert outcome.analysis_state is AnalysisState.MODEL_FAILED
+    assert outcome.atoms == ()
+    assert "встроенным dict" in outcome.diagnostics[0]
 
 
 def test_decompose_correction_can_return_valid_response() -> None:
