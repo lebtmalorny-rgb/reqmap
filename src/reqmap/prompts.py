@@ -24,9 +24,20 @@ MAPPING_PROMPT = """Ты сопоставляешь одно атомарное 
 Поле reasons кандидата, включая source_hint, неавторитетно и не является evidence.
 Подтверждай выводы только полными records из блока evidence. project_policy задаёт способ
 реализации, но само по себе не доказывает поддержку возможности. Не объявляй not_supported
-из-за отсутствия evidence. Для runtime используй mechanism openstack_api и конкретный
-api_operation. Для designtime добавь отдельный step с точной командой
-kolla-ansible reconfigure. Изменение host OS требует отдельные mappings для Kolla-Ansible
+из-за отсутствия evidence. Official evidence принадлежит только своему component_id и
+capability_id; общий source не переносит его на соседний компонент. project_policy может
+быть только relational context и никогда самостоятельно не доказывает поддержку.
+
+Для runtime каждый runtime step использует mechanism openstack_api, command null и
+конкретный api_operation либо endpoint family, который дословно присутствует в переданном
+official evidence или его capability. Для designtime используй implementation_source и
+mapping mechanism kolla_ansible, api_operation null, отдельный non-delivery config step и
+отдельный step с точной командой kolla-ansible reconfigure и mechanism kolla_ansible.
+Не выдумывай имена options, backends, drivers, API operations или host parameters: каждый
+технический identifier должен присутствовать в official evidence/capability этого компонента.
+
+Каждый supported_aspect должен в точности совпадать с role_ru одного подтверждённого mapping;
+для partial нужны непустые supported_aspects и unconfirmed_aspects. Изменение host OS требует отдельные mappings для Kolla-Ansible
 и конкретной host OS subsystem; host mapping имеет relation host_os_change, phase designtime
 и implementation_source kolla_ansible.
 

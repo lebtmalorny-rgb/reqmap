@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import math
+import re
+import unicodedata
 from typing import cast
 
 from reqmap.errors import ModelOutputError, ValidationError
@@ -52,6 +55,8 @@ _CANDIDATE_REASON_POLICY = (
     "reasons кандидата, включая source_hint, неавторитетны: они помогают ранжированию, "
     "но никогда не являются evidence."
 )
+_WORD = re.compile(r"[^\W_]+", re.UNICODE)
+_ASCII_IDENTIFIER = re.compile(r"(?<![A-Za-z0-9_.-])[A-Za-z][A-Za-z0-9_.-]*(?![A-Za-z0-9_.-])")
 
 
 def map_atom(
@@ -114,7 +119,7 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
     insufficiency is not a model-format error and is deterministically downgraded.
     """
     _validate_result_shape(result)
-    if not isinstance(result.analysis_state, AnalysisState):
+    if type(result.analysis_state) is not AnalysisState:
         _fail("ANALYSIS_STATE", "analysis_state не входит в канонический enum.")
     if result.analysis_state is not AnalysisState.COMPLETED:
         if (
@@ -146,31 +151,47 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
 
     original_status = _canonical_status(result.mappings)
     _validate_top_level_semantics(result, original_status)
+    grounded_roles = {
+        item.role_ru
+        for item in normalized
+        if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
+        and _has_positive_official(item, kb)
+        and _mapping_grounded(item, kb)
+    }
+    supported_aspects = tuple(
+        aspect for aspect in result.supported_aspects if aspect in grounded_roles
+    )
+    unproved_aspects = tuple(
+        aspect for aspect in result.supported_aspects if aspect not in grounded_roles
+    )
+    unconfirmed_aspects = tuple(
+        dict.fromkeys((*result.unconfirmed_aspects, *unproved_aspects))
+    )
+    if result.support_status is SupportStatus.PARTIAL and not supported_aspects:
+        normalized = [
+            _downgrade_mapping(item)
+            if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
+            else item
+            for item in normalized
+        ]
+        downgraded = True
+
     normalized_status = _canonical_status(tuple(normalized))
     if not normalized and result.support_status in {
         SupportStatus.INSUFFICIENT_EVIDENCE,
         SupportStatus.NOT_APPLICABLE,
     }:
         normalized_status = result.support_status
-
-    if normalized_status is SupportStatus.PARTIAL:
-        if not result.supported_aspects or not result.unconfirmed_aspects:
-            _fail(
-                "PARTIAL_ASPECTS",
-                "Статус partial требует непустые supported_aspects и unconfirmed_aspects.",
-            )
-
-    supported_aspects = result.supported_aspects
-    unconfirmed_aspects = result.unconfirmed_aspects
-    diagnostics = result.diagnostics
-    unproved_confirmed_aspects = bool(result.supported_aspects) and not any(
-        _has_positive_official(item, kb) for item in normalized
-    )
-    if downgraded or unproved_confirmed_aspects:
-        unconfirmed_aspects = tuple(
-            dict.fromkeys((*result.unconfirmed_aspects, *result.supported_aspects))
+    if normalized_status is SupportStatus.PARTIAL and (
+        not supported_aspects or not unconfirmed_aspects
+    ):
+        _fail(
+            "PARTIAL_ASPECTS",
+            "Статус partial требует связанные supported_aspects и непустые unconfirmed_aspects.",
         )
-        supported_aspects = ()
+
+    diagnostics = result.diagnostics
+    if downgraded or unproved_aspects:
         diagnostics = tuple(dict.fromkeys((*result.diagnostics, _DOWNGRADE_REASON)))
 
     normalized_result = replace(
@@ -230,22 +251,56 @@ def _mapping_payload(
 
 
 def _validate_candidates(candidates: tuple[Candidate, ...], kb: KnowledgeBase) -> None:
+    if type(candidates) is not tuple:
+        _fail("CANDIDATES_TYPE", "candidates должен быть встроенным tuple Candidate records.")
     for item in candidates:
+        if type(item) is not Candidate:
+            _fail("CANDIDATE_TYPE", "candidates должен содержать только canonical Candidate.")
+        if type(item.component_id) is not str or not item.component_id:
+            _fail("CANDIDATE_COMPONENT_UNKNOWN", "component_id кандидата должен быть built-in str.")
         if item.component_id not in kb.components:
             _fail(
                 "CANDIDATE_COMPONENT_UNKNOWN",
                 f"Кандидат ссылается на неизвестный компонент: {item.component_id}",
             )
+        if item.capability_id is not None and (
+            type(item.capability_id) is not str or not item.capability_id
+        ):
+            _fail("CANDIDATE_CAPABILITY_UNKNOWN", "capability_id кандидата должен быть built-in str или null.")
         if item.capability_id is not None and item.capability_id not in kb.capabilities:
             _fail(
                 "CANDIDATE_CAPABILITY_UNKNOWN",
                 f"Кандидат ссылается на неизвестную capability: {item.capability_id}",
             )
+        if item.capability_id is not None and (
+            kb.capabilities[item.capability_id].component_id != item.component_id
+        ):
+            _fail(
+                "CANDIDATE_CAPABILITY_OWNERSHIP",
+                "Capability кандидата принадлежит другому компоненту.",
+            )
+        if type(item.evidence_ids) is not tuple:
+            _fail("CANDIDATE_EVIDENCE_TYPE", "evidence_ids кандидата должен быть tuple built-in str.")
+        if any(type(evidence_id) is not str or not evidence_id for evidence_id in item.evidence_ids):
+            _fail("CANDIDATE_EVIDENCE_TYPE", "evidence_ids кандидата должен содержать built-in str.")
+        if len(item.evidence_ids) != len(set(item.evidence_ids)):
+            _fail("CANDIDATE_EVIDENCE_DUPLICATE", "evidence_ids кандидата не должен содержать дубли.")
+        if type(item.score) not in {int, float} or not math.isfinite(item.score):
+            _fail("CANDIDATE_SCORE", "score кандидата должен быть конечным built-in числом.")
+        if type(item.reasons) is not tuple or any(
+            type(reason) is not str or not reason for reason in item.reasons
+        ):
+            _fail("CANDIDATE_REASONS", "reasons кандидата должен быть tuple built-in str.")
         for evidence_id in item.evidence_ids:
             if evidence_id not in kb.evidence:
                 _fail(
                     "CANDIDATE_EVIDENCE_UNKNOWN",
                     f"Кандидат ссылается на неизвестный evidence: {evidence_id}",
+                )
+            if not _candidate_evidence_owned(item, kb.evidence[evidence_id], kb):
+                _fail(
+                    "CANDIDATE_EVIDENCE_OWNERSHIP",
+                    f"Evidence {evidence_id} не принадлежит candidate component/capability.",
                 )
 
 
@@ -303,7 +358,7 @@ def _response_violations(response: dict[str, object]) -> tuple[str, ...]:
                 _nonempty_string_violation(step.get(key), f"{step_prefix}.{key}", violations)
             for key in ("command", "api_operation"):
                 value = step.get(key)
-                if value is not None and (not isinstance(value, str) or not value.strip()):
+                if value is not None and (type(value) is not str or not value.strip()):
                     violations.append(f"{step_prefix}.{key} должен быть непустой строкой или null.")
 
     status = response.get("support_status")
@@ -325,9 +380,9 @@ def _candidate_reference_violations(
     response: dict[str, object], candidates: tuple[Candidate, ...], kb: KnowledgeBase
 ) -> tuple[str, ...]:
     candidate_components = {item.component_id for item in candidates}
-    allowed_evidence = {
-        evidence_id for item in candidates for evidence_id in item.evidence_ids
-    }
+    allowed_evidence: dict[str, set[str]] = {}
+    for candidate in candidates:
+        allowed_evidence.setdefault(candidate.component_id, set()).update(candidate.evidence_ids)
     violations: list[str] = []
     if response["support_status"] == SupportStatus.NOT_APPLICABLE.value and any(
         kb.components[item.component_id].kind == "host_os_subsystem"
@@ -344,11 +399,11 @@ def _candidate_reference_violations(
                 f"Mapping {index}: компонент {component_id} отсутствует в списке кандидатов."
             )
         for evidence_id in cast(list[str], item["evidence_ids"]):
-            if evidence_id not in allowed_evidence:
+            if evidence_id not in allowed_evidence.get(component_id, set()):
                 violations.append(
-                    f"Mapping {index}: evidence {evidence_id} отсутствует в evidence кандидатов."
+                    f"Mapping {index}: evidence {evidence_id} отсутствует в evidence кандидата {component_id}."
                 )
-            elif not _evidence_relevant(kb.evidence[evidence_id], component_id, kb):
+            elif not _mapping_evidence_relevant(kb.evidence[evidence_id], component_id, kb):
                 violations.append(
                     f"Mapping {index}: evidence {evidence_id} нерелевантно компоненту {component_id}."
                 )
@@ -404,32 +459,32 @@ def _validate_mapping_record(
     item: Mapping, atom: AtomicClaim, ordinal: int, kb: KnowledgeBase
 ) -> None:
     expected_id = mapping_id(atom.atom_id, ordinal)
-    if not isinstance(item.mapping_id, str) or not item.mapping_id:
+    if type(item.mapping_id) is not str or not item.mapping_id:
         _fail("MAPPING_ID", "mapping_id должен быть непустой строкой.")
     if item.mapping_id != expected_id:
         _fail("MAPPING_ID", f"Нестабильный mapping_id: ожидался {expected_id}.")
-    if not isinstance(item.atom_id, str) or not item.atom_id:
+    if type(item.atom_id) is not str or not item.atom_id:
         _fail("MAPPING_ATOM_UNKNOWN", "atom_id mapping должен быть непустой строкой.")
     if item.atom_id != atom.atom_id:
         _fail("MAPPING_ATOM_UNKNOWN", "Mapping ссылается не на текущий atom.")
-    if not isinstance(item.component_id, str) or not item.component_id:
+    if type(item.component_id) is not str or not item.component_id:
         _fail("UNKNOWN_COMPONENT", "component_id mapping должен быть непустой строкой.")
     component = kb.components.get(item.component_id)
     if component is None:
         _fail("UNKNOWN_COMPONENT", f"Неизвестный компонент: {item.component_id}")
-    if not isinstance(item.role_ru, str) or not item.role_ru.strip():
+    if type(item.role_ru) is not str or not item.role_ru.strip():
         _fail("MAPPING_ROLE", "role_ru mapping должен быть непустой строкой.")
-    if not isinstance(item.mechanism, str) or not item.mechanism.strip():
+    if type(item.mechanism) is not str or not item.mechanism.strip():
         _fail("MAPPING_MECHANISM", "mechanism mapping должен быть непустой строкой.")
-    if not isinstance(item.reason_ru, str) or not item.reason_ru.strip():
+    if type(item.reason_ru) is not str or not item.reason_ru.strip():
         _fail("MAPPING_REASON", "reason_ru mapping должен быть непустой строкой.")
-    if not isinstance(item.relation, RelationType):
+    if type(item.relation) is not RelationType:
         _fail("MAPPING_RELATION", "relation mapping не входит в канонический enum.")
-    if not isinstance(item.phase, Phase):
+    if type(item.phase) is not Phase:
         _fail("MAPPING_PHASE", "phase mapping не входит в канонический enum.")
-    if not isinstance(item.implementation_source, ImplementationSource):
+    if type(item.implementation_source) is not ImplementationSource:
         _fail("MAPPING_SOURCE", "implementation_source не входит в канонический enum.")
-    if not isinstance(item.support_status, SupportStatus):
+    if type(item.support_status) is not SupportStatus:
         _fail("MAPPING_STATUS", "support_status mapping не входит в канонический enum.")
     if item.support_status is SupportStatus.NOT_APPLICABLE:
         _fail("MAPPING_NOT_APPLICABLE", "not_applicable не может содержать mapping.")
@@ -442,7 +497,7 @@ def _validate_mapping_record(
     if type(item.evidence_ids) is not tuple:
         _fail("EVIDENCE_IDS", "evidence_ids mapping должен быть tuple строк.")
     for evidence_id in item.evidence_ids:
-        if not isinstance(evidence_id, str) or not evidence_id:
+        if type(evidence_id) is not str or not evidence_id:
             _fail("UNKNOWN_EVIDENCE", "evidence_id должен быть непустой строкой.")
     if len(item.evidence_ids) != len(set(item.evidence_ids)):
         _fail("EVIDENCE_DUPLICATE", "evidence_ids mapping не должен содержать дубли.")
@@ -450,7 +505,7 @@ def _validate_mapping_record(
         cited = kb.evidence.get(evidence_id)
         if cited is None:
             _fail("UNKNOWN_EVIDENCE", f"Неизвестный evidence: {evidence_id}")
-        if not _evidence_relevant(cited, item.component_id, kb):
+        if not _mapping_evidence_relevant(cited, item.component_id, kb):
             _fail(
                 "EVIDENCE_COMPONENT_MISMATCH",
                 f"Evidence {evidence_id} нерелевантно компоненту {item.component_id}.",
@@ -459,16 +514,16 @@ def _validate_mapping_record(
 
 
 def _validate_step(step: ImplementationStep, item: Mapping, ordinal: int) -> None:
-    if step.order != ordinal:
+    if type(step.order) is not int or step.order != ordinal:
         _fail("STEP_ORDER", "Порядок implementation steps должен быть последовательным с единицы.")
     if step.phase is not item.phase:
         _fail("STEP_PHASE_MISMATCH", "Фаза шага не совпадает с фазой mapping.")
-    if not isinstance(step.action_ru, str) or not step.action_ru.strip():
+    if type(step.action_ru) is not str or not step.action_ru.strip():
         _fail("STEP_ACTION", "action_ru implementation step должен быть непустой строкой.")
-    if not isinstance(step.mechanism, str) or not step.mechanism.strip():
+    if type(step.mechanism) is not str or not step.mechanism.strip():
         _fail("STEP_MECHANISM", "mechanism implementation step должен быть непустой строкой.")
     for code, value in (("STEP_COMMAND", step.command), ("STEP_API_OPERATION", step.api_operation)):
-        if value is not None and (not isinstance(value, str) or not value.strip()):
+        if value is not None and (type(value) is not str or not value.strip()):
             _fail(code, "command и api_operation должны быть непустой строкой или null.")
 
 
@@ -485,13 +540,55 @@ def _validate_implementation(item: Mapping, component_kind: str) -> None:
             _fail("RUNTIME_MECHANISM", "Runtime mapping обязан иметь mechanism openstack_api.")
         if any(step.command is not None for step in item.steps):
             _fail("RUNTIME_COMMAND", "Runtime implementation steps обязаны иметь command=null.")
+        if any(step.mechanism != "openstack_api" for step in item.steps):
+            _fail(
+                "RUNTIME_STEP_MECHANISM",
+                "Каждый runtime step обязан иметь mechanism openstack_api.",
+            )
         if not any(
-            isinstance(step.api_operation, str) and bool(step.api_operation.strip())
+            type(step.api_operation) is str and bool(step.api_operation.strip())
             for step in item.steps
         ):
             _fail(
                 "RUNTIME_API_OPERATION",
                 "Runtime mapping обязан содержать непустой api_operation.",
+            )
+    else:
+        if item.implementation_source is not ImplementationSource.KOLLA_ANSIBLE:
+            _fail(
+                "DESIGNTIME_SOURCE",
+                "Design-time mapping обязан иметь implementation_source kolla_ansible.",
+            )
+        if item.mechanism != "kolla_ansible":
+            _fail(
+                "DESIGNTIME_MECHANISM",
+                "Design-time mapping обязан иметь mechanism kolla_ansible.",
+            )
+        if any(step.api_operation is not None for step in item.steps):
+            _fail("DESIGNTIME_API_OPERATION", "Design-time steps обязаны иметь api_operation=null.")
+        if any(
+            step.command not in {None, "kolla-ansible reconfigure"}
+            for step in item.steps
+        ):
+            _fail(
+                "DESIGNTIME_COMMAND",
+                "Design-time command допускает только null или точную kolla-ansible reconfigure.",
+            )
+        reconfigure_steps = tuple(
+            step for step in item.steps if step.command == "kolla-ansible reconfigure"
+        )
+        if any(step.mechanism != "kolla_ansible" for step in reconfigure_steps):
+            _fail(
+                "DESIGNTIME_RECONFIGURE_MECHANISM",
+                "Step kolla-ansible reconfigure обязан иметь mechanism kolla_ansible.",
+            )
+        if item.component_id != "kolla_ansible" and not any(
+            step.command is None and step.mechanism != "kolla_ansible"
+            for step in item.steps
+        ):
+            _fail(
+                "DESIGNTIME_CONFIG_MECHANISM",
+                "Design-time mapping компонента требует отдельный non-delivery config mechanism.",
             )
 
     is_host = component_kind == "host_os_subsystem"
@@ -569,7 +666,7 @@ def _validate_aspects(result: AtomResult) -> None:
         ("supported_aspects", result.supported_aspects),
         ("unconfirmed_aspects", result.unconfirmed_aspects),
     ):
-        if any(not isinstance(value, str) or not value.strip() for value in values):
+        if any(type(value) is not str or not value.strip() for value in values):
             _fail("ASPECT_VALUE", f"{label} должен содержать только непустые строки.")
         if len(values) != len(set(values)):
             _fail("ASPECT_DUPLICATE", f"{label} не должен содержать дубли.")
@@ -593,7 +690,7 @@ def _validate_result_shape(result: AtomResult) -> None:
         ("text", result.atom.text),
         ("source_quote", result.atom.source_quote),
     ):
-        if not isinstance(value, str) or not value.strip():
+        if type(value) is not str or not value.strip():
             _fail("ATOM_FIELD", f"{label} атома должен быть непустой строкой.")
     if type(result.atom.mandatory) is not bool or type(result.atom.ordinal) is not int or result.atom.ordinal < 1:
         _fail("ATOM_FIELD", "mandatory и ordinal атома имеют недопустимый тип или значение.")
@@ -606,36 +703,44 @@ def _validate_result_shape(result: AtomResult) -> None:
     ):
         if type(values) is not tuple:
             _fail("ATOM_RESULT_TYPE", f"{label} AtomResult должен быть tuple.")
-    if result.support_status is not None and not isinstance(result.support_status, SupportStatus):
+    if result.support_status is not None and type(result.support_status) is not SupportStatus:
         _fail("ATOM_STATUS", "support_status атома не входит в канонический enum.")
 
 
 def _validate_confirmed_aspects(result: AtomResult, kb: KnowledgeBase) -> None:
-    if not result.supported_aspects:
-        return
-    if not any(_has_positive_official(item, kb) for item in result.mappings):
+    grounded_roles = {
+        item.role_ru
+        for item in result.mappings
+        if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
+        and _has_positive_official(item, kb)
+        and _mapping_grounded(item, kb)
+    }
+    if any(aspect not in grounded_roles for aspect in result.supported_aspects):
         _fail(
             "ASPECT_WITHOUT_EVIDENCE",
-            "Подтверждённый аспект требует положительное официальное evidence.",
+            "Каждый supported_aspect обязан точно совпадать с role_ru grounded mapping.",
         )
 
 
 def _normalize_mapping_support(item: Mapping, kb: KnowledgeBase) -> Mapping:
     if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}:
-        if not _has_positive_official(item, kb):
-            return replace(
-                item,
-                support_status=SupportStatus.INSUFFICIENT_EVIDENCE,
-                reason_ru=_DOWNGRADE_REASON,
-            )
+        if not (_has_positive_official(item, kb) and _mapping_grounded(item, kb)):
+            return _downgrade_mapping(item)
     elif item.support_status is SupportStatus.NOT_SUPPORTED:
-        if not (_has_negative_official_direct(item, kb) or _has_version_conflict(item, kb)):
-            return replace(
-                item,
-                support_status=SupportStatus.INSUFFICIENT_EVIDENCE,
-                reason_ru=_DOWNGRADE_REASON,
-            )
+        if not (
+            (_has_negative_official_direct(item, kb) or _has_version_conflict(item, kb))
+            and _mapping_grounded(item, kb)
+        ):
+            return _downgrade_mapping(item)
     return item
+
+
+def _downgrade_mapping(item: Mapping) -> Mapping:
+    return replace(
+        item,
+        support_status=SupportStatus.INSUFFICIENT_EVIDENCE,
+        reason_ru=_DOWNGRADE_REASON,
+    )
 
 
 def _has_positive_official(item: Mapping, kb: KnowledgeBase) -> bool:
@@ -643,7 +748,8 @@ def _has_positive_official(item: Mapping, kb: KnowledgeBase) -> bool:
         cited.provenance == "official"
         and cited.polarity is EvidencePolarity.POSITIVE
         and cited.strength in _POSITIVE_STRENGTHS
-        and _evidence_relevant(cited, item.component_id, kb)
+        and cited.version_constraint == kb.release
+        and _official_owned(cited, item.component_id, kb)
         for cited in _cited(item, kb)
     )
 
@@ -653,7 +759,7 @@ def _has_negative_official_direct(item: Mapping, kb: KnowledgeBase) -> bool:
         cited.provenance == "official"
         and cited.polarity is EvidencePolarity.NEGATIVE
         and cited.strength is EvidenceStrength.DIRECT
-        and _evidence_relevant(cited, item.component_id, kb)
+        and _official_owned(cited, item.component_id, kb)
         for cited in _cited(item, kb)
     )
 
@@ -662,7 +768,7 @@ def _has_version_conflict(item: Mapping, kb: KnowledgeBase) -> bool:
     return any(
         cited.provenance == "official"
         and cited.version_constraint != kb.release
-        and _evidence_relevant(cited, item.component_id, kb)
+        and _official_owned(cited, item.component_id, kb)
         for cited in _cited(item, kb)
     )
 
@@ -671,11 +777,127 @@ def _cited(item: Mapping, kb: KnowledgeBase) -> tuple[Evidence, ...]:
     return tuple(kb.evidence[evidence_id] for evidence_id in item.evidence_ids)
 
 
-def _evidence_relevant(evidence: Evidence, component_id: str, kb: KnowledgeBase) -> bool:
-    if evidence.component_id == component_id:
+def _official_owned(evidence: Evidence, component_id: str, kb: KnowledgeBase) -> bool:
+    capability = kb.capabilities.get(evidence.capability_id)
+    return (
+        evidence.provenance == "official"
+        and evidence.component_id == component_id
+        and capability is not None
+        and capability.component_id == component_id
+    )
+
+
+def _mapping_grounded(item: Mapping, kb: KnowledgeBase) -> bool:
+    corpus = _official_component_corpus(item, kb)
+    if not corpus:
+        return False
+    if item.phase is Phase.RUNTIME:
+        return all(
+            type(step.api_operation) is str
+            and bool(step.api_operation.strip())
+            and _phrase_in_corpus(step.api_operation, corpus)
+            for step in item.steps
+        )
+
+    if item.component_id != "kolla_ansible":
+        config_steps = tuple(
+            step
+            for step in item.steps
+            if step.command is None and step.mechanism != "kolla_ansible"
+        )
+        if not config_steps or any(
+            not _phrase_in_corpus(step.mechanism, corpus) for step in config_steps
+        ):
+            return False
+
+    grounded_text = " ".join(
+        (
+            item.role_ru,
+            item.mechanism,
+            *(value for step in item.steps for value in (step.action_ru, step.mechanism)),
+        )
+    )
+    return all(_phrase_in_corpus(identifier, corpus) for identifier in _identifiers(grounded_text))
+
+
+def _official_component_corpus(item: Mapping, kb: KnowledgeBase) -> tuple[str, ...]:
+    records: list[str] = []
+    seen_capabilities: set[str] = set()
+    for cited in _cited(item, kb):
+        if not _official_owned(cited, item.component_id, kb):
+            continue
+        records.extend((cited.claim_ru, cited.locator))
+        if cited.capability_id in seen_capabilities:
+            continue
+        seen_capabilities.add(cited.capability_id)
+        capability = kb.capabilities[cited.capability_id]
+        records.extend((capability.name_ru, *capability.terms))
+    return tuple(records)
+
+
+def _phrase_in_corpus(phrase: str, corpus: tuple[str, ...]) -> bool:
+    normalized_phrase = _normalized_phrase(phrase)
+    if not normalized_phrase:
+        return False
+    needle = f" {normalized_phrase} "
+    return any(needle in f" {_normalized_phrase(record)} " for record in corpus)
+
+
+def _normalized_phrase(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold().replace("ё", "е")
+    return " ".join(_WORD.findall(normalized.replace("_", " ")))
+
+
+def _identifiers(value: str) -> tuple[str, ...]:
+    identifiers: list[str] = []
+    for token in _ASCII_IDENTIFIER.findall(value):
+        if (
+            any(separator in token for separator in ("_", ".", "-"))
+            or (len(token) > 1 and token.isupper())
+            or any(character.isdigit() for character in token)
+        ):
+            identifiers.append(token)
+    return tuple(dict.fromkeys(identifiers))
+
+
+def _candidate_evidence_owned(
+    candidate: Candidate, evidence: Evidence, kb: KnowledgeBase
+) -> bool:
+    capability = kb.capabilities.get(evidence.capability_id)
+    if capability is None or capability.component_id != evidence.component_id:
+        return False
+    if evidence.provenance == "official":
+        return (
+            evidence.component_id == candidate.component_id
+            and evidence.capability_id == candidate.capability_id
+        )
+    if evidence.provenance != "project_policy":
+        return False
+    if (
+        evidence.component_id == candidate.component_id
+        and evidence.capability_id == candidate.capability_id
+    ):
         return True
     source = kb.sources.get(evidence.source_id)
-    return source is not None and component_id in source.component_ids
+    return (
+        candidate.component_id == "kolla_ansible"
+        and source is not None
+        and "kolla_ansible" in source.component_ids
+    )
+
+
+def _mapping_evidence_relevant(
+    evidence: Evidence, component_id: str, kb: KnowledgeBase
+) -> bool:
+    capability = kb.capabilities.get(evidence.capability_id)
+    if capability is None or capability.component_id != evidence.component_id:
+        return False
+    if evidence.component_id == component_id:
+        return True
+    if evidence.provenance != "project_policy" or component_id != "kolla_ansible":
+        return False
+    source = kb.sources.get(evidence.source_id)
+    return source is not None and "kolla_ansible" in source.component_ids
 
 
 def _canonical_status(mappings: tuple[Mapping, ...]) -> SupportStatus | None:
@@ -694,7 +916,7 @@ def _canonical_status(mappings: tuple[Mapping, ...]) -> SupportStatus | None:
 
 
 def _nonempty_string_violation(value: object, label: str, violations: list[str]) -> None:
-    if not isinstance(value, str) or not value.strip():
+    if type(value) is not str or not value.strip():
         violations.append(f"{label} должен быть непустой строкой.")
 
 
@@ -703,9 +925,10 @@ def _string_list_violations(value: object, label: str, violations: list[str]) ->
         violations.append(f"{label} должен быть встроенным JSON array строк.")
         return
     values = cast(list[object], value)
-    if any(not isinstance(item, str) or not item.strip() for item in values):
+    if any(type(item) is not str or not item.strip() for item in values):
         violations.append(f"{label} должен содержать только непустые строки.")
-    if len(values) != len(set(item for item in values if isinstance(item, str))):
+    exact_strings = [item for item in values if type(item) is str]
+    if len(exact_strings) != len(set(exact_strings)):
         violations.append(f"{label} не должен содержать дубли.")
 
 
@@ -713,7 +936,7 @@ def _enum_violation(
     value: object, enum_type: type, label: str, violations: list[str]
 ) -> None:
     allowed = {item.value for item in enum_type}
-    if not isinstance(value, str) or value not in allowed:
+    if type(value) is not str or value not in allowed:
         violations.append(f"{label} должен быть одним из {sorted(allowed)}.")
 
 

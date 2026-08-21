@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from collections.abc import Mapping as MappingABC
 from dataclasses import replace
+import math
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
@@ -12,7 +13,13 @@ from typing import Any
 import pytest
 
 from reqmap.errors import ModelError, ModelOutputError, ValidationError
-from reqmap.knowledge import ComponentRecord, KnowledgeBase, SourceRecord, load_knowledge
+from reqmap.knowledge import (
+    CapabilityRecord,
+    ComponentRecord,
+    KnowledgeBase,
+    SourceRecord,
+    load_knowledge,
+)
 from reqmap.mapping import map_atom, validate_atom_result
 from reqmap.models import (
     AnalysisState,
@@ -105,7 +112,7 @@ def kb() -> KnowledgeBase:
         ),
     }
     sources = {
-        component_id: SourceRecord(
+        f"SRC-{component_id}": SourceRecord(
             source_id=f"SRC-{component_id}",
             component_ids=(component_id,),
             source_url="https://example.invalid/doc",
@@ -117,7 +124,7 @@ def kb() -> KnowledgeBase:
         )
         for component_id in components
     }
-    sources["policy"] = SourceRecord(
+    sources["SRC-policy"] = SourceRecord(
         source_id="SRC-policy",
         component_ids=("nova",),
         source_url=None,
@@ -128,11 +135,18 @@ def kb() -> KnowledgeBase:
         provenance="project_policy",
     )
     items = {
-        "E-NOVA": evidence("E-NOVA", "nova", "SRC-nova"),
+        "E-NOVA": replace(
+            evidence("E-NOVA", "nova", "SRC-nova"),
+            claim_ru="Nova API документирует операцию POST /servers.",
+            locator="Servers / POST /servers",
+        ),
         "E-NEUTRON": evidence(
             "E-NEUTRON", "neutron", "SRC-neutron", strength=EvidenceStrength.INDIRECT
         ),
-        "E-KOLLA": evidence("E-KOLLA", "kolla_ansible", "SRC-kolla_ansible"),
+        "E-KOLLA": replace(
+            evidence("E-KOLLA", "kolla_ansible", "SRC-kolla_ansible"),
+            claim_ru="Kolla-Ansible применяет конфигурацию командой kolla-ansible reconfigure.",
+        ),
         "E-SYSCTL": evidence(
             "E-SYSCTL", "host_os_kernel_sysctl", "SRC-host_os_kernel_sysctl"
         ),
@@ -152,20 +166,68 @@ def kb() -> KnowledgeBase:
             "E-POLICY", "nova", "SRC-policy", provenance="project_policy"
         ),
     }
+    items["E-SYSCTL"] = replace(
+        items["E-SYSCTL"],
+        claim_ru="Kolla-Ansible применяет параметры sysctl хостовой ОС.",
+    )
+    items["E-CHRONY-NEG"] = replace(
+        items["E-CHRONY-NEG"],
+        claim_ru="Kolla-Ansible не поддерживает deployment Chrony.",
+    )
+    items["E-NFTABLES-NEG"] = replace(
+        items["E-NFTABLES-NEG"],
+        claim_ru="Kolla-Ansible не документирует native nftables management.",
+    )
+    capabilities = {
+        "CAP-NOVA": CapabilityRecord(
+            "CAP-NOVA", "nova", "Nova server API", ("POST /servers", "server API")
+        ),
+        "CAP-NEUTRON": CapabilityRecord(
+            "CAP-NEUTRON", "neutron", "Neutron networking API", ("network API",)
+        ),
+        "CAP-KOLLA_ANSIBLE": CapabilityRecord(
+            "CAP-KOLLA_ANSIBLE",
+            "kolla_ansible",
+            "Kolla-Ansible reconfigure",
+            ("kolla-ansible reconfigure",),
+        ),
+        "CAP-HOST_OS_KERNEL_SYSCTL": CapabilityRecord(
+            "CAP-HOST_OS_KERNEL_SYSCTL",
+            "host_os_kernel_sysctl",
+            "Kernel sysctl",
+            ("sysctl", "kernel parameter"),
+        ),
+        "CAP-HOST_OS_CHRONY": CapabilityRecord(
+            "CAP-HOST_OS_CHRONY", "host_os_chrony", "Chrony", ("chrony",)
+        ),
+        "CAP-HOST_OS_NFTABLES": CapabilityRecord(
+            "CAP-HOST_OS_NFTABLES", "host_os_nftables", "nftables", ("nftables",)
+        ),
+    }
     return KnowledgeBase(
         root=Path("synthetic"),
         release="2025.1",
         snapshot_sha256="b" * 64,
         components=MappingProxyType(components),
-        capabilities=MappingProxyType({}),
+        capabilities=MappingProxyType(capabilities),
         evidence=MappingProxyType(items),
         sources=MappingProxyType(sources),
         synonyms=MappingProxyType({}),
     )
 
 
-def candidate(component_id: str, *evidence_ids: str, reasons: tuple[str, ...] = ()) -> Candidate:
-    return Candidate(component_id, None, tuple(evidence_ids), 10.0, reasons)
+_DEFAULT_CAPABILITY = object()
+
+
+def candidate(
+    component_id: str,
+    *evidence_ids: str,
+    reasons: tuple[str, ...] = (),
+    capability_id: str | None | object = _DEFAULT_CAPABILITY,
+) -> Candidate:
+    if capability_id is _DEFAULT_CAPABILITY:
+        capability_id = f"CAP-{component_id.upper()}"
+    return Candidate(component_id, capability_id, tuple(evidence_ids), 10.0, reasons)  # type: ignore[arg-type]
 
 
 def step(
@@ -173,13 +235,35 @@ def step(
     *,
     command: str | None = None,
     api_operation: str | None = None,
+    mechanism: str | None = None,
+    action_ru: str = "Выполнить синтетическое действие",
 ) -> dict[str, object]:
     return {
-        "action_ru": "Выполнить синтетическое действие",
-        "mechanism": "openstack_api" if phase == "runtime" else "kolla_ansible",
+        "action_ru": action_ru,
+        "mechanism": mechanism or ("openstack_api" if phase == "runtime" else "kolla_ansible"),
         "command": command,
         "api_operation": api_operation,
     }
+
+
+def design_steps(
+    config_mechanism: str,
+    *,
+    action_ru: str = "Настроить параметр компонента",
+) -> list[dict[str, object]]:
+    return [
+        step(
+            "designtime",
+            mechanism=config_mechanism,
+            action_ru=action_ru,
+        ),
+        step(
+            "designtime",
+            command="kolla-ansible reconfigure",
+            mechanism="kolla_ansible",
+            action_ru="Применить конфигурацию Kolla-Ansible",
+        ),
+    ]
 
 
 def raw_mapping(
@@ -194,13 +278,24 @@ def raw_mapping(
     steps: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     if steps is None:
-        steps = [
-            step(
-                phase,
-                command="kolla-ansible reconfigure" if phase == "designtime" else None,
-                api_operation="POST /servers" if phase == "runtime" else None,
-            )
-        ]
+        if phase == "runtime":
+            steps = [step(phase, api_operation="POST /servers")]
+        elif component_id == "kolla_ansible":
+            steps = [
+                step(
+                    phase,
+                    command="kolla-ansible reconfigure",
+                    mechanism="kolla_ansible",
+                    action_ru="Применить конфигурацию Kolla-Ansible",
+                )
+            ]
+        else:
+            config_mechanism = {
+                "host_os_kernel_sysctl": "sysctl",
+                "host_os_chrony": "chrony",
+                "host_os_nftables": "nftables",
+            }.get(component_id, "config_override")
+            steps = design_steps(config_mechanism)
     return {
         "component_id": component_id,
         "role_ru": "Реализует проверяемое обязательство",
@@ -241,6 +336,49 @@ def canonical_mapping(
     command: str | None = None,
     api_operation: str | None = "POST /servers",
 ) -> Mapping:
+    if phase is Phase.RUNTIME:
+        implementation_steps = (
+            ImplementationStep(
+                order=1,
+                phase=phase,
+                action_ru="Выполнить действие",
+                mechanism="openstack_api",
+                command=None,
+                api_operation=api_operation,
+            ),
+        )
+    elif component_id == "kolla_ansible":
+        implementation_steps = (
+            ImplementationStep(
+                order=1,
+                phase=phase,
+                action_ru="Применить конфигурацию Kolla-Ansible",
+                mechanism="kolla_ansible",
+                command=command,
+                api_operation=None,
+            ),
+        )
+    else:
+        config_mechanism = {
+            "host_os_kernel_sysctl": "sysctl",
+            "host_os_chrony": "chrony",
+            "host_os_nftables": "nftables",
+        }.get(component_id, "config_override")
+        implementation_steps = (
+            ImplementationStep(
+                order=1,
+                phase=phase,
+                action_ru="Настроить параметр компонента",
+                mechanism=config_mechanism,
+            ),
+            ImplementationStep(
+                order=2,
+                phase=phase,
+                action_ru="Применить конфигурацию Kolla-Ansible",
+                mechanism="kolla_ansible",
+                command=command,
+            ),
+        )
     return Mapping(
         mapping_id="REQ-0001-A001-M001",
         atom_id="REQ-0001-A001",
@@ -250,16 +388,7 @@ def canonical_mapping(
         phase=phase,
         implementation_source=source,
         mechanism=mechanism or ("openstack_api" if phase is Phase.RUNTIME else "kolla_ansible"),
-        steps=(
-            ImplementationStep(
-                order=1,
-                phase=phase,
-                action_ru="Выполнить действие",
-                mechanism="openstack_api" if phase is Phase.RUNTIME else "kolla_ansible",
-                command=command if phase is Phase.DESIGNTIME else None,
-                api_operation=api_operation if phase is Phase.RUNTIME else None,
-            ),
-        ),
+        steps=implementation_steps,
         evidence_ids=evidence_ids,
         support_status=support_status,
         reason_ru="Причина на русском.",
@@ -420,7 +549,6 @@ def test_transport_error_propagates_without_semantic_correction(kb) -> None:
     [
         (raw_mapping("swift"), (candidate("nova", "E-NOVA"),), "кандидат"),
         (raw_mapping(evidence_ids=("E-NEUTRON",)), (candidate("nova", "E-NOVA"),), "evidence"),
-        (raw_mapping(evidence_ids=("E-NEUTRON",)), (candidate("nova", "E-NOVA", "E-NEUTRON"),), "релевант"),
     ],
 )
 def test_off_candidate_or_cross_component_references_require_correction(
@@ -432,6 +560,130 @@ def test_off_candidate_or_cross_component_references_require_correction(
 
     assert mapped.analysis_state is AnalysisState.MODEL_FAILED
     assert diagnostic in mapped.diagnostics[0].lower()
+
+
+def test_shared_official_source_scope_never_transfers_evidence_to_sibling_component(kb) -> None:
+    shared_source = replace(kb.sources["SRC-nova"], component_ids=("nova", "neutron"))
+    shared_kb = replace(
+        kb,
+        sources=MappingProxyType({**kb.sources, "SRC-nova": shared_source}),
+    )
+    neutron = replace(canonical_mapping(), component_id="neutron")
+
+    with pytest.raises(ValidationError) as error:
+        validate_atom_result(result(neutron), shared_kb)
+
+    assert error.value.code == "EVIDENCE_COMPONENT_MISMATCH"
+
+
+def test_candidate_cannot_borrow_official_evidence_from_another_component(kb) -> None:
+    forged_candidates = (
+        candidate("nova"),
+        candidate("neutron", "E-NOVA"),
+    )
+    model = FakeModel([response(raw_mapping())])
+
+    with pytest.raises(ValidationError) as error:
+        map_atom(model, atom(), forged_candidates, kb)
+
+    assert error.value.code == "CANDIDATE_EVIDENCE_OWNERSHIP"
+    assert model.calls == []
+
+
+def test_model_evidence_allowlist_is_scoped_to_mapping_component_candidate(kb) -> None:
+    invalid = raw_mapping("nova", ("E-NEUTRON",))
+    model = FakeModel([response(invalid), response(invalid)])
+
+    mapped = map_atom(
+        model,
+        atom(),
+        (candidate("nova", "E-NOVA"), candidate("neutron", "E-NEUTRON")),
+        kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.MODEL_FAILED
+    assert "кандидата nova" in mapped.diagnostics[0]
+
+
+def test_kolla_candidate_may_carry_host_policy_only_as_relational_context(kb) -> None:
+    policy_source = replace(
+        kb.sources["SRC-policy"],
+        component_ids=("host_os_kernel_sysctl", "kolla_ansible"),
+    )
+    policy = replace(
+        kb.evidence["E-POLICY"],
+        evidence_id="E-HOST-POLICY",
+        component_id="host_os_kernel_sysctl",
+        capability_id="CAP-HOST_OS_KERNEL_SYSCTL",
+    )
+    relational_kb = replace(
+        kb,
+        sources=MappingProxyType({**kb.sources, "SRC-policy": policy_source}),
+        evidence=MappingProxyType({**kb.evidence, policy.evidence_id: policy}),
+    )
+    kolla = raw_mapping(
+        "kolla_ansible",
+        ("E-KOLLA", "E-HOST-POLICY"),
+        phase="designtime",
+        implementation_source="kolla_ansible",
+    )
+    model = FakeModel([response(kolla)])
+
+    mapped = map_atom(
+        model,
+        atom("Применить конфигурацию"),
+        (
+            candidate(
+                "kolla_ansible",
+                "E-KOLLA",
+                "E-HOST-POLICY",
+            ),
+        ),
+        relational_kb,
+    )
+
+    assert mapped.support_status is SupportStatus.SUPPORTED
+    assert mapped.mappings[0].evidence_ids == ("E-KOLLA", "E-HOST-POLICY")
+
+
+class CandidateSubclass(Candidate):
+    pass
+
+
+class StringSubclass(str):
+    pass
+
+
+def test_candidate_boundary_rejects_non_builtin_or_nonfinite_fields_without_typeerror(kb) -> None:
+    valid = candidate("nova", "E-NOVA")
+    malformed: list[object] = [
+        [valid],
+        (CandidateSubclass(*valid.__dict__.values()),),
+        (replace(valid, component_id=StringSubclass("nova")),),
+        (replace(valid, capability_id=["CAP-NOVA"]),),
+        (replace(valid, capability_id="CAP-NEUTRON"),),
+        (replace(valid, evidence_ids=["E-NOVA"]),),
+        (replace(valid, evidence_ids=(["E-NOVA"],)),),
+        (replace(valid, score=True),),
+        (replace(valid, score=math.nan),),
+        (replace(valid, reasons=["source_hint"]),),
+    ]
+
+    for candidates_value in malformed:
+        model = FakeModel([response(raw_mapping())])
+        with pytest.raises(ValidationError):
+            map_atom(model, atom(), candidates_value, kb)  # type: ignore[arg-type]
+        assert model.calls == []
+
+
+def test_response_rejects_string_subclass_before_membership_checks(kb) -> None:
+    invalid = response({**raw_mapping(), "component_id": StringSubclass("nova")})
+    model = FakeModel([invalid, invalid])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.analysis_state is AnalysisState.MODEL_FAILED
+    assert "непустой строкой" in mapped.diagnostics[0]
 
 
 def test_runtime_requires_exact_mechanism_nonempty_api_operation_and_null_commands(kb) -> None:
@@ -446,6 +698,138 @@ def test_runtime_requires_exact_mechanism_nonempty_api_operation_and_null_comman
         assert mapped.analysis_state is AnalysisState.MODEL_FAILED
 
 
+def test_every_runtime_step_requires_openstack_api_mechanism(kb) -> None:
+    invalid = raw_mapping(
+        steps=[
+            step("runtime", api_operation="POST /servers"),
+            step("runtime", mechanism="shell", api_operation="POST /servers"),
+        ]
+    )
+    model = FakeModel([response(invalid), response(invalid)])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.analysis_state is AnalysisState.MODEL_FAILED
+
+
+def test_specific_runtime_operation_requires_complete_phrase_in_owned_official_corpus(kb) -> None:
+    invented = raw_mapping(
+        steps=[step("runtime", api_operation="POST /quantum-teleportation")]
+    )
+    model = FakeModel([response(invented)])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert len(model.calls) == 1
+
+
+def test_broad_real_scope_evidence_does_not_prove_invented_endpoint() -> None:
+    real_kb = load_knowledge(Path("knowledge/epoxy-2025.1"))
+    invented = raw_mapping(
+        "nova",
+        ("E-NOVA-SCOPE-001",),
+        steps=[step("runtime", api_operation="POST /quantum-teleportation")],
+    )
+    model = FakeModel([response(invented)])
+
+    mapped = map_atom(
+        model,
+        atom(),
+        (
+            candidate(
+                "nova",
+                "E-NOVA-SCOPE-001",
+                capability_id="CAP-NOVA-COMPUTE-API",
+            ),
+        ),
+        real_kb,
+    )
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert len(model.calls) == 1
+
+
+def test_specific_synthetic_runtime_operation_is_supported_when_phrase_is_owned(kb) -> None:
+    model = FakeModel([response(raw_mapping())])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.support_status is SupportStatus.SUPPORTED
+
+
+@pytest.mark.parametrize(
+    ("mechanism", "action_ru"),
+    [
+        ("quantum_mode", "Включить quantum_mode"),
+        ("config_override", "Настроить RAID"),
+        ("config_override", "Настроить OVS"),
+        ("sysctl", "Установить kernel.unicorn"),
+    ],
+)
+def test_invented_designtime_identifiers_never_remain_supported(
+    kb, mechanism: str, action_ru: str
+) -> None:
+    if mechanism == "sysctl":
+        component_id = "host_os_kernel_sysctl"
+        evidence_id = "E-SYSCTL"
+        relation = "host_os_change"
+        mappings = (
+            raw_mapping(
+                component_id,
+                (evidence_id,),
+                phase="designtime",
+                relation=relation,
+                implementation_source="kolla_ansible",
+                steps=design_steps(mechanism, action_ru=action_ru),
+            ),
+            raw_mapping(
+                "kolla_ansible",
+                ("E-KOLLA",),
+                phase="designtime",
+                implementation_source="kolla_ansible",
+            ),
+        )
+        candidates_value = (
+            candidate(component_id, evidence_id),
+            candidate("kolla_ansible", "E-KOLLA"),
+        )
+    else:
+        mappings = (
+            raw_mapping(
+                "nova",
+                ("E-NOVA",),
+                phase="designtime",
+                implementation_source="kolla_ansible",
+                steps=design_steps(mechanism, action_ru=action_ru),
+            ),
+        )
+        candidates_value = (candidate("nova", "E-NOVA"),)
+    model = FakeModel([response(*mappings)])
+
+    mapped = map_atom(model, atom("Изменить конфигурацию"), candidates_value, kb)
+
+    assert mapped.analysis_state is AnalysisState.COMPLETED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert len(model.calls) == 1
+
+
+def test_supported_evidence_must_match_current_kb_release(kb) -> None:
+    stale = replace(kb.evidence["E-NOVA"], version_constraint="2024.2")
+    stale_kb = replace(
+        kb,
+        evidence=MappingProxyType({**kb.evidence, "E-NOVA": stale}),
+    )
+    model = FakeModel([response(raw_mapping())])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), stale_kb)
+
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+
+
 def test_designtime_requires_exact_reconfigure_command(kb) -> None:
     invalid = raw_mapping(
         phase="designtime",
@@ -458,6 +842,60 @@ def test_designtime_requires_exact_reconfigure_command(kb) -> None:
 
     assert mapped.analysis_state is AnalysisState.MODEL_FAILED
     assert "kolla-ansible reconfigure" in mapped.diagnostics[0]
+
+
+def test_designtime_structure_requires_kolla_source_mechanisms_and_null_api(kb) -> None:
+    invalid_responses = [
+        raw_mapping(phase="designtime", implementation_source="upstream"),
+        raw_mapping(
+            phase="designtime",
+            implementation_source="kolla_ansible",
+            mechanism="config_override",
+        ),
+        raw_mapping(
+            phase="designtime",
+            implementation_source="kolla_ansible",
+            steps=[
+                *design_steps("config_override"),
+                step("designtime", api_operation="POST /servers"),
+            ],
+        ),
+        raw_mapping(
+            phase="designtime",
+            implementation_source="kolla_ansible",
+            steps=[
+                step("designtime", mechanism="config_override"),
+                step(
+                    "designtime",
+                    command="kolla-ansible reconfigure",
+                    mechanism="shell",
+                ),
+            ],
+        ),
+    ]
+    for invalid in invalid_responses:
+        model = FakeModel([response(invalid), response(invalid)])
+        mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+        assert mapped.analysis_state is AnalysisState.MODEL_FAILED
+
+
+def test_non_kolla_designtime_mapping_requires_non_delivery_config_step(kb) -> None:
+    invalid = raw_mapping(
+        phase="designtime",
+        implementation_source="kolla_ansible",
+        steps=[
+            step(
+                "designtime",
+                command="kolla-ansible reconfigure",
+                mechanism="kolla_ansible",
+            )
+        ],
+    )
+    model = FakeModel([response(invalid), response(invalid)])
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.analysis_state is AnalysisState.MODEL_FAILED
 
 
 def test_step_phase_is_canonical_mapping_phase_not_model_controlled(kb) -> None:
@@ -599,6 +1037,7 @@ def test_valid_host_mapping_has_kolla_and_subsystem_with_reconfigure(kb) -> None
         "kolla_ansible",
     ]
     assert all(item.phase is Phase.DESIGNTIME for item in mapped.mappings)
+    assert mapped.support_status is SupportStatus.SUPPORTED
 
 
 def test_project_policy_alone_downgrades_supported_without_correction(kb) -> None:
@@ -718,7 +1157,7 @@ def test_partial_with_positive_official_evidence_preserves_aspects(kb) -> None:
             response(
                 raw_mapping(support_status="partial"),
                 status="partial",
-                supported_aspects=("Создание VM",),
+                supported_aspects=("Реализует проверяемое обязательство",),
                 unconfirmed_aspects=("Расширенное планирование",),
             )
         ]
@@ -727,8 +1166,48 @@ def test_partial_with_positive_official_evidence_preserves_aspects(kb) -> None:
     mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
 
     assert mapped.support_status is SupportStatus.PARTIAL
-    assert mapped.supported_aspects == ("Создание VM",)
+    assert mapped.supported_aspects == ("Реализует проверяемое обязательство",)
     assert mapped.unconfirmed_aspects == ("Расширенное планирование",)
+
+
+def test_partial_unlinked_supported_aspect_downgrades_instead_of_any_mapping_proving_it(kb) -> None:
+    model = FakeModel(
+        [
+            response(
+                raw_mapping(support_status="partial"),
+                status="partial",
+                supported_aspects=("Несвязанное обещание",),
+                unconfirmed_aspects=("Другой аспект",),
+            )
+        ]
+    )
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert mapped.supported_aspects == ()
+    assert mapped.unconfirmed_aspects == ("Другой аспект", "Несвязанное обещание")
+
+
+def test_partial_moves_only_unlinked_aspects_and_keeps_exact_role_link(kb) -> None:
+    role = "Реализует проверяемое обязательство"
+    model = FakeModel(
+        [
+            response(
+                raw_mapping(support_status="partial"),
+                status="partial",
+                supported_aspects=(role, "Чужой аспект"),
+                unconfirmed_aspects=("Не подтверждено",),
+            )
+        ]
+    )
+
+    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+
+    assert mapped.support_status is SupportStatus.PARTIAL
+    assert mapped.supported_aspects == (role,)
+    assert mapped.unconfirmed_aspects == ("Не подтверждено", "Чужой аспект")
 
 
 @pytest.mark.parametrize("status", ["supported", "partial", "not_supported"])
@@ -830,11 +1309,15 @@ def test_real_epoxy_snapshot_supports_broad_nova_neutron_many_to_many_scope() ->
     model = FakeModel(
         [
             response(
-                raw_mapping("nova", ("E-NOVA-SCOPE-001",)),
+                raw_mapping(
+                    "nova",
+                    ("E-NOVA-SCOPE-001",),
+                    steps=[step("runtime", api_operation="REST API")],
+                ),
                 raw_mapping(
                     "neutron",
                     ("E-NEUTRON-SCOPE-001",),
-                    steps=[step("runtime", api_operation="POST /v2.0/ports")],
+                    steps=[step("runtime", api_operation="OpenStack Networking API")],
                 ),
             )
         ]
@@ -844,8 +1327,14 @@ def test_real_epoxy_snapshot_supports_broad_nova_neutron_many_to_many_scope() ->
         model,
         atom("Создать VM и сетевой порт через API"),
         (
-            candidate("nova", "E-NOVA-SCOPE-001"),
-            candidate("neutron", "E-NEUTRON-SCOPE-001"),
+            candidate(
+                "nova", "E-NOVA-SCOPE-001", capability_id="CAP-NOVA-COMPUTE-API"
+            ),
+            candidate(
+                "neutron",
+                "E-NEUTRON-SCOPE-001",
+                capability_id="CAP-NEUTRON-NETWORKING-API",
+            ),
         ),
         real_kb,
     )
@@ -885,8 +1374,19 @@ def test_real_epoxy_negative_host_boundaries_remain_not_supported(
         model,
         atom("Изменить подсистему host OS"),
         (
-            candidate(component_id, evidence_id),
-            candidate("kolla_ansible", "E-KOLLA-RECONFIGURE-001"),
+            candidate(
+                component_id,
+                evidence_id,
+                capability_id={
+                    "host_os_chrony": "CAP-HOST-CHRONY-AUTOMATION",
+                    "host_os_nftables": "CAP-HOST-NFTABLES-AUTOMATION",
+                }[component_id],
+            ),
+            candidate(
+                "kolla_ansible",
+                "E-KOLLA-RECONFIGURE-001",
+                capability_id="CAP-KOLLA-RECONFIGURE",
+            ),
         ),
         real_kb,
     )
@@ -900,3 +1400,7 @@ def test_mapping_prompt_is_versioned_and_strictly_russian() -> None:
     assert "Верни только JSON" in MAPPING_PROMPT
     assert "source_hint" in MAPPING_PROMPT
     assert "не является evidence" in MAPPING_PROMPT
+    assert "каждый runtime step" in MAPPING_PROMPT
+    assert "non-delivery" in MAPPING_PROMPT
+    assert "supported_aspect" in MAPPING_PROMPT
+    assert "role_ru" in MAPPING_PROMPT
