@@ -1,7 +1,9 @@
 import json
+import math
 from collections import deque
 from typing import Any
 from io import BytesIO
+from http.client import IncompleteRead
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
@@ -195,6 +197,48 @@ def test_complete_json_rejects_prompt_over_limit_without_request(
     assert fake_llm_server.requests == []
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"number": math.nan},
+        {"number": math.inf},
+        {"number": -math.inf},
+        {"value": object()},
+        {1: "non-string key"},
+        {"text": "top-secret", 1: "mixed keys"},
+        {"text": "\ud800"},
+    ],
+)
+def test_complete_json_rejects_non_strict_or_unserializable_prompt_before_transport(
+    fake_llm_server: FakeLlmServer, payload: dict[object, object]
+) -> None:
+    """Ошибочный prompt не должен стать Python exception или быть отправлен модели."""
+    client = client_for(fake_llm_server, api_key="top-secret")
+
+    with pytest.raises(ModelError) as caught:
+        client.complete_json("mapping", "s", payload)  # type: ignore[arg-type]
+
+    assert caught.value.code == "MODEL_PROMPT_INVALID"
+    assert fake_llm_server.requests == []
+    _assert_secret_free_exception(caught.value, "top-secret")
+
+
+def test_complete_json_rejects_circular_prompt_before_transport(
+    fake_llm_server: FakeLlmServer,
+) -> None:
+    """Кольцевая структура payload не должна создать исключение вне доменного контракта."""
+    payload: dict[str, object] = {}
+    payload["self"] = payload
+
+    with pytest.raises(ModelError) as caught:
+        client_for(fake_llm_server).complete_json("mapping", "s", payload)
+
+    assert caught.value.code == "MODEL_PROMPT_INVALID"
+    assert fake_llm_server.requests == []
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_complete_json_rejects_oversized_response_before_json_parsing(
     fake_llm_server: FakeLlmServer,
 ) -> None:
@@ -232,6 +276,27 @@ def test_complete_json_marks_non_strict_content_as_model_output_failure(
 
 
 @pytest.mark.parametrize(
+    "content",
+    [
+        '{"answer":1e999}',
+        '{"answer":-1e999}',
+    ],
+)
+def test_complete_json_rejects_non_finite_float_syntax_in_content(
+    fake_llm_server: FakeLlmServer, content: str
+) -> None:
+    """JSON decoder не должен silently превратить numeric overflow в infinity."""
+    fake_llm_server.enqueue(chat_response(content))
+
+    with pytest.raises(ModelOutputError) as caught:
+        client_for(fake_llm_server).complete_json("mapping", "s", {})
+
+    assert caught.value.code == "MODEL_OUTPUT_INVALID"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
     "envelope",
     [
         "[]",
@@ -251,6 +316,27 @@ def test_complete_json_rejects_malformed_or_non_strict_envelope(
         client_for(fake_llm_server).complete_json("mapping", "s", {})
 
     assert caught.value.code == "MODEL_OUTPUT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        '{"choices":[{"message":{"content":"{}"}}],"n":1e999}',
+        '{"choices":[{"message":{"content":"{}"}}],"n":-1e999}',
+    ],
+)
+def test_complete_json_rejects_non_finite_float_syntax_in_envelope(
+    fake_llm_server: FakeLlmServer, envelope: str
+) -> None:
+    """Строгость numeric overflow одинакова для envelope и message content."""
+    fake_llm_server.enqueue_text(envelope)
+
+    with pytest.raises(ModelOutputError) as caught:
+        client_for(fake_llm_server).complete_json("mapping", "s", {})
+
+    assert caught.value.code == "MODEL_OUTPUT_INVALID"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_complete_json_retries_only_retryable_http_statuses_with_exponential_backoff(
@@ -348,6 +434,85 @@ def test_http_error_and_invalid_model_output_redact_key_echo(
     assert "<redacted>" in output_error.value.raw_response
 
 
+@pytest.mark.parametrize("ensure_ascii", [False, True])
+def test_model_output_redacts_plain_and_json_escaped_api_key_before_bounding(
+    fake_llm_server: FakeLlmServer, ensure_ascii: bool
+) -> None:
+    """Redaction до truncate не должна пропускать plain или JSON-escaped секрет."""
+    api_key = "töken"
+    encoded_key = json.dumps(api_key, ensure_ascii=ensure_ascii)[1:-1]
+    content = '{"echo":"' + encoded_key + '","bad":NaN}'
+    fake_llm_server.enqueue(chat_response(content))
+
+    with pytest.raises(ModelOutputError) as caught:
+        client_for(fake_llm_server, api_key=api_key).complete_json("mapping", "s", {})
+
+    _assert_secret_free_exception(caught.value, api_key, encoded_key)
+    assert "<redacted>" in caught.value.raw_response
+
+
+def test_model_output_redacts_secret_crossing_raw_response_boundary(
+    fake_llm_server: FakeLlmServer,
+) -> None:
+    """Секрет на границе 4096 символов нельзя частично раскрыть при truncate."""
+    api_key = "top-secret"
+    content = "x" * 4094 + api_key + " not-json"
+    fake_llm_server.enqueue(chat_response(content))
+
+    with pytest.raises(ModelOutputError) as caught:
+        client_for(fake_llm_server, api_key=api_key).complete_json("mapping", "s", {})
+
+    _assert_secret_free_exception(caught.value, api_key)
+    assert len(caught.value.raw_response) <= 4108
+
+
+def test_preflight_invalid_json_has_no_raw_secret_in_exception_graph(
+    fake_llm_server: FakeLlmServer,
+) -> None:
+    """Preflight parse error не должен удерживать raw server body в cause/context."""
+    fake_llm_server.enqueue_text('{"echo":"top-secret",}')
+
+    with pytest.raises(ModelError) as caught:
+        client_for(fake_llm_server, api_key="top-secret").preflight()
+
+    assert caught.value.code == "MODEL_PREFLIGHT_INVALID"
+    _assert_secret_free_exception(caught.value, "top-secret")
+
+
+def test_complete_json_retries_and_closes_incomplete_response_read() -> None:
+    """IncompleteRead должен закрываться и следовать transport retry policy."""
+    broken = _IncompleteResponse()
+    complete = _RecordingResponse(
+        b'{"choices":[{"message":{"content":"{\\"ok\\":true}"}}]}'
+    )
+    responses = deque([broken, complete])
+    sleeps: list[float] = []
+
+    def opener(*args: object, **kwargs: object) -> object:
+        return responses.popleft()
+
+    client = OpenAICompatibleClient(
+        _model_config(retries=1), sleep=sleeps.append, opener=opener
+    )
+
+    assert client.complete_json("mapping", "s", {}) == {"ok": True}
+    assert broken.closed is True
+    assert complete.closed is True
+    assert sleeps == [0.25]
+
+
+def test_complete_json_exhausted_incomplete_response_is_domain_transport_error() -> None:
+    """Исчерпанный IncompleteRead не должен выйти как библиотечное исключение."""
+    broken = _IncompleteResponse()
+    client = OpenAICompatibleClient(_model_config(), opener=lambda *args, **kwargs: broken)
+
+    with pytest.raises(ModelError) as caught:
+        client.complete_json("mapping", "s", {})
+
+    assert caught.value.code == "MODEL_TRANSPORT_ERROR"
+    assert broken.closed is True
+
+
 def test_complete_json_reads_response_at_maximum_plus_one_bytes() -> None:
     """Чтение без +1 не отличило бы body ровно на байт больше заданного лимита."""
     response = _RecordingResponse(b'{"choices":[{"message":{"content":"{}"}}]}')
@@ -380,3 +545,42 @@ class _RecordingResponse:
 
     def close(self) -> None:
         self.closed = True
+
+
+class _IncompleteResponse(_RecordingResponse):
+    def __init__(self) -> None:
+        super().__init__(b"")
+
+    def read(self, amount: int) -> bytes:
+        self.read_sizes.append(amount)
+        raise IncompleteRead(b"partial", amount)
+
+
+def _model_config(*, retries: int = 0) -> ModelConfig:
+    return ModelConfig(
+        base_url="http://local-llm.invalid/v1",
+        model="local-model",
+        api_key_env=None,
+        api_key=None,
+        retries=retries,
+    )
+
+
+def _assert_secret_free_exception(error: BaseException, *secrets: str) -> None:
+    pending = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        for secret in secrets:
+            assert secret not in str(current)
+            assert secret not in repr(current)
+        assert not isinstance(current, ModelOutputError) or len(current.raw_response) <= 4108
+        assert current.__cause__ is None
+        assert current.__context__ is None
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)

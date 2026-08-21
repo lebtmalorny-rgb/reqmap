@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 from collections.abc import Callable, Mapping
+from http.client import HTTPException
 from typing import Protocol, cast
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
@@ -72,34 +74,14 @@ class OpenAICompatibleClient:
     ) -> dict[str, object]:
         """Отправляет детерминированный prompt и принимает только JSON object."""
         del stage  # Этап нужен вызывающему pipeline, но не является полем OpenAI API.
-        request_body: dict[str, object] = {
-            "model": self._config.model,
-            "temperature": 0,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {
-                    "role": "user",
-                    "content": json.dumps(
-                        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-                    ),
-                },
-            ],
-        }
-        if self._config.supports_response_format:
-            request_body["response_format"] = {"type": "json_object"}
-        if self._config.seed is not None:
-            request_body["seed"] = self._config.seed
-
-        prompt = json.dumps(
-            request_body, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        )
+        prompt, request_bytes = self._serialize_prompt(system_prompt, payload)
         if len(prompt) > self._config.max_prompt_chars:
             raise ModelError(
                 "MODEL_PROMPT_TOO_LARGE",
                 "Сформированный запрос к модели превышает допустимый размер.",
             )
 
-        raw = self._request("POST", "chat/completions", prompt.encode("utf-8"))
+        raw = self._request("POST", "chat/completions", request_bytes)
         envelope = self._parse_output_object(raw)
         choices = envelope.get("choices")
         if not isinstance(choices, list) or not choices:
@@ -115,6 +97,39 @@ class OpenAICompatibleClient:
             raise self._output_error(raw)
         return self._parse_output_object(content)
 
+    def _serialize_prompt(
+        self, system_prompt: str, payload: dict[str, object]
+    ) -> tuple[str, bytes]:
+        """Сериализует prompt строго и без передачи Python ошибок наружу."""
+        try:
+            request_body: dict[str, object] = {
+                "model": self._config.model,
+                "temperature": 0,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {
+                        "role": "user",
+                        "content": _strict_dump(payload),
+                    },
+                ],
+            }
+            if self._config.supports_response_format:
+                request_body["response_format"] = {"type": "json_object"}
+            if self._config.seed is not None:
+                request_body["seed"] = self._config.seed
+            prompt = _strict_dump(request_body)
+            request_bytes = prompt.encode("utf-8")
+        except (RecursionError, TypeError, UnicodeError, ValueError, OverflowError):
+            serialization_failed = True
+        else:
+            serialization_failed = False
+        if serialization_failed:
+            raise ModelError(
+                "MODEL_PROMPT_INVALID",
+                "Не удалось строго сериализовать запрос к локальной модели.",
+            )
+        return prompt, request_bytes
+
     def _request(self, method: str, endpoint: str, body: bytes | None) -> str:
         request = Request(
             self._endpoint_url(endpoint),
@@ -129,7 +144,7 @@ class OpenAICompatibleClient:
             except HTTPError as error:
                 status = error.code
                 self._close_http_error(error)
-            except (URLError, OSError, TimeoutError):
+            except (HTTPException, URLError, OSError, TimeoutError):
                 status = None
             except ModelError:
                 raise
@@ -168,10 +183,8 @@ class OpenAICompatibleClient:
         try:
             read = getattr(response, "read")
             body = read(self._config.max_response_bytes + 1)
-        except (OSError, TimeoutError, URLError):
+        finally:
             self._close_response(response)
-            raise
-        self._close_response(response)
         if not isinstance(body, bytes):
             raise ModelError(
                 "MODEL_TRANSPORT_ERROR",
@@ -183,13 +196,18 @@ class OpenAICompatibleClient:
                 "Ответ локальной модели превышает допустимый размер.",
             )
         try:
-            return body.decode("utf-8")
-        except UnicodeDecodeError as error:
+            decoded = body.decode("utf-8")
+        except UnicodeDecodeError:
+            invalid_utf8 = True
+        else:
+            invalid_utf8 = False
+        if invalid_utf8:
             raise ModelOutputError(
                 "MODEL_OUTPUT_INVALID",
                 "Модель вернула ответ не в UTF-8 кодировке.",
                 self._sanitize_raw(body.decode("utf-8", errors="replace")),
-            ) from error
+            )
+        return decoded
 
     @staticmethod
     def _close_response(response: object) -> None:
@@ -200,25 +218,38 @@ class OpenAICompatibleClient:
     def _close_http_error(self, error: HTTPError) -> None:
         try:
             error.read(self._config.max_response_bytes + 1)
-        except OSError:
+        except (HTTPException, OSError):
             pass
         finally:
-            error.close()
+            try:
+                error.close()
+            except (HTTPException, OSError):
+                pass
 
     def _parse_object_or_preflight_error(self, raw: str) -> dict[str, object]:
         try:
-            return _strict_object(raw)
-        except ValueError as error:
+            parsed = _strict_object(raw)
+        except ValueError:
+            invalid_json = True
+        else:
+            invalid_json = False
+        if invalid_json:
             raise ModelError(
                 "MODEL_PREFLIGHT_INVALID",
                 "Ответ endpoint-а /models не является строгим JSON object.",
-            ) from error
+            )
+        return parsed
 
     def _parse_output_object(self, raw: str) -> dict[str, object]:
         try:
-            return _strict_object(raw)
-        except ValueError as error:
-            raise self._output_error(raw) from error
+            parsed = _strict_object(raw)
+        except ValueError:
+            invalid_json = True
+        else:
+            invalid_json = False
+        if invalid_json:
+            raise self._output_error(raw)
+        return parsed
 
     def _output_error(self, raw: str) -> ModelOutputError:
         return ModelOutputError(
@@ -229,11 +260,13 @@ class OpenAICompatibleClient:
 
     def _sanitize_raw(self, raw: str) -> str:
         limit = 4096
-        bounded = raw[:limit]
-        if len(raw) > limit:
-            bounded += "…[truncated]"
+        redacted = raw
         if self._config.api_key:
-            bounded = bounded.replace(self._config.api_key, "<redacted>")
+            for representation in _secret_representations(self._config.api_key):
+                redacted = redacted.replace(representation, "<redacted>")
+        bounded = redacted[:limit]
+        if len(redacted) > limit:
+            bounded += "…[truncated]"
         return bounded
 
 
@@ -241,6 +274,7 @@ def _strict_object(raw: str) -> dict[str, object]:
     decoder = json.JSONDecoder(
         object_pairs_hook=_no_duplicate_keys,
         parse_constant=_reject_non_finite_constant,
+        parse_float=_finite_float,
     )
     value = decoder.decode(raw)
     if not isinstance(value, dict):
@@ -259,3 +293,54 @@ def _no_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 def _reject_non_finite_constant(value: str) -> object:
     raise ValueError(f"Недопустимая JSON-константа: {value}")
+
+
+def _finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"Недопустимое неограниченное число JSON: {value}")
+    return parsed
+
+
+def _strict_dump(value: object) -> str:
+    _require_string_mapping_keys(value, set())
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _require_string_mapping_keys(value: object, active: set[int]) -> None:
+    if isinstance(value, Mapping):
+        marker = id(value)
+        if marker in active:
+            return
+        active.add(marker)
+        try:
+            for key, nested in value.items():
+                if not isinstance(key, str):
+                    raise TypeError("JSON object keys must be strings")
+                _require_string_mapping_keys(nested, active)
+        finally:
+            active.remove(marker)
+    elif isinstance(value, (list, tuple)):
+        marker = id(value)
+        if marker in active:
+            return
+        active.add(marker)
+        try:
+            for nested in value:
+                _require_string_mapping_keys(nested, active)
+        finally:
+            active.remove(marker)
+
+
+def _secret_representations(secret: str) -> tuple[str, ...]:
+    representations = [secret]
+    for ensure_ascii in (False, True):
+        encoded = json.dumps(secret, ensure_ascii=ensure_ascii)
+        representations.append(encoded[1:-1])
+    return tuple(dict.fromkeys(representations))
