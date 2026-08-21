@@ -19,3 +19,15 @@ class ConfigError(ReqmapError):
 
 class InputProfileError(ReqmapError):
     """Ошибка безопасного определения или применения входного XLSX-профиля."""
+
+
+class ModelError(ReqmapError):
+    """Ошибка обращения к локальной OpenAI-compatible модели."""
+
+
+class ModelOutputError(ModelError):
+    """Модель вернула ответ, который нельзя безопасно использовать."""
+
+    def __init__(self, code: str, message_ru: str, raw_response: str) -> None:
+        super().__init__(code, message_ru)
+        self.raw_response = raw_response
