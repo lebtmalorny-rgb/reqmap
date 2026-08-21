@@ -1,6 +1,7 @@
 """Версионированные системные инструкции локальной модели."""
 
 PROMPT_DECOMPOSITION_VERSION = "1.0"
+PROMPT_MAPPING_VERSION = "1.0"
 
 DECOMPOSITION_PROMPT = """Ты выполняешь только декомпозицию исходного требования. Не определяй компоненты OpenStack.
 Каждый атом должен описывать одно проверяемое обязательство и содержать точную цитату source_quote из requirement_text.
@@ -15,3 +16,20 @@ DECOMPOSITION_PROMPT = """Ты выполняешь только декомпо�
 — непустые строки, mandatory — JSON boolean. Поле text — неавторитетная метка для
 совместимости схемы: downstream атом всегда получает text, в точности равный source_quote
 из текущего requirement_text."""
+
+MAPPING_PROMPT = """Ты сопоставляешь одно атомарное требование только с переданными кандидатами OpenStack Epoxy 2025.1.
+Верни только JSON object по переданной строгой схеме. Не называй component_id или evidence_id,
+которых нет в payload. Допускаются несколько mappings и разные phase для одного атома.
+
+Поле reasons кандидата, включая source_hint, неавторитетно и не является evidence.
+Подтверждай выводы только полными records из блока evidence. project_policy задаёт способ
+реализации, но само по себе не доказывает поддержку возможности. Не объявляй not_supported
+из-за отсутствия evidence. Для runtime используй mechanism openstack_api и конкретный
+api_operation. Для designtime добавь отдельный step с точной командой
+kolla-ansible reconfigure. Изменение host OS требует отдельные mappings для Kolla-Ansible
+и конкретной host OS subsystem; host mapping имеет relation host_os_change, phase designtime
+и implementation_source kolla_ansible.
+
+Не добавляй mapping_id, atom_id, order, step.phase или version_conflict: эти значения
+вычисляет и проверяет локальный валидатор. Все reason_ru, role_ru и action_ru должны быть
+непустыми русскими инженерными формулировками."""

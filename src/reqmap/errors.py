@@ -21,6 +21,10 @@ class InputProfileError(ReqmapError):
     """Ошибка безопасного определения или применения входного XLSX-профиля."""
 
 
+class ValidationError(ReqmapError):
+    """Канонический результат нарушает схему или предметный инвариант."""
+
+
 class ModelError(ReqmapError):
     """Ошибка обращения к локальной OpenAI-compatible модели."""
 
