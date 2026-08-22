@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
+from types import SimpleNamespace
 
 from openpyxl import load_workbook
+import openpyxl.writer.excel as openpyxl_excel_writer
 import pytest
 
 from reqmap.export_xlsx import (
@@ -210,6 +213,43 @@ def test_xlsx_output_is_deterministic(tmp_path: Path) -> None:
     second = tmp_path / "second.xlsx"
 
     first_hash = write_xlsx(run, first)
+    second_hash = write_xlsx(run, second)
+
+    assert first_hash == second_hash
+    assert first.read_bytes() == second.read_bytes()
+
+
+def test_xlsx_output_is_independent_from_openpyxl_save_clock(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run = mixed_run()
+    first = tmp_path / "first-clock.xlsx"
+    second = tmp_path / "second-clock.xlsx"
+
+    class FirstClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2026, 1, 1, 0, 0, 0)
+            return value.replace(tzinfo=tz) if tz is not None else value
+
+    class SecondClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            value = cls(2027, 2, 2, 3, 4, 5)
+            return value.replace(tzinfo=tz) if tz is not None else value
+
+    monkeypatch.setattr(
+        openpyxl_excel_writer,
+        "datetime",
+        SimpleNamespace(datetime=FirstClock, timezone=timezone),
+    )
+    first_hash = write_xlsx(run, first)
+    monkeypatch.setattr(
+        openpyxl_excel_writer,
+        "datetime",
+        SimpleNamespace(datetime=SecondClock, timezone=timezone),
+    )
     second_hash = write_xlsx(run, second)
 
     assert first_hash == second_hash

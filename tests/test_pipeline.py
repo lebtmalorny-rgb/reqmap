@@ -319,6 +319,102 @@ def test_preflight_failure_skips_subject_calls_and_writes_only_diagnostics(
     assert "top-secret" not in " ".join(run.diagnostics)
 
 
+def test_preflight_failure_removes_stale_subject_artifacts_from_reused_output(
+    tmp_path: Path,
+) -> None:
+    model = FakeModel(
+        preflight_error=ModelError("MODEL_DOWN", "Локальная модель недоступна.")
+    )
+    request = request_for(tmp_path)
+    request.output_dir.mkdir()
+    for name in (
+        "result.json",
+        "result.xlsx",
+        "report.md",
+        "run.jsonl",
+        "manifest.json",
+    ):
+        (request.output_dir / name).write_bytes(b"stale artifact")
+
+    run = analyze(request, config_for(), model)
+
+    assert run.run_status == "FAILED"
+    assert model.calls == []
+    assert sorted(path.name for path in request.output_dir.iterdir()) == [
+        "manifest.json",
+        "run.jsonl",
+    ]
+    assert b"stale artifact" not in (
+        request.output_dir / "manifest.json"
+    ).read_bytes()
+    assert b"stale artifact" not in (
+        request.output_dir / "run.jsonl"
+    ).read_bytes()
+
+
+def test_partial_output_cleanup_failure_does_not_publish_new_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    request = request_for(tmp_path)
+    request.output_dir.mkdir()
+    for name in (
+        "result.json",
+        "result.xlsx",
+        "report.md",
+        "run.jsonl",
+        "manifest.json",
+    ):
+        (request.output_dir / name).write_bytes(b"stale artifact")
+    original_unlink = Path.unlink
+
+    def fail_mid_cleanup(path: Path, *, missing_ok: bool = False) -> None:
+        if path == request.output_dir / "result.xlsx":
+            raise OSError("synthetic unlink failure")
+        original_unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_mid_cleanup)
+    model = FakeModel()
+
+    run = analyze(request, config_for(), model)
+
+    assert run.run_status == "FAILED"
+    assert run.metadata["preflight_artifacts_written"] is False
+    assert model.preflight_calls == 0
+    assert model.calls == []
+    assert (request.output_dir / "run.jsonl").read_bytes() == b"stale artifact"
+    assert (request.output_dir / "manifest.json").read_bytes() == b"stale artifact"
+    assert any(
+        diagnostic.startswith("OUTPUT_CLEANUP_FAILED:")
+        for diagnostic in run.diagnostics
+    )
+
+
+def test_invalid_stale_artifact_type_does_not_publish_new_diagnostics(
+    tmp_path: Path,
+) -> None:
+    request = request_for(tmp_path)
+    request.output_dir.mkdir()
+    (request.output_dir / "result.json").mkdir()
+    for name in ("run.jsonl", "manifest.json"):
+        (request.output_dir / name).write_bytes(b"stale artifact")
+    model = FakeModel()
+
+    run = analyze(request, config_for(), model)
+
+    assert run.run_status == "FAILED"
+    assert run.metadata["preflight_artifacts_written"] is False
+    assert model.preflight_calls == 0
+    assert model.calls == []
+    assert (request.output_dir / "result.json").is_dir()
+    assert (request.output_dir / "run.jsonl").read_bytes() == b"stale artifact"
+    assert (request.output_dir / "manifest.json").read_bytes() == b"stale artifact"
+    assert any(
+        diagnostic.startswith("OUTPUT_ARTIFACT_INVALID:")
+        for diagnostic in run.diagnostics
+    )
+
+
 def test_completed_requirement_resumes_without_subject_model_call(
     tmp_path: Path,
 ) -> None:
@@ -454,12 +550,23 @@ def test_pipeline_rejects_symlink_in_output_path_ancestor(
     assert tuple(real_parent.iterdir()) == ()
 
 
-def test_pipeline_rejects_source_xlsx_at_result_xlsx_path(
+@pytest.mark.parametrize(
+    "published_name",
+    [
+        "result.json",
+        "result.xlsx",
+        "report.md",
+        "run.jsonl",
+        "manifest.json",
+    ],
+)
+def test_pipeline_never_cleans_a_source_at_a_published_artifact_path(
     tmp_path: Path,
+    published_name: str,
 ) -> None:
     request = request_for(tmp_path)
     request.output_dir.mkdir()
-    source = request.output_dir / "result.xlsx"
+    source = request.output_dir / published_name
     source.write_bytes(b"source")
     request = replace(request, input_kind="xlsx", source_path=source)
     model = FakeModel()

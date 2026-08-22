@@ -158,6 +158,9 @@ _CONFIRMED_STATUSES = frozenset(
     }
 )
 _FIXED_ZIP_TIME = (2000, 1, 1, 0, 0, 0)
+_FIXED_CORE_TIME = b"2000-01-01T00:00:00Z"
+_CORE_MODIFIED_OPEN = b'<dcterms:modified xsi:type="dcterms:W3CDTF">'
+_CORE_MODIFIED_CLOSE = b"</dcterms:modified>"
 
 
 class ExportError(ReqmapError):
@@ -510,8 +513,30 @@ def _normalized_zip_bytes(path: Path) -> bytes:
             normalized.external_attr = original.external_attr
             normalized.flag_bits = original.flag_bits & 0x800
             normalized.create_system = 0
-            target.writestr(normalized, source.read(original.filename))
+            payload = source.read(original.filename)
+            if original.filename == "docProps/core.xml":
+                payload = _normalized_core_properties(payload)
+            target.writestr(normalized, payload)
     return output.getvalue()
+
+
+def _normalized_core_properties(payload: bytes) -> bytes:
+    if (
+        payload.count(_CORE_MODIFIED_OPEN) != 1
+        or payload.count(_CORE_MODIFIED_CLOSE) != 1
+    ):
+        raise ValueError(
+            "OOXML core properties не содержит единственную modified timestamp."
+        )
+    before, _separator, remainder = payload.partition(_CORE_MODIFIED_OPEN)
+    _timestamp, _separator, after = remainder.partition(_CORE_MODIFIED_CLOSE)
+    return (
+        before
+        + _CORE_MODIFIED_OPEN
+        + _FIXED_CORE_TIME
+        + _CORE_MODIFIED_CLOSE
+        + after
+    )
 
 
 def _verify_sheet_names(names: list[str]) -> None:

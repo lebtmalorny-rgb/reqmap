@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import os
@@ -51,6 +52,10 @@ _SAFE_REQUIREMENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _FINAL_ARTIFACTS = ("result.json", "result.xlsx", "report.md")
 _DIAGNOSTIC_ARTIFACTS = ("run.jsonl", "manifest.json")
+_PUBLISHED_ARTIFACTS = (*_FINAL_ARTIFACTS, *_DIAGNOSTIC_ARTIFACTS)
+_OUTPUT_NOT_CLEAN_CODES = frozenset(
+    {"OUTPUT_ARTIFACT_INVALID", "OUTPUT_CLEANUP_FAILED"}
+)
 
 
 def preflight(config: AppConfig, model: JsonModel) -> PreflightResult:
@@ -68,8 +73,7 @@ def analyze(
     preflight_result, knowledge = _perform_preflight(config, model, request=request)
     if not preflight_result.ok or knowledge is None:
         run = failed_preflight_run(request, preflight_result)
-        _write_preflight_diagnostics(run, request, config)
-        return run
+        return _finish_failed_preflight(run, request, config)
 
     signature = _run_signature(request, config, knowledge.snapshot_sha256)
     work_dir = request.output_dir / ".work"
@@ -84,8 +88,7 @@ def analyze(
             knowledge_sha256=knowledge.snapshot_sha256,
         )
         run = failed_preflight_run(request, failed)
-        _write_preflight_diagnostics(run, request, config)
-        return run
+        return _finish_failed_preflight(run, request, config)
 
     parent_texts = {
         item.requirement_id: item.text for item in request.requirements
@@ -205,6 +208,11 @@ def _perform_preflight(
     if diagnostics:
         return PreflightResult(False, tuple(diagnostics), None), None
 
+    if request is not None:
+        cleanup_diagnostics = _clear_published_artifacts(request.output_dir)
+        if cleanup_diagnostics:
+            return PreflightResult(False, cleanup_diagnostics, None), None
+
     try:
         knowledge = load_knowledge(config.knowledge_path)
     except ReqmapError as exc:
@@ -242,6 +250,27 @@ def _perform_preflight(
         ), knowledge
 
     return PreflightResult(True, (), knowledge.snapshot_sha256), knowledge
+
+
+def _clear_published_artifacts(output: Path) -> tuple[str, ...]:
+    """Не допустить смешения артефактов предыдущего и текущего запусков."""
+    paths = tuple(output / name for name in _PUBLISHED_ARTIFACTS)
+    invalid = tuple(
+        path.name for path in paths if path.exists() and not path.is_file()
+    )
+    if invalid:
+        return (
+            "OUTPUT_ARTIFACT_INVALID: вместо обычного файла обнаружено: "
+            f"{', '.join(invalid)}.",
+        )
+    try:
+        for path in paths:
+            path.unlink(missing_ok=True)
+    except OSError:
+        return (
+            "OUTPUT_CLEANUP_FAILED: не удалось удалить артефакты предыдущего запуска.",
+        )
+    return ()
 
 
 def _config_diagnostics(config: AppConfig) -> tuple[str, ...]:
@@ -305,15 +334,18 @@ def _request_diagnostics(request: AnalysisRequest) -> tuple[str, ...]:
         source = request.source_path
         if not source.is_file() or not os.access(source, os.R_OK):
             diagnostics.append("INPUT_UNREADABLE: входной файл недоступен для чтения.")
-        if request.input_kind == "xlsx" and _same_path(
-            source,
-            output / "result.xlsx",
-        ):
+        collisions = tuple(
+            name
+            for name in _PUBLISHED_ARTIFACTS
+            if _same_path(source, output / name)
+        )
+        if request.input_kind == "xlsx" and collisions:
             diagnostics.append(
-                "OUTPUT_INPUT_COLLISION: result.xlsx совпадает с исходным XLSX."
+                "OUTPUT_INPUT_COLLISION: выходной артефакт совпадает с исходным "
+                f"XLSX: {', '.join(collisions)}."
             )
 
-    for name in (*_FINAL_ARTIFACTS, *_DIAGNOSTIC_ARTIFACTS, ".work"):
+    for name in (*_PUBLISHED_ARTIFACTS, ".work"):
         candidate = output / name
         if candidate.is_symlink():
             diagnostics.append(f"OUTPUT_SYMLINK: {name} не может быть symlink.")
@@ -647,10 +679,15 @@ def _write_preflight_diagnostics(
     run: RunResult,
     request: AnalysisRequest,
     config: AppConfig,
-) -> None:
+) -> bool:
     output = request.output_dir
     if not isinstance(output, Path) or output.is_symlink():
-        return
+        return False
+    if request.source_path is not None and any(
+        _same_path(request.source_path, output / name)
+        for name in _PUBLISHED_ARTIFACTS
+    ):
+        return False
     try:
         _ensure_secure_directory(output)
         log = {
@@ -683,8 +720,30 @@ def _write_preflight_diagnostics(
             "diagnostics": list(run.diagnostics),
         }
         _atomic_write(output / "manifest.json", _canonical_bytes(manifest))
+        return True
     except (OSError, ValueError):
-        return
+        return False
+
+
+def _finish_failed_preflight(
+    run: RunResult,
+    request: AnalysisRequest,
+    config: AppConfig,
+) -> RunResult:
+    output_not_clean = any(
+        diagnostic.partition(":")[0] in _OUTPUT_NOT_CLEAN_CODES
+        for diagnostic in run.diagnostics
+    )
+    written = False
+    if not output_not_clean:
+        written = _write_preflight_diagnostics(run, request, config)
+    return replace(
+        run,
+        metadata={
+            **run.metadata,
+            "preflight_artifacts_written": written,
+        },
+    )
 
 
 def _ensure_secure_directory(path: Path) -> None:

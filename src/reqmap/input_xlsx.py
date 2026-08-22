@@ -1,6 +1,6 @@
 """Безопасная неизменяемая загрузка требований из XLSX."""
 
-import hashlib
+from io import BytesIO
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -51,24 +51,53 @@ def detect_profile(workbook: Workbook) -> InputProfile:
 
 def load_xlsx(path: Path, profile: InputProfile | None) -> tuple[Requirement, ...]:
     """Загружает XLSX read-only, сохраняя порядок, координаты и исходный контекст."""
-    source_hash_before = _sha256_file(path)
-    workbook = load_workbook(path, read_only=True, data_only=False)
-    try:
-        effective_profile = profile if profile is not None else detect_profile(workbook)
-        requirements = _load_profiled_workbook(path, workbook, effective_profile)
-    finally:
-        workbook.close()
-
-    if _sha256_file(path) != source_hash_before:
+    source_bytes = path.read_bytes()
+    requirements = load_xlsx_bytes(source_bytes, profile, path.name)
+    if path.read_bytes() != source_bytes:
         raise InputProfileError(
             "XLSX_SOURCE_CHANGED",
             "Исходный XLSX изменился во время импорта; результат отклонён.",
         )
+    return requirements
+
+
+def load_xlsx_bytes(
+    source_bytes: bytes,
+    profile: InputProfile | None,
+    source_name: str,
+) -> tuple[Requirement, ...]:
+    """Разбирает ровно тот byte snapshot XLSX, для которого вычисляется hash."""
+    if type(source_bytes) is not bytes or not source_bytes:
+        raise InputProfileError(
+            "XLSX_SOURCE_INVALID",
+            "Исходный XLSX должен содержать непустой byte snapshot.",
+        )
+    if type(source_name) is not str or not source_name:
+        raise InputProfileError(
+            "XLSX_SOURCE_INVALID",
+            "Для исходного XLSX требуется непустое имя файла.",
+        )
+    workbook = load_workbook(
+        BytesIO(source_bytes),
+        read_only=True,
+        data_only=False,
+    )
+    try:
+        effective_profile = profile if profile is not None else detect_profile(workbook)
+        requirements = _load_profiled_workbook(
+            source_name,
+            workbook,
+            effective_profile,
+        )
+    finally:
+        workbook.close()
     return tuple(requirements)
 
 
 def _load_profiled_workbook(
-    path: Path, workbook: Workbook, profile: InputProfile
+    source_name: str,
+    workbook: Workbook,
+    profile: InputProfile,
 ) -> list[Requirement]:
     selected_sheets = _select_sheets(workbook, profile)
     requirements: list[Requirement] = []
@@ -102,7 +131,7 @@ def _load_profiled_workbook(
                     text=_string_value(text_cell.value),
                     ordinal=ordinal,
                     coordinate=SourceCoordinate(
-                        source_name=path.name,
+                        source_name=source_name,
                         sheet=sheet.title,
                         row=text_cell.row,
                     ),
@@ -181,14 +210,6 @@ def _optional_value(value: object) -> str | None:
 
 def _string_value(value: object) -> str:
     return "" if value is None else str(value)
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _ambiguous_profile_error() -> InputProfileError:
