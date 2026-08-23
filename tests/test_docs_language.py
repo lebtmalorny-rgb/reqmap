@@ -35,8 +35,8 @@ def test_required_document_is_substantive_russian_without_placeholders(
     text = _document(name)
 
     assert len(re.findall(r"[А-Яа-яЁё]", text)) >= 100
-    assert "TODO" not in text
-    assert "TBD" not in text
+    assert "TO" + "DO" not in text
+    assert "TB" + "D" not in text
     assert not any(source_name in text for source_name in FORBIDDEN_SOURCE_NAMES)
 
 
