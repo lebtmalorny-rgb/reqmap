@@ -1,6 +1,8 @@
 .worktrees/
 .superpowers/
+.serena/
 .venv/
+.DS_Store
 __pycache__/
 .pytest_cache/
 .hypothesis/
