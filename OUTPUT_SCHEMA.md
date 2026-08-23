@@ -1,0 +1,69 @@
+# Схема результатов reqmap
+
+Каноническим результатом является `result.json`. XLSX и Markdown строятся из того же immutable `RunResult` и проходят crosscheck; они не являются независимыми источниками предметной истины.
+
+## JSON верхнего уровня
+
+- `run_id` — детерминированный идентификатор запуска;
+- `schema_version` — версия схемы результата;
+- `run_status` — операционный `SUCCESS`, `PARTIAL` или `FAILED`;
+- `requirements` — исходные строки и результаты их обработки в исходном порядке;
+- `groups` — агрегаты, которые сохраняют `source_requirement_ids` и не заменяют построчные записи;
+- `evidence` — только evidence, фактически процитированный mappings;
+- `metadata` — input/knowledge hashes, модель, безопасный endpoint origin, prompts, seed, `top_k` и resume signature;
+- `diagnostics` — дедуплицированные диагностики запуска.
+
+Внутри requirement сохраняются `requirement_id`, исходный `source_id`, полный `text`, `ordinal`, coordinate файла/листа/строки, `parent_id`, `group_ids`, исходные поля и `source_hints`. Результат добавляет `analysis_state`, nullable `support_status`, `atom_results`, агрегированные `mappings` и diagnostics.
+
+Atomic claim содержит `atom_id`, `requirement_id`, буквальную `source_quote`, флаг `mandatory` и ordinal. Mapping содержит `mapping_id`, `atom_id`, `component_id`, русскую роль, relation, phase, implementation source, mechanism, ordered steps, `evidence_ids`, status и обоснование.
+
+## Машинные enums
+
+`analysis_state`: `completed`, `model_failed`, `validation_failed`, `skipped`.
+
+`support_status`: `supported`, `partial`, `not_supported`, `insufficient_evidence`, `not_applicable`. У незавершённой обработки support status равен `null`.
+
+`phase`: `runtime`, `designtime`. Runtime описывает действие через OpenStack API. Design-time содержит отдельный шаг с механизмом `kolla-ansible reconfigure`.
+
+`relation`: `implements`, `configures`, `prerequisite`, `integrates`, `host_os_change`.
+
+`implementation_source`: `upstream`, `kolla_ansible`, `product_extension`, `external_component`.
+
+Evidence использует polarity `positive` или `negative` и strength `direct`, `indirect` или `none`. Технические коды не переводятся; XLSX рядом показывает русское значение.
+
+## Агрегация support status
+
+Приоритет обязателен и воспроизводится из атомов:
+
+1. `not_supported`, если хотя бы один обязательный атом доказанно не поддерживается;
+2. отсутствие итогового status, если обязательный атом не `completed` и нет подтверждённого `not_supported`;
+3. `insufficient_evidence`, если evidence недостаточно и более сильных причин нет;
+4. `partial`, если подтверждена только часть обязательного содержания;
+5. `not_applicable`, если все атомы неприменимы;
+6. `supported`, если все обязательные применимые атомы поддерживаются, а остальные неприменимы.
+
+Группа применяет тот же приоритет, объединяет только подтверждённые components/mapping IDs и перечисляет все исходные requirement IDs. Дубли требований остаются отдельными строками.
+
+## XLSX
+
+`result.xlsx` содержит ровно пять листов:
+
+1. `Требования` — исходные строки, координаты, parent/group links, состояния, status и компоненты;
+2. `Атомарные утверждения` — атомы, source quotes, обязательность и подтверждённые/неподтверждённые аспекты;
+3. `Сопоставления` — many-to-many связи, фаза, источник реализации, steps, evidence и reason;
+4. `Доказательства` — evidence metadata, URL, локальный путь, locator, версия и SHA-256;
+5. `Запуск` — параметры и статистика текущего `RunResult`.
+
+Строковые значения, начинающиеся с `=`, `+`, `-` или `@`, записываются как literal, а не как Excel formula. Exporter проверяет ZIP/OOXML, точные headers/rows/counts, отсутствие formulas и независимое чтение OpenPyXL. ZIP metadata и core modified timestamp нормализованы, поэтому одинаковый `RunResult` даёт одинаковый SHA-256.
+
+## Markdown, журнал и manifest
+
+`report.md` содержит статус, counts, распределение компонентов и фаз, host OS/Kolla-Ansible случаи, неподтверждённые требования и processing failures. Скрытый machine marker counts используется crosscheck и не заменяет читаемый отчёт.
+
+`run.jsonl` — журнал одного запуска с полями `event`, `level`, `message_ru` и allowlisted context. API key redacted рекурсивно. `manifest.json` не хеширует сам себя; он содержит schema/run identifiers, versions, input/knowledge hashes, model, endpoint origin без path/query, seed, prompt/retry metadata и hashes четырёх остальных опубликованных артефактов.
+
+## Cross-artifact правила
+
+Crosscheck повторно строит expected JSON/Markdown/XLSX из canonical объекта и сравнивает bytes, counts, IDs, statuses и `run_status`. Любая формула, symlink, повреждённый ZIP, неизвестный sheet, изменённая строка или несовпадающий hash даёт exit code 5. Такой набор нельзя частично публиковать как успешный.
+
+Проверяемые действия оператора приведены в [RUNBOOK.md](RUNBOOK.md), а предметные правила evidence — в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
