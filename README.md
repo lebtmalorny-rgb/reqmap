@@ -80,7 +80,7 @@ CLI печатает абсолютный путь и SHA-256 каждого с�
 - [RUNBOOK.md](RUNBOOK.md) — запуск, preflight, resume, backup и диагностика;
 - [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md) — устройство и сопровождение evidence snapshot;
 - [OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) — JSON, XLSX, enums и cross-artifact правила;
-- [CLIENTS_CODEX_OPENCODE.md](CLIENTS_CODEX_OPENCODE.md) — единый repo-scoped skill для клиентов;
+- [CLIENTS_CODEX_OPENCODE.md](CLIENTS_CODEX_OPENCODE.md) — работа через Codex, OpenCode, другие agent CLI и прямой shell;
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — причины отказов и проверяемые действия.
 
 Архитектурные решения и детальный implementation plan находятся в `docs/superpowers/`. Для обычной установки и анализа эти материалы не требуются.
