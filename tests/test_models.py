@@ -4,7 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from reqmap.ids import atom_id, generated_requirement_id, mapping_id, sha256_bytes
+from reqmap.ids import (
+    atom_id,
+    generated_requirement_id,
+    mapping_id,
+    procedure_graph_id,
+    procedure_step_id,
+    responsibility_id,
+    sha256_bytes,
+)
 from reqmap.models import (
     AnalysisRequest,
     AnalysisState,
@@ -69,6 +77,9 @@ def test_generated_ids_are_stable_and_one_based() -> None:
     assert generated_requirement_id(1) == "REQ-0001"
     assert atom_id("REQ-0001", 2) == "REQ-0001-A002"
     assert mapping_id("REQ-0001-A002", 3) == "REQ-0001-A002-M003"
+    assert responsibility_id("REQ-0001-A002", 4) == "REQ-0001-A002-R004"
+    assert procedure_graph_id("REQ-0001", 5) == "REQ-0001-P005"
+    assert procedure_step_id("REQ-0001-P005", 6) == "REQ-0001-P005-S006"
     assert sha256_bytes(b"reqmap") == hashlib.sha256(b"reqmap").hexdigest()
 
 
