@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import tempfile
 from typing import Any, NoReturn
 
 from reqmap.errors import ReqmapError
@@ -84,15 +85,38 @@ def write_snapshot_manifest(root: Path) -> dict[str, object]:
         "SNAPSHOT_MANIFEST_INVALID",
         "Существующий manifest snapshot небезопасен.",
     )
+    prior_manifest = _optional_regular_file_bytes(manifest_path)
 
     # Avoid a module-level cycle: the maintenance loader imports this trust module.
     from reqmap.knowledge_v2 import load_knowledge_v2_for_maintenance
 
     manifest = build_snapshot_manifest(normalized_root)
+    manifest_bytes = canonical_json_bytes(manifest)
     load_knowledge_v2_for_maintenance(normalized_root)
+    if canonical_json_bytes(build_snapshot_manifest(normalized_root)) != manifest_bytes:
+        _fail_without_context(
+            "SNAPSHOT_INTEGRITY_FAILED",
+            "Governed файлы snapshot изменились во время validation.",
+        )
+
     try:
-        atomic_write_bytes(manifest_path, canonical_json_bytes(manifest))
-    except (OSError, ValueError):
+        atomic_write_bytes(manifest_path, manifest_bytes)
+        published_bytes = _read_regular_file(
+            manifest_path,
+            "SNAPSHOT_MANIFEST_INVALID",
+            "Опубликованный manifest snapshot отсутствует или небезопасен.",
+        )
+        if published_bytes != manifest_bytes:
+            _fail_without_context(
+                "SNAPSHOT_MANIFEST_INVALID",
+                "Опубликованные bytes manifest snapshot изменились.",
+            )
+        published_trust = _parse_manifest_bytes(published_bytes)
+        verify_snapshot_integrity(normalized_root, published_trust)
+    except BaseException as exc:
+        _restore_manifest(manifest_path, prior_manifest, manifest_bytes)
+        if isinstance(exc, SnapshotTrustError):
+            raise
         _fail_without_context(
             "SNAPSHOT_MANIFEST_INVALID",
             "Не удалось безопасно записать manifest snapshot.",
@@ -106,17 +130,16 @@ def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
     _validate_private_key(normalized_root, private_key)
     manifest_path = normalized_root / _MANIFEST_NAME
     signature_path = normalized_root / _SIGNATURE_NAME
-    generated_path = manifest_path.with_suffix(manifest_path.suffix + ".sig")
     _validate_replace_target(
         signature_path,
         "SNAPSHOT_TRUST_BOUNDARY",
         "Существующий target подписи snapshot небезопасен.",
     )
-    _require_absent_generated_signature(generated_path)
 
     # Avoid a module-level cycle: the maintenance loader imports this trust module.
     from reqmap.knowledge_v2 import load_knowledge_v2_for_maintenance
 
+    private_key_bytes = _read_private_key_bytes(private_key)
     manifest_bytes = _read_regular_file(
         manifest_path,
         "SNAPSHOT_MANIFEST_INVALID",
@@ -128,6 +151,11 @@ def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
     if knowledge.snapshot_status != "approved":
         _fail_without_context("SNAPSHOT_NOT_APPROVED", "Deep snapshot не утверждён.")
 
+    workspace, signing_key, signing_manifest, generated_path = _signing_workspace(
+        normalized_root,
+        private_key_bytes,
+        manifest_bytes,
+    )
     try:
         try:
             completed = subprocess.run(
@@ -136,10 +164,10 @@ def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
                     "-Y",
                     "sign",
                     "-f",
-                    str(private_key),
+                    str(signing_key),
                     "-n",
                     _SIGNATURE_NAMESPACE,
-                    str(manifest_path),
+                    str(signing_manifest),
                 ],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -168,11 +196,7 @@ def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
                 "Не удалось создать подпись snapshot.",
             )
 
-        signature_bytes = _read_regular_file(
-            generated_path,
-            "SNAPSHOT_SIGNING_FAILED",
-            "Signer не создал безопасную подпись snapshot.",
-        )
+        signature_bytes = _read_generated_signature(generated_path)
         _require_ed25519_signature(signature_bytes)
         if _read_regular_file(
             manifest_path,
@@ -189,6 +213,8 @@ def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
             "SNAPSHOT_TRUST_BOUNDARY",
             "Target подписи snapshot изменён и небезопасен.",
         )
+        _remove_temp_file(signing_key)
+        _remove_temp_file(signing_manifest)
         try:
             os.replace(generated_path, signature_path)
         except OSError:
@@ -198,7 +224,10 @@ def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
             )
         return signature_path
     finally:
-        _cleanup_generated_signature(generated_path)
+        _cleanup_signing_workspace(
+            workspace,
+            (signing_key, signing_manifest, generated_path),
+        )
 
 
 def parse_snapshot_manifest(path: Path) -> SnapshotTrust:
@@ -476,31 +505,129 @@ def _validate_replace_target(path: Path, code: str, message: str) -> None:
         _fail_without_context(code, message)
 
 
-def _require_absent_generated_signature(path: Path) -> None:
+def _optional_regular_file_bytes(path: Path) -> bytes | None:
     try:
         path.lstat()
     except FileNotFoundError:
-        return
+        return None
     except OSError:
         _fail_without_context(
-            "SNAPSHOT_SIGNING_FAILED",
-            "Generated signature target небезопасен.",
+            "SNAPSHOT_MANIFEST_INVALID",
+            "Существующий manifest snapshot небезопасен.",
         )
-    _fail_without_context(
-        "SNAPSHOT_SIGNING_FAILED",
-        "Generated signature target уже существует.",
+    return _read_regular_file(
+        path,
+        "SNAPSHOT_MANIFEST_INVALID",
+        "Существующий manifest snapshot небезопасен.",
     )
 
 
-def _cleanup_generated_signature(path: Path) -> None:
+def _restore_manifest(path: Path, prior: bytes | None, published: bytes) -> None:
+    if prior is not None:
+        try:
+            atomic_write_bytes(path, prior)
+        except (OSError, ValueError):
+            _fail_without_context(
+                "SNAPSHOT_MANIFEST_INVALID",
+                "Не удалось атомарно восстановить prior manifest snapshot.",
+            )
+        return
     try:
-        generated_stat = path.lstat()
+        current = _optional_regular_file_bytes(path)
+        if current is None:
+            return
+        if current != published:
+            _fail_without_context(
+                "SNAPSHOT_MANIFEST_INVALID",
+                "Отсутствующий prior manifest невозможно безопасно восстановить.",
+            )
+        path.unlink()
+    except SnapshotTrustError:
+        raise
     except OSError:
-        return
-    if not stat.S_ISREG(generated_stat.st_mode):
-        return
+        _fail_without_context(
+            "SNAPSHOT_MANIFEST_INVALID",
+            "Не удалось удалить невалидный опубликованный manifest snapshot.",
+        )
+
+
+def _read_private_key_bytes(path: Path) -> bytes:
+    try:
+        return _read_regular_file(
+            path,
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Private key отсутствует или небезопасен.",
+        )
+    except SnapshotTrustError:
+        _fail_without_context(
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Private key отсутствует или небезопасен.",
+        )
+
+
+def _signing_workspace(
+    root: Path, private_key: bytes, manifest: bytes
+) -> tuple[Path, Path, Path, Path]:
+    workspace: Path | None = None
+    try:
+        workspace = Path(
+            tempfile.mkdtemp(prefix=f".{root.name}.reqmap-sign-", dir=root.parent)
+        )
+        os.chmod(workspace, 0o700)
+        signing_key = workspace / "private-key"
+        signing_manifest = workspace / _MANIFEST_NAME
+        atomic_write_bytes(signing_key, private_key)
+        atomic_write_bytes(signing_manifest, manifest)
+        generated = signing_manifest.with_suffix(signing_manifest.suffix + ".sig")
+        return workspace, signing_key, signing_manifest, generated
+    except (OSError, ValueError):
+        if workspace is not None:
+            _cleanup_signing_workspace(workspace, ())
+        _fail_without_context(
+            "SNAPSHOT_SIGNING_FAILED",
+            "Не удалось создать безопасный signing workspace.",
+        )
+
+
+def _read_generated_signature(path: Path) -> bytes:
+    try:
+        return _read_regular_file(
+            path,
+            "SNAPSHOT_SIGNING_FAILED",
+            "Signer не создал безопасную подпись snapshot.",
+        )
+    except SnapshotTrustError:
+        _fail_without_context(
+            "SNAPSHOT_SIGNING_FAILED",
+            "Signer не создал безопасную подпись snapshot.",
+        )
+
+
+def _remove_temp_file(path: Path) -> None:
     try:
         path.unlink()
+    except OSError:
+        _fail_without_context(
+            "SNAPSHOT_SIGNING_FAILED",
+            "Не удалось очистить signing workspace.",
+        )
+
+
+def _cleanup_signing_workspace(workspace: Path, paths: tuple[Path, ...]) -> None:
+    candidates = list(paths)
+    try:
+        candidates.extend(workspace.iterdir())
+    except OSError:
+        pass
+    for path in dict.fromkeys(candidates):
+        try:
+            mode = path.lstat().st_mode
+            if not stat.S_ISDIR(mode):
+                path.unlink()
+        except OSError:
+            pass
+    try:
+        workspace.rmdir()
     except OSError:
         pass
 

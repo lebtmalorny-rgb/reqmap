@@ -10,6 +10,8 @@ import subprocess
 
 import pytest
 
+from reqmap import knowledge_v2 as knowledge_v2_module
+from reqmap import snapshot_trust as snapshot_trust_module
 from reqmap.export_json import canonical_json_bytes
 from reqmap.snapshot_trust import (
     SnapshotTrustError,
@@ -35,8 +37,10 @@ def unsigned_v2_snapshot(tmp_path: Path, *, status: str = "approved") -> Path:
     return root
 
 
-def generate_private_key(tmp_path: Path, *, key_type: str = "ed25519") -> Path:
-    trust = tmp_path / f"trust-{key_type}"
+def generate_private_key(
+    tmp_path: Path, *, key_type: str = "ed25519", directory_name: str | None = None
+) -> Path:
+    trust = tmp_path / (directory_name or f"trust-{key_type}")
     trust.mkdir()
     private_key = trust / "signing-key"
     arguments = ["ssh-keygen", "-q", "-t", key_type]
@@ -58,6 +62,20 @@ def allowed_signers_for(private_key: Path) -> Path:
     allowed_signers = private_key.parent / "allowed-signers"
     allowed_signers.write_text(f"reqmap-snapshot {public_key}\n", encoding="utf-8")
     return allowed_signers
+
+
+def replace_component_display_name(root: Path, display_name: str) -> None:
+    components_path = root / "components.json"
+    components = json.loads(components_path.read_text(encoding="utf-8"))
+    components["components"][0]["display_name"] = display_name
+    components_path.write_bytes(canonical_json_bytes(components))
+
+
+def replace_path_bytes(path: Path, payload: bytes, *, mode: int = 0o600) -> None:
+    replacement = path.with_name(f".{path.name}.replacement")
+    replacement.write_bytes(payload)
+    replacement.chmod(mode)
+    os.replace(replacement, path)
 
 
 def test_build_manifest_is_deterministic_sorted_and_canonical(tmp_path: Path) -> None:
@@ -138,6 +156,63 @@ def test_build_validates_snapshot_before_replacing_safe_manifest(tmp_path: Path)
         write_snapshot_manifest(root)
 
     assert manifest.read_bytes() == b"prior-safe-manifest\n"
+
+
+def test_build_detects_governed_mutation_during_structural_validation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = unsigned_v2_snapshot(tmp_path)
+    write_snapshot_manifest(root)
+    manifest_path = root / "snapshot-manifest.json"
+    prior_manifest = manifest_path.read_bytes()
+    real_validate = knowledge_v2_module.load_knowledge_v2_for_maintenance
+
+    def validate_then_mutate(path: Path):
+        knowledge = real_validate(path)
+        replace_component_display_name(root, "Nova changed during validation")
+        return knowledge
+
+    monkeypatch.setattr(
+        knowledge_v2_module,
+        "load_knowledge_v2_for_maintenance",
+        validate_then_mutate,
+    )
+
+    with pytest.raises(SnapshotTrustError) as error:
+        write_snapshot_manifest(root)
+
+    assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
+    assert manifest_path.read_bytes() == prior_manifest
+
+
+def test_build_restores_prior_manifest_when_final_integrity_check_detects_race(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = unsigned_v2_snapshot(tmp_path)
+    manifest_path = root / "snapshot-manifest.json"
+    prior_manifest = b"prior-safe-manifest\n"
+    manifest_path.write_bytes(prior_manifest)
+    real_atomic_write = snapshot_trust_module.atomic_write_bytes
+    writes = 0
+
+    def publish_then_mutate(path: Path, payload: bytes) -> None:
+        nonlocal writes
+        real_atomic_write(path, payload)
+        writes += 1
+        if writes == 1:
+            replace_component_display_name(root, "Nova changed after publish")
+
+    monkeypatch.setattr(
+        snapshot_trust_module,
+        "atomic_write_bytes",
+        publish_then_mutate,
+    )
+
+    with pytest.raises(SnapshotTrustError) as error:
+        write_snapshot_manifest(root)
+
+    assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
+    assert manifest_path.read_bytes() == prior_manifest
 
 
 def test_sign_tool_refuses_private_key_inside_snapshot(tmp_path: Path) -> None:
@@ -226,11 +301,28 @@ def test_sign_process_contract_hides_diagnostics_and_preserves_prior_signature(
     private_key = generate_private_key(tmp_path)
     signature = root / "snapshot-manifest.sig"
     signature.write_bytes(b"prior-safe-signature")
+    manifest = root / "snapshot-manifest.json"
+    private_key_bytes = private_key.read_bytes()
+    manifest_bytes = manifest.read_bytes()
     secret_stderr = b"PRIVATE-DIAGNOSTIC"
-    calls: list[tuple[object, dict[str, object]]] = []
+    observed: dict[str, object] = {}
+    prior_entries = set(root.parent.iterdir())
 
     def reject(arguments, **kwargs):
-        calls.append((arguments, kwargs))
+        signing_key = Path(arguments[4])
+        signing_manifest = Path(arguments[-1])
+        workspace = signing_key.parent
+        observed.update(
+            arguments=arguments,
+            kwargs=kwargs,
+            signing_key=signing_key,
+            signing_manifest=signing_manifest,
+            key_bytes=signing_key.read_bytes(),
+            manifest_bytes=signing_manifest.read_bytes(),
+            key_mode=signing_key.stat().st_mode & 0o777,
+            manifest_mode=signing_manifest.stat().st_mode & 0o777,
+            workspace_mode=workspace.stat().st_mode & 0o777,
+        )
         return subprocess.CompletedProcess(arguments, 255, b"", secret_stderr)
 
     monkeypatch.setattr("reqmap.snapshot_trust.subprocess.run", reject)
@@ -238,30 +330,78 @@ def test_sign_process_contract_hides_diagnostics_and_preserves_prior_signature(
     with pytest.raises(SnapshotTrustError) as error:
         sign_snapshot_manifest(root, private_key)
 
-    assert calls == [
-        (
-            [
-                "ssh-keygen",
-                "-Y",
-                "sign",
-                "-f",
-                str(private_key),
-                "-n",
-                "reqmap-snapshot",
-                str(root / "snapshot-manifest.json"),
-            ],
-            {
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
-                "timeout": 10,
-                "check": False,
-                "shell": False,
-            },
-        )
-    ]
+    arguments = observed["arguments"]
+    assert arguments[:4] == ["ssh-keygen", "-Y", "sign", "-f"]
+    assert arguments[5:7] == ["-n", "reqmap-snapshot"]
+    assert observed["signing_key"] != private_key
+    assert observed["signing_manifest"] != manifest
+    assert Path(observed["signing_key"]).parent == Path(
+        observed["signing_manifest"]
+    ).parent
+    assert not Path(observed["signing_key"]).is_relative_to(root)
+    assert observed["key_bytes"] == private_key_bytes
+    assert observed["manifest_bytes"] == manifest_bytes
+    assert observed["key_mode"] == 0o600
+    assert observed["manifest_mode"] == 0o600
+    assert observed["workspace_mode"] == 0o700
+    assert observed["kwargs"] == {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+        "timeout": 10,
+        "check": False,
+        "shell": False,
+    }
+    assert set(root.parent.iterdir()) == prior_entries
     assert signature.read_bytes() == b"prior-safe-signature"
     assert str(private_key) not in str(error.value)
+    assert str(observed["signing_key"]) not in str(error.value)
     assert secret_stderr.decode() not in str(error.value)
+
+
+def test_sign_uses_captured_bytes_when_original_paths_are_swapped_and_restored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = unsigned_v2_snapshot(tmp_path)
+    write_snapshot_manifest(root)
+    private_key = generate_private_key(tmp_path)
+    attacker_key = generate_private_key(
+        tmp_path,
+        directory_name="trust-attacker",
+    )
+    allowed_signers = allowed_signers_for(private_key)
+    manifest = root / "snapshot-manifest.json"
+    original_key_bytes = private_key.read_bytes()
+    original_manifest_bytes = manifest.read_bytes()
+    attacker_key_bytes = attacker_key.read_bytes()
+    attacker_manifest = json.loads(original_manifest_bytes.decode("utf-8"))
+    attacker_manifest["snapshot_id"] = "attacker-snapshot"
+    attacker_manifest_bytes = canonical_json_bytes(attacker_manifest)
+    real_subprocess_run = subprocess.run
+    prior_entries = set(root.parent.iterdir())
+
+    def swap_sign_and_restore(arguments, **kwargs):
+        replace_path_bytes(private_key, attacker_key_bytes)
+        replace_path_bytes(manifest, attacker_manifest_bytes)
+        try:
+            return real_subprocess_run(arguments, **kwargs)
+        finally:
+            replace_path_bytes(private_key, original_key_bytes)
+            replace_path_bytes(manifest, original_manifest_bytes)
+
+    with monkeypatch.context() as context:
+        context.setattr(
+            "reqmap.snapshot_trust.subprocess.run",
+            swap_sign_and_restore,
+        )
+        signature = sign_snapshot_manifest(root, private_key)
+
+    trust = verify_snapshot(root, allowed_signers)
+
+    assert signature == root / "snapshot-manifest.sig"
+    assert trust.snapshot_id == "epoxy-2025.1-deep-001"
+    assert private_key.read_bytes() == original_key_bytes
+    assert manifest.read_bytes() == original_manifest_bytes
+    assert set(root.parent.iterdir()) == prior_entries
 
 
 @pytest.mark.parametrize(
