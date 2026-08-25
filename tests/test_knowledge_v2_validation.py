@@ -354,6 +354,66 @@ def test_2026_1_action_scope_is_allowed_for_upgrade(v2_kb) -> None:
     assert validate_knowledge_v2(kb) == ()
 
 
+def _with_2026_1_action(kb):
+    scope = replace(
+        kb.actions["ACTION-NOVA-CREATE"].version_scope,
+        target_release="2026.1",
+    )
+    return _replace_record(
+        kb, "actions", "ACTION-NOVA-CREATE", version_scope=scope
+    )
+
+
+def test_2026_1_action_declaration_without_step_usage_is_invalid(v2_kb) -> None:
+    kb = _with_2026_1_action(v2_kb)
+    kb = _replace_record(
+        kb,
+        "procedures",
+        "PROC-NOVA-CREATE",
+        lifecycle_phase=LifecyclePhase.UPGRADE,
+        steps=(),
+    )
+
+    actual = {(issue.code, issue.object_id) for issue in validate_knowledge_v2(kb)}
+
+    assert ("VERSION_SCOPE_INVALID", "ACTION-NOVA-CREATE") in actual
+
+
+def test_2026_1_action_in_upgrade_template_rejects_non_upgrade_step(v2_kb) -> None:
+    kb = _with_2026_1_action(v2_kb)
+    procedure = kb.procedures["PROC-NOVA-CREATE"]
+    kb = _replace_record(
+        kb,
+        "procedures",
+        procedure.template_id,
+        lifecycle_phase=LifecyclePhase.UPGRADE,
+    )
+
+    actual = {(issue.code, issue.object_id) for issue in validate_knowledge_v2(kb)}
+
+    assert ("VERSION_SCOPE_INVALID", "ACTION-NOVA-CREATE") in actual
+
+
+def test_2026_1_action_rejects_mixed_upgrade_and_non_upgrade_step_usages(v2_kb) -> None:
+    kb = _with_2026_1_action(v2_kb)
+    procedure = kb.procedures["PROC-NOVA-CREATE"]
+    upgrade_step = replace(procedure.steps[0], phase=LifecyclePhase.UPGRADE)
+    runtime_step = replace(
+        procedure.steps[0], local_step_id="runtime-use", phase=LifecyclePhase.RUNTIME
+    )
+    kb = _replace_record(
+        kb,
+        "procedures",
+        procedure.template_id,
+        lifecycle_phase=LifecyclePhase.UPGRADE,
+        steps=(upgrade_step, runtime_step),
+    )
+
+    actual = {(issue.code, issue.object_id) for issue in validate_knowledge_v2(kb)}
+
+    assert ("VERSION_SCOPE_INVALID", "ACTION-NOVA-CREATE") in actual
+
+
 @pytest.mark.parametrize(
     ("mutator", "object_id"),
     [
@@ -447,6 +507,19 @@ def test_validation_reports_all_issues_once_in_deterministic_order(v2_kb) -> Non
     }
 
 
+def test_effect_mismatch_is_reported_even_when_action_target_is_unknown(v2_kb) -> None:
+    broken = _replace_record(
+        v2_kb, "actions", "ACTION-NOVA-CREATE", target_ref="missing-target"
+    )
+
+    actual = {(issue.code, issue.object_id) for issue in validate_knowledge_v2(broken)}
+
+    assert {
+        ("ACTION_TARGET_UNKNOWN", "ACTION-NOVA-CREATE"),
+        ("ACTION_EFFECT_MISMATCH", "ACTION-NOVA-CREATE"),
+    } <= actual
+
+
 def test_allow_draft_only_permits_declared_draft_status(v2_kb) -> None:
     draft = replace(v2_kb, snapshot_status="draft")
     broken_draft = _unknown_action_target(draft)
@@ -471,7 +544,7 @@ def test_loader_rejects_invalid_graph_with_first_deterministic_issue(tmp_path) -
     with pytest.raises(KnowledgeV2Error) as error:
         load_knowledge_v2_for_maintenance(root)
 
-    assert error.value.code == "ACTION_TARGET_UNKNOWN"
+    assert error.value.code == "ACTION_EFFECT_MISMATCH"
 
 
 def test_runtime_source_validation_uses_manifest_verified_bytes(

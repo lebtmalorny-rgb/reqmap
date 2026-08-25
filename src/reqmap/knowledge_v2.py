@@ -417,7 +417,7 @@ def _validate_v2_references(
                     action.action_id,
                     f"Action ссылается на неизвестный effect: {effect_ref}.",
                 )
-            elif target_known and effect.target_ref != action.target_ref:
+            elif effect.target_ref != action.target_ref:
                 issue(
                     "ACTION_EFFECT_MISMATCH",
                     action.action_id,
@@ -560,16 +560,15 @@ def _positive_entity_id(record: object) -> str:
 def _validate_v2_versions(
     kb: KnowledgeBaseV2, issue: Callable[[str, str, str], None]
 ) -> None:
-    action_phases: dict[str, set[LifecyclePhase]] = {
-        action_id: set() for action_id in kb.actions
+    action_usages: dict[str, list[tuple[LifecyclePhase, LifecyclePhase]]] = {
+        action_id: [] for action_id in kb.actions
     }
     for procedure in kb.procedures.values():
-        referenced = set(procedure.action_refs) | {
-            step.action_ref for step in procedure.steps
-        }
-        for action_ref in referenced:
-            if action_ref in action_phases:
-                action_phases[action_ref].add(procedure.lifecycle_phase)
+        for step in procedure.steps:
+            if step.action_ref in action_usages:
+                action_usages[step.action_ref].append(
+                    (procedure.lifecycle_phase, step.phase)
+                )
 
     for action in kb.actions.values():
         scope = action.version_scope
@@ -578,10 +577,14 @@ def _validate_v2_versions(
             or scope.target_release not in {"2025.1", "2026.1"}
             or scope.kolla_ansible_release != "2025.1"
         )
-        if scope.target_release == "2026.1" and action_phases[action.action_id] != {
-            LifecyclePhase.UPGRADE
-        }:
-            invalid = True
+        if scope.target_release == "2026.1":
+            usages = action_usages[action.action_id]
+            if not usages or any(
+                template_phase is not LifecyclePhase.UPGRADE
+                or step_phase is not LifecyclePhase.UPGRADE
+                for template_phase, step_phase in usages
+            ):
+                invalid = True
         if invalid:
             issue(
                 "VERSION_SCOPE_INVALID",
