@@ -29,12 +29,13 @@ def write_v1_knowledge_snapshot(
     evidence_id: str,
     source_id: str,
     strength: str = "direct",
+    source_bytes: bytes | None = None,
 ) -> Path:
     """Create a complete strict v1 fixture for migration integration tests."""
     root.mkdir()
     source_path = root / "sources" / f"{component_id}.md"
     source_path.parent.mkdir()
-    source_bytes = f"# {component_id}\n\nMigration fixture.\n".encode("utf-8")
+    source_bytes = source_bytes or f"# {component_id}\n\nMigration fixture.\n".encode("utf-8")
     source_path.write_bytes(source_bytes)
 
     def write_json(relative: str, value: object) -> None:

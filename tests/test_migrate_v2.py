@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from reqmap import migrate_v2 as migrate_module
 from reqmap.knowledge import load_knowledge
 from reqmap.knowledge_v2 import load_knowledge_v2_for_maintenance
 from reqmap.migrate_v2 import MigrationError, migrate_v1_to_v2
@@ -57,9 +58,51 @@ def test_migration_preserves_actual_v1_fixture_records_as_unsigned_draft(tmp_pat
     assert evidence.strength is v1.evidence["E-NOVA-API-001"].strength
     assert evidence.review_state == "needs_review"
     assert evidence.supports_entity_refs == ("CAP-NOVA-SERVER-API",)
+    assert evidence.local_excerpt == (v1.root / "sources/nova-api.md").read_text(encoding="utf-8")
 
     manifest = json.loads((output / "snapshot-manifest.json").read_text(encoding="utf-8"))
     assert manifest["knowledge_schema_version"] == 2
+    assert manifest["snapshot_id"] == migrated.snapshot_id == f"v1-migration-{v1.snapshot_sha256}"
+
+
+def test_migration_uses_verbatim_source_text_not_the_v1_analyst_claim(tmp_path: Path) -> None:
+    source = write_v1_knowledge_snapshot(
+        tmp_path / "source",
+        component_id="component",
+        component_kind="openstack_service",
+        capability_id="CAP-COMPONENT",
+        evidence_id="EV-COMPONENT",
+        source_id="SRC-COMPONENT",
+    )
+    source_text = (source / "sources/component.md").read_text(encoding="utf-8")
+
+    migrate_v1_to_v2(source, tmp_path / "output")
+
+    evidence = load_knowledge_v2_for_maintenance(tmp_path / "output").evidence["EV-COMPONENT"]
+    assert source_text != "component is supported"
+    assert evidence.local_excerpt == source_text
+
+
+@pytest.mark.parametrize("source_bytes", [b"\xff", b" \n\t"])
+def test_migration_refuses_nontext_or_blank_source_artifact(
+    tmp_path: Path, source_bytes: bytes
+) -> None:
+    source = write_v1_knowledge_snapshot(
+        tmp_path / "source",
+        component_id="component",
+        component_kind="openstack_service",
+        capability_id="CAP-COMPONENT",
+        evidence_id="EV-COMPONENT",
+        source_id="SRC-COMPONENT",
+        source_bytes=source_bytes,
+    )
+    output = tmp_path / "output"
+
+    with pytest.raises(MigrationError):
+        migrate_v1_to_v2(source, output)
+
+    assert not output.exists()
+    assert not list(tmp_path.glob(".output.reqmap-migrate-*"))
 
 
 @pytest.mark.parametrize(
@@ -141,3 +184,49 @@ def test_migration_cleans_owned_staging_directory_when_maintenance_validation_fa
 
     assert not output.exists()
     assert not list(tmp_path.glob(".v2.reqmap-migrate-*"))
+
+
+def test_migration_preserves_original_destination_when_replace_races_with_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    output = tmp_path / "v2"
+    output.mkdir()
+    before = output.stat()
+    original_replace = migrate_module.os.replace
+
+    def insert_content_before_replace(source: Path, destination: Path) -> None:
+        assert destination == output
+        (output / "raced.txt").write_text("user data", encoding="utf-8")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(migrate_module.os, "replace", insert_content_before_replace)
+
+    with pytest.raises(MigrationError):
+        migrate_v1_to_v2(LEGACY_FIXTURE, output)
+
+    after = output.stat()
+    assert (after.st_dev, after.st_ino) == (before.st_dev, before.st_ino)
+    assert (output / "raced.txt").read_text(encoding="utf-8") == "user data"
+    assert not list(tmp_path.glob(".v2.reqmap-migrate-*"))
+
+
+def test_migration_never_recursively_cleans_a_substituted_staging_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    marker: Path | None = None
+
+    def substitute_staging(staging: Path) -> None:
+        nonlocal marker
+        staging.rename(staging.with_name(staging.name + "-moved"))
+        staging.mkdir()
+        marker = staging / "user-marker.txt"
+        marker.write_text("preserve", encoding="utf-8")
+        raise MigrationError("TEST_SUBSTITUTION", "staging replaced")
+
+    monkeypatch.setattr(migrate_module, "load_knowledge_v2_for_maintenance", substitute_staging)
+
+    with pytest.raises(MigrationError, match="staging replaced"):
+        migrate_v1_to_v2(LEGACY_FIXTURE, tmp_path / "v2")
+
+    assert marker is not None
+    assert marker.read_text(encoding="utf-8") == "preserve"

@@ -154,6 +154,7 @@ def test_build_manifest_uses_one_sorted_governed_file_set(tmp_path: Path) -> Non
     (root / "z.jsonl").write_bytes(b"{}\n")
     (root / "nested" / "a.md").write_bytes(b"A")
     (root / "indexes" / "vectors.bin").write_bytes(b"IDX")
+    (root / "metadata.json").write_bytes(canonical_json_bytes({"snapshot_id": "fixture-snapshot"}))
     (root / "ignored.txt").write_bytes(b"ignored")
     (root / "snapshot-manifest.json").write_bytes(b"ignored")
     (root / "snapshot-manifest.sig").write_bytes(b"ignored")
@@ -163,13 +164,18 @@ def test_build_manifest_uses_one_sorted_governed_file_set(tmp_path: Path) -> Non
     assert manifest == {
         "manifest_schema_version": "1.0",
         "knowledge_schema_version": 2,
-        "snapshot_id": "epoxy-2025.1-deep-001",
+        "snapshot_id": "fixture-snapshot",
         "key_id": "reqmap-maintenance-2026",
         "files": [
             {
                 "path": "indexes/vectors.bin",
                 "size": 3,
                 "sha256": hashlib.sha256(b"IDX").hexdigest(),
+            },
+            {
+                "path": "metadata.json",
+                "size": len(canonical_json_bytes({"snapshot_id": "fixture-snapshot"})),
+                "sha256": hashlib.sha256(canonical_json_bytes({"snapshot_id": "fixture-snapshot"})).hexdigest(),
             },
             {
                 "path": "nested/a.md",
@@ -183,6 +189,35 @@ def test_build_manifest_uses_one_sorted_governed_file_set(tmp_path: Path) -> Non
             },
         ],
     }
+
+
+def test_build_manifest_uses_the_canonical_metadata_snapshot_id(tmp_path: Path) -> None:
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    metadata = root / "metadata.json"
+    metadata.write_bytes(canonical_json_bytes({"snapshot_id": "draft-first"}))
+
+    first = build_snapshot_manifest(root)
+    metadata.write_bytes(canonical_json_bytes({"snapshot_id": "draft-second"}))
+    second = build_snapshot_manifest(root)
+
+    assert first["snapshot_id"] == "draft-first"
+    assert second["snapshot_id"] == "draft-second"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [b'{"snapshot_id":"one","snapshot_id":"two"}\n', b'{"snapshot_id":true}\n'],
+)
+def test_build_manifest_rejects_duplicate_or_invalid_metadata_id(
+    tmp_path: Path, payload: bytes
+) -> None:
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    (root / "metadata.json").write_bytes(payload)
+
+    with pytest.raises(SnapshotTrustError):
+        build_snapshot_manifest(root)
 
 
 def test_build_manifest_rejects_snapshot_walk_errors(

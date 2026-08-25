@@ -34,7 +34,6 @@ _MANIFEST_FIELDS = {
 _FILE_FIELDS = {"path", "size", "sha256"}
 _MANIFEST_SCHEMA_VERSION = "1.0"
 _KNOWLEDGE_SCHEMA_VERSION = 2
-_SNAPSHOT_ID = "epoxy-2025.1-deep-001"
 _KEY_ID = "reqmap-maintenance-2026"
 _SIGNER_IDENTITY = "reqmap-snapshot"
 _SIGNATURE_NAMESPACE = "reqmap-snapshot"
@@ -63,17 +62,38 @@ class SnapshotTrust:
 
 def build_snapshot_manifest(root: Path) -> dict[str, object]:
     """Build the canonical sorted manifest object for governed snapshot files."""
-    files = _snapshot_files(root, "SNAPSHOT_INTEGRITY_FAILED")
+    normalized_root = _validated_root(root, "SNAPSHOT_INTEGRITY_FAILED")
+    snapshot_id = _metadata_snapshot_id(normalized_root, "SNAPSHOT_INTEGRITY_FAILED")
+    files = _snapshot_files(normalized_root, "SNAPSHOT_INTEGRITY_FAILED")
     return {
         "manifest_schema_version": _MANIFEST_SCHEMA_VERSION,
         "knowledge_schema_version": _KNOWLEDGE_SCHEMA_VERSION,
-        "snapshot_id": _SNAPSHOT_ID,
+        "snapshot_id": snapshot_id,
         "key_id": _KEY_ID,
         "files": [
             {"path": item.path, "size": item.size, "sha256": item.sha256}
             for item in files
         ],
     }
+
+
+def _metadata_snapshot_id(root: Path, error_code: str) -> str:
+    payload = _read_regular_file(
+        root / "metadata.json",
+        error_code,
+        "metadata snapshot отсутствует или небезопасен.",
+    )
+    try:
+        metadata = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=_unique_json_object,
+            parse_constant=_reject_json_constant,
+        )
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
+        _fail(error_code, "metadata snapshot не является строгим JSON.", exc)
+    if type(metadata) is not dict:
+        _fail(error_code, "metadata snapshot должен быть строгим JSON object.")
+    return _required_identifier(metadata.get("snapshot_id"), "metadata.snapshot_id")
 
 
 def write_snapshot_manifest(root: Path) -> dict[str, object]:
