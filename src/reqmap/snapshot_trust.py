@@ -16,7 +16,7 @@ import subprocess
 from typing import Any, NoReturn
 
 from reqmap.errors import ReqmapError
-from reqmap.export_json import canonical_json_bytes
+from reqmap.export_json import atomic_write_bytes, canonical_json_bytes
 
 
 _MANIFEST_NAME = "snapshot-manifest.json"
@@ -73,6 +73,132 @@ def build_snapshot_manifest(root: Path) -> dict[str, object]:
             for item in files
         ],
     }
+
+
+def write_snapshot_manifest(root: Path) -> dict[str, object]:
+    """Validate a schema-v2 snapshot and atomically write its canonical manifest."""
+    normalized_root = _validated_root(root, "SNAPSHOT_INTEGRITY_FAILED")
+    manifest_path = normalized_root / _MANIFEST_NAME
+    _validate_replace_target(
+        manifest_path,
+        "SNAPSHOT_MANIFEST_INVALID",
+        "Существующий manifest snapshot небезопасен.",
+    )
+
+    # Avoid a module-level cycle: the maintenance loader imports this trust module.
+    from reqmap.knowledge_v2 import load_knowledge_v2_for_maintenance
+
+    manifest = build_snapshot_manifest(normalized_root)
+    load_knowledge_v2_for_maintenance(normalized_root)
+    try:
+        atomic_write_bytes(manifest_path, canonical_json_bytes(manifest))
+    except (OSError, ValueError):
+        _fail_without_context(
+            "SNAPSHOT_MANIFEST_INVALID",
+            "Не удалось безопасно записать manifest snapshot.",
+        )
+    return manifest
+
+
+def sign_snapshot_manifest(root: Path, private_key: Path) -> Path:
+    """Sign an approved current canonical manifest with an external Ed25519 key."""
+    normalized_root = _validated_root(root, "SNAPSHOT_INTEGRITY_FAILED")
+    _validate_private_key(normalized_root, private_key)
+    manifest_path = normalized_root / _MANIFEST_NAME
+    signature_path = normalized_root / _SIGNATURE_NAME
+    generated_path = manifest_path.with_suffix(manifest_path.suffix + ".sig")
+    _validate_replace_target(
+        signature_path,
+        "SNAPSHOT_TRUST_BOUNDARY",
+        "Существующий target подписи snapshot небезопасен.",
+    )
+    _require_absent_generated_signature(generated_path)
+
+    # Avoid a module-level cycle: the maintenance loader imports this trust module.
+    from reqmap.knowledge_v2 import load_knowledge_v2_for_maintenance
+
+    manifest_bytes = _read_regular_file(
+        manifest_path,
+        "SNAPSHOT_MANIFEST_INVALID",
+        "Manifest snapshot отсутствует или небезопасен.",
+    )
+    trust = _parse_manifest_bytes(manifest_bytes)
+    verify_snapshot_integrity(normalized_root, trust)
+    knowledge = load_knowledge_v2_for_maintenance(normalized_root)
+    if knowledge.snapshot_status != "approved":
+        _fail_without_context("SNAPSHOT_NOT_APPROVED", "Deep snapshot не утверждён.")
+
+    try:
+        try:
+            completed = subprocess.run(
+                [
+                    "ssh-keygen",
+                    "-Y",
+                    "sign",
+                    "-f",
+                    str(private_key),
+                    "-n",
+                    _SIGNATURE_NAMESPACE,
+                    str(manifest_path),
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=10,
+                check=False,
+                shell=False,
+            )
+        except FileNotFoundError:
+            _fail_without_context(
+                "SNAPSHOT_SIGNER_MISSING",
+                "Системный signer подписи snapshot недоступен.",
+            )
+        except subprocess.TimeoutExpired:
+            _fail_without_context(
+                "SNAPSHOT_SIGNATURE_TIMEOUT",
+                "Создание подписи snapshot превысило безопасный timeout.",
+            )
+        except OSError:
+            _fail_without_context(
+                "SNAPSHOT_SIGNING_FAILED",
+                "Не удалось создать подпись snapshot.",
+            )
+        if completed.returncode != 0:
+            _fail_without_context(
+                "SNAPSHOT_SIGNING_FAILED",
+                "Не удалось создать подпись snapshot.",
+            )
+
+        signature_bytes = _read_regular_file(
+            generated_path,
+            "SNAPSHOT_SIGNING_FAILED",
+            "Signer не создал безопасную подпись snapshot.",
+        )
+        _require_ed25519_signature(signature_bytes)
+        if _read_regular_file(
+            manifest_path,
+            "SNAPSHOT_MANIFEST_INVALID",
+            "Manifest snapshot изменён во время подписания.",
+        ) != manifest_bytes:
+            _fail_without_context(
+                "SNAPSHOT_MANIFEST_INVALID",
+                "Manifest snapshot изменён во время подписания.",
+            )
+        verify_snapshot_integrity(normalized_root, trust)
+        _validate_replace_target(
+            signature_path,
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Target подписи snapshot изменён и небезопасен.",
+        )
+        try:
+            os.replace(generated_path, signature_path)
+        except OSError:
+            _fail_without_context(
+                "SNAPSHOT_SIGNING_FAILED",
+                "Не удалось безопасно установить подпись snapshot.",
+            )
+        return signature_path
+    finally:
+        _cleanup_generated_signature(generated_path)
 
 
 def parse_snapshot_manifest(path: Path) -> SnapshotTrust:
@@ -237,6 +363,8 @@ def _snapshot_files(root: Path, error_code: str) -> tuple[SnapshotFile, ...]:
                 relative = relative_path.as_posix()
                 if not stat.S_ISREG(candidate.lstat().st_mode):
                     _fail(error_code, "Snapshot должен содержать только обычные файлы.")
+                if any(part.startswith(".") for part in relative_path.parts):
+                    _fail(error_code, "Snapshot содержит скрытый временный файл.")
                 if relative in _EXCLUDED_ROOT_FILES:
                     continue
                 if _is_governed(relative_path):
@@ -302,6 +430,79 @@ def _validate_allowed_signers(root: Path, allowed_signers_path: Path) -> None:
             "SNAPSHOT_TRUST_BOUNDARY",
             "Файл allowed_signers должен быть обычным файлом вне snapshot, не symlink.",
         )
+
+
+def _validate_private_key(root: Path, private_key: Path) -> None:
+    if not isinstance(private_key, Path):
+        _fail_without_context(
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Private key должен быть Path вне snapshot.",
+        )
+    try:
+        key_stat = private_key.lstat()
+    except OSError:
+        _fail_without_context(
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Private key отсутствует или небезопасен.",
+        )
+    if stat.S_ISLNK(key_stat.st_mode) or not stat.S_ISREG(key_stat.st_mode):
+        _fail_without_context(
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Private key должен быть обычным файлом вне snapshot, не symlink.",
+        )
+    try:
+        private_key.resolve(strict=True).relative_to(root)
+    except ValueError:
+        return
+    except OSError:
+        _fail_without_context(
+            "SNAPSHOT_TRUST_BOUNDARY",
+            "Private key отсутствует или небезопасен.",
+        )
+    _fail_without_context(
+        "SNAPSHOT_TRUST_BOUNDARY",
+        "Private key должен находиться вне snapshot.",
+    )
+
+
+def _validate_replace_target(path: Path, code: str, message: str) -> None:
+    try:
+        target_stat = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        _fail_without_context(code, message)
+    if stat.S_ISLNK(target_stat.st_mode) or not stat.S_ISREG(target_stat.st_mode):
+        _fail_without_context(code, message)
+
+
+def _require_absent_generated_signature(path: Path) -> None:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError:
+        _fail_without_context(
+            "SNAPSHOT_SIGNING_FAILED",
+            "Generated signature target небезопасен.",
+        )
+    _fail_without_context(
+        "SNAPSHOT_SIGNING_FAILED",
+        "Generated signature target уже существует.",
+    )
+
+
+def _cleanup_generated_signature(path: Path) -> None:
+    try:
+        generated_stat = path.lstat()
+    except OSError:
+        return
+    if not stat.S_ISREG(generated_stat.st_mode):
+        return
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 
 def _verify_signature_bytes(
