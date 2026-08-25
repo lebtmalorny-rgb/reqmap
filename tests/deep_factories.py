@@ -93,6 +93,14 @@ def signed_v2_snapshot(
     return root, allowed_signers
 
 
+def immutable_v2_kb(tmp_path: Path):
+    """Load the real minimal schema-v2 fixture as immutable maintenance records."""
+    from reqmap.knowledge_v2 import load_knowledge_v2_for_maintenance
+
+    root, _ = signed_v2_snapshot(tmp_path)
+    return load_knowledge_v2_for_maintenance(root)
+
+
 def sign_existing_v2_snapshot(
     root: Path,
     trust: Path,

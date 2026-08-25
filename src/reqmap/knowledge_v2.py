@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -182,6 +183,13 @@ class KnowledgeBaseV2:
     trust: SnapshotTrust | None
 
 
+@dataclass(frozen=True)
+class KnowledgeV2Issue:
+    code: str
+    object_id: str
+    message_ru: str
+
+
 def load_knowledge_v2(path: Path, allowed_signers_path: Path) -> KnowledgeBaseV2:
     """Load only a signed, intact, approved schema-v2 snapshot."""
     trust = verify_snapshot(path, allowed_signers_path)
@@ -273,7 +281,390 @@ def _validated(kb: KnowledgeBaseV2, allow_draft: bool = False) -> KnowledgeBaseV
     for source in kb.sources.values():
         if source.release not in {"2025.1", "2026.1"}:
             _fail("KNOWLEDGE_V2_RELEASE", "Версия source не поддерживается.")
+    issues = validate_knowledge_v2(kb, allow_draft=allow_draft)
+    if issues:
+        issue = issues[0]
+        _fail(issue.code, issue.message_ru)
     return kb
+
+
+def validate_knowledge_v2(
+    kb: KnowledgeBaseV2, *, allow_draft: bool = False
+) -> tuple[KnowledgeV2Issue, ...]:
+    """Return every deterministic graph, evidence, and version diagnostic."""
+    issues: list[KnowledgeV2Issue] = []
+
+    def issue(code: str, object_id: str, message_ru: str) -> None:
+        issues.append(KnowledgeV2Issue(code, object_id, message_ru))
+
+    allowed_statuses = {"approved", "draft"} if allow_draft else {"approved"}
+    if kb.snapshot_status not in allowed_statuses:
+        issue(
+            "SNAPSHOT_STATUS_INVALID",
+            "metadata",
+            "Runtime принимает только утверждённый snapshot.",
+        )
+    if (
+        kb.schema_version != 2
+        or kb.base_release != "2025.1"
+        or kb.upgrade_target != "2026.1"
+        or kb.kolla_ansible_release != "2025.1"
+    ):
+        issue(
+            "VERSION_SCOPE_INVALID",
+            "metadata",
+            "Базовые версии schema-v2 snapshot должны оставаться "
+            "2025.1/2026.1.",
+        )
+    if kb.host_profile != "rocky_linux_9":
+        issue("HOST_PROFILE_INVALID", "metadata", "Ожидается Rocky Linux 9.")
+
+    for component in kb.components.values():
+        if any(release not in {"2025.1", "2026.1"} for release in component.releases):
+            issue(
+                "VERSION_SCOPE_INVALID",
+                component.component_id,
+                "Версия component выходит за поддерживаемый scope.",
+            )
+    for target in kb.targets.values():
+        if target.host_profile is not None and target.host_profile != "rocky_linux_9":
+            issue("HOST_PROFILE_INVALID", target.target_id, "Ожидается Rocky Linux 9.")
+    for source in kb.sources.values():
+        if source.release not in {"2025.1", "2026.1"}:
+            issue(
+                "VERSION_SCOPE_INVALID",
+                source.source_id,
+                "Версия source выходит за поддерживаемый scope.",
+            )
+
+    source_is_local = _validate_v2_sources(kb, issue)
+    _validate_v2_references(kb, issue)
+    _validate_v2_evidence(kb, source_is_local, issue)
+    _validate_v2_versions(kb, issue)
+    _validate_v2_procedures(kb, issue)
+    return tuple(
+        sorted(
+            set(issues),
+            key=lambda item: (item.code, item.object_id, item.message_ru),
+        )
+    )
+
+
+def _validate_v2_sources(
+    kb: KnowledgeBaseV2, issue: Callable[[str, str, str], None]
+) -> dict[str, bool]:
+    valid: dict[str, bool] = {}
+    for source in kb.sources.values():
+        try:
+            if kb.trust is None:
+                payload = _read_regular_file(kb.root / source.local_path)
+            else:
+                payload = read_verified_snapshot_file(
+                    kb.root, kb.trust, source.local_path
+                )
+        except KnowledgeV2Error:
+            valid[source.source_id] = False
+            issue(
+                "SOURCE_FILE_MISSING",
+                source.source_id,
+                f"Локальный source artifact недоступен: {source.local_path}.",
+            )
+            continue
+        actual = hashlib.sha256(payload).hexdigest()
+        valid[source.source_id] = actual == source.content_sha256
+        if not valid[source.source_id]:
+            issue(
+                "SOURCE_SHA256_MISMATCH",
+                source.source_id,
+                f"SHA-256 local source не совпадает: {source.local_path}.",
+            )
+    return valid
+
+
+def _validate_v2_references(
+    kb: KnowledgeBaseV2, issue: Callable[[str, str, str], None]
+) -> None:
+    for capability in kb.capabilities.values():
+        if capability.component_ref not in kb.components:
+            issue(
+                "CAPABILITY_COMPONENT_UNKNOWN",
+                capability.capability_id,
+                "Capability ссылается на неизвестный component: "
+                f"{capability.component_ref}.",
+            )
+        _unknown_evidence_refs(capability.capability_id, capability.evidence_ids, kb, issue)
+
+    for action in kb.actions.values():
+        if action.component_ref not in kb.components:
+            issue(
+                "ACTION_COMPONENT_UNKNOWN",
+                action.action_id,
+                "Action ссылается на неизвестный component: "
+                f"{action.component_ref}.",
+            )
+        target_known = action.target_ref in kb.targets
+        if not target_known:
+            issue(
+                "ACTION_TARGET_UNKNOWN",
+                action.action_id,
+                f"Action ссылается на неизвестный target: {action.target_ref}.",
+            )
+        for effect_ref in action.effect_refs:
+            effect = kb.effects.get(effect_ref)
+            if effect is None:
+                issue(
+                    "ACTION_EFFECT_UNKNOWN",
+                    action.action_id,
+                    f"Action ссылается на неизвестный effect: {effect_ref}.",
+                )
+            elif target_known and effect.target_ref != action.target_ref:
+                issue(
+                    "ACTION_EFFECT_MISMATCH",
+                    action.action_id,
+                    f"Effect {effect_ref} принадлежит другому target.",
+                )
+        _unknown_evidence_refs(action.action_id, action.evidence_ids, kb, issue)
+
+    for effect in kb.effects.values():
+        if effect.target_ref not in kb.targets:
+            issue(
+                "EFFECT_TARGET_UNKNOWN",
+                effect.effect_id,
+                f"Effect ссылается на неизвестный target: {effect.target_ref}.",
+            )
+        _unknown_evidence_refs(effect.effect_id, effect.evidence_ids, kb, issue)
+
+    known_entities = (
+        set(kb.capabilities) | set(kb.actions) | set(kb.effects) | set(kb.procedures)
+    )
+    for evidence in kb.evidence.values():
+        if evidence.source_id not in kb.sources:
+            issue(
+                "EVIDENCE_SOURCE_UNKNOWN",
+                evidence.evidence_id,
+                f"Evidence ссылается на неизвестный source: {evidence.source_id}.",
+            )
+        known_supported = False
+        for entity_ref in evidence.supports_entity_refs:
+            if entity_ref not in known_entities:
+                issue(
+                    "EVIDENCE_ENTITY_UNKNOWN",
+                    evidence.evidence_id,
+                    f"Evidence ссылается на неизвестную entity: {entity_ref}.",
+                )
+            else:
+                known_supported = True
+        if not known_supported:
+            issue(
+                "EVIDENCE_ENTITY_REQUIRED",
+                evidence.evidence_id,
+                "Evidence должен поддерживать хотя бы одну "
+                "известную entity.",
+            )
+
+
+def _unknown_evidence_refs(
+    owner_id: str,
+    evidence_ids: tuple[str, ...],
+    kb: KnowledgeBaseV2,
+    issue: Callable[[str, str, str], None],
+) -> None:
+    for evidence_id in evidence_ids:
+        if evidence_id not in kb.evidence:
+            issue(
+                "EVIDENCE_UNKNOWN",
+                owner_id,
+                f"Объект ссылается на неизвестный evidence: {evidence_id}.",
+            )
+
+
+def _validate_v2_evidence(
+    kb: KnowledgeBaseV2,
+    source_is_local: Mapping[str, bool],
+    issue: Callable[[str, str, str], None],
+) -> None:
+    positive_entities = (
+        tuple(kb.capabilities.values()),
+        tuple(kb.actions.values()),
+        tuple(kb.effects.values()),
+    )
+    for records in positive_entities:
+        for record in records:
+            object_id = _positive_entity_id(record)
+            direct = False
+            for evidence_id in record.evidence_ids:
+                evidence = kb.evidence.get(evidence_id)
+                if evidence is None or object_id not in evidence.supports_entity_refs:
+                    continue
+                source = kb.sources.get(evidence.source_id)
+                if (
+                    evidence.polarity is EvidencePolarity.POSITIVE
+                    and evidence.strength is EvidenceStrength.DIRECT
+                    and source is not None
+                    and source.provenance == "official"
+                    and source.source_type != "project_policy"
+                    and source_is_local.get(source.source_id, False)
+                ):
+                    direct = True
+                    break
+            if not direct:
+                issue(
+                    "DIRECT_EVIDENCE_REQUIRED",
+                    object_id,
+                    "Положительное утверждение требует "
+                    "direct positive evidence.",
+                )
+
+    known_entities = (
+        set(kb.capabilities) | set(kb.actions) | set(kb.effects) | set(kb.procedures)
+    )
+    upstream_entities = set(kb.capabilities) | set(kb.actions) | set(kb.effects)
+    for evidence in kb.evidence.values():
+        source = kb.sources.get(evidence.source_id)
+        supported = set(evidence.supports_entity_refs)
+        if evidence.polarity is EvidencePolarity.NEGATIVE and (
+            evidence.strength is not EvidenceStrength.DIRECT
+            or not (supported & known_entities)
+        ):
+            issue(
+                "NEGATIVE_DIRECT_EVIDENCE_REQUIRED",
+                evidence.evidence_id,
+                "Negative claim требует direct evidence для известной entity.",
+            )
+        if (
+            source is not None
+            and (
+                source.provenance == "project_policy"
+                or source.source_type == "project_policy"
+            )
+            and supported & upstream_entities
+        ):
+            issue(
+                "EVIDENCE_POLICY_SCOPE_INVALID",
+                evidence.evidence_id,
+                "Project policy не подтверждает upstream capability, "
+                "action или effect.",
+            )
+
+
+def _positive_entity_id(record: object) -> str:
+    if isinstance(record, DeepCapabilityRecord):
+        return record.capability_id
+    if isinstance(record, ActionRecord):
+        return record.action_id
+    if isinstance(record, EffectRecord):
+        return record.effect_id
+    raise TypeError("unknown positive entity record")
+
+
+def _validate_v2_versions(
+    kb: KnowledgeBaseV2, issue: Callable[[str, str, str], None]
+) -> None:
+    action_phases: dict[str, set[LifecyclePhase]] = {
+        action_id: set() for action_id in kb.actions
+    }
+    for procedure in kb.procedures.values():
+        referenced = set(procedure.action_refs) | {
+            step.action_ref for step in procedure.steps
+        }
+        for action_ref in referenced:
+            if action_ref in action_phases:
+                action_phases[action_ref].add(procedure.lifecycle_phase)
+
+    for action in kb.actions.values():
+        scope = action.version_scope
+        invalid = (
+            scope.source_release != "2025.1"
+            or scope.target_release not in {"2025.1", "2026.1"}
+            or scope.kolla_ansible_release != "2025.1"
+        )
+        if scope.target_release == "2026.1" and action_phases[action.action_id] != {
+            LifecyclePhase.UPGRADE
+        }:
+            invalid = True
+        if invalid:
+            issue(
+                "VERSION_SCOPE_INVALID",
+                action.action_id,
+                "2026.1 разрешён только для upgrade; "
+                "base/Kolla release должен быть 2025.1.",
+            )
+        if scope.host_profile != "rocky_linux_9":
+            issue("HOST_PROFILE_INVALID", action.action_id, "Ожидается Rocky Linux 9.")
+
+
+def _validate_v2_procedures(
+    kb: KnowledgeBaseV2, issue: Callable[[str, str, str], None]
+) -> None:
+    for procedure in kb.procedures.values():
+        for action_ref in procedure.action_refs:
+            if action_ref not in kb.actions:
+                issue(
+                    "PROCEDURE_ACTION_UNKNOWN",
+                    procedure.template_id,
+                    f"Procedure ссылается на неизвестный action: {action_ref}.",
+                )
+        local_ids = {step.local_step_id for step in procedure.steps}
+        adjacency: dict[str, set[str]] = {step_id: set() for step_id in local_ids}
+        for step in procedure.steps:
+            owner_id = f"{procedure.template_id}:{step.local_step_id}"
+            if step.action_ref not in kb.actions:
+                issue(
+                    "PROCEDURE_ACTION_UNKNOWN",
+                    owner_id,
+                    f"Step ссылается на неизвестный action: {step.action_ref}.",
+                )
+            elif step.action_ref not in procedure.action_refs:
+                issue(
+                    "PROCEDURE_ACTION_MISMATCH",
+                    owner_id,
+                    "Action step отсутствует в action_refs template.",
+                )
+            _unknown_evidence_refs(owner_id, step.evidence_ids, kb, issue)
+            for dependency in step.depends_on:
+                if dependency not in local_ids:
+                    issue(
+                        "PROCEDURE_STEP_UNKNOWN",
+                        owner_id,
+                        f"Dependency не принадлежит template: {dependency}.",
+                    )
+                else:
+                    adjacency[step.local_step_id].add(dependency)
+            rollback = step.rollback_step_local_id
+            if rollback is not None:
+                if rollback not in local_ids:
+                    issue(
+                        "PROCEDURE_ROLLBACK_UNKNOWN",
+                        owner_id,
+                        f"Rollback step не принадлежит template: {rollback}.",
+                    )
+                else:
+                    adjacency[step.local_step_id].add(rollback)
+        if _has_cycle(adjacency):
+            issue(
+                "PROCEDURE_CYCLE",
+                procedure.template_id,
+                "Procedure template содержит цикл dependencies/rollback.",
+            )
+
+
+def _has_cycle(adjacency: Mapping[str, set[str]]) -> bool:
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str) -> bool:
+        if node in visiting:
+            return True
+        if node in visited:
+            return False
+        visiting.add(node)
+        if any(visit(neighbor) for neighbor in sorted(adjacency[node])):
+            return True
+        visiting.remove(node)
+        visited.add(node)
+        return False
+
+    return any(visit(node) for node in sorted(adjacency) if node not in visited)
 
 
 def _reader(root: Path, trust: SnapshotTrust | None) -> Callable[[str], bytes]:
