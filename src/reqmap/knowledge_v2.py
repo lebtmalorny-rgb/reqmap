@@ -455,12 +455,22 @@ def _load_procedures(payload: bytes) -> dict[str, ProcedureTemplateRecord]:
         raw_steps = record["steps"]
         if type(raw_steps) is not list:
             _fail("KNOWLEDGE_V2_SCHEMA", f"{location}.steps должен быть list.")
-        steps = tuple(_procedure_step(step, f"{location}.steps[{step_index}]") for step_index, step in enumerate(raw_steps))
+        steps: list[ProcedureTemplateStepRecord] = []
+        step_ids: set[str] = set()
+        for step_index, raw_step in enumerate(raw_steps):
+            step = _procedure_step(raw_step, f"{location}.steps[{step_index}]")
+            if step.local_step_id in step_ids:
+                _fail(
+                    "KNOWLEDGE_V2_DUPLICATE_ID",
+                    f"Дублирующийся local_step_id procedure: {step.local_step_id}.",
+                )
+            step_ids.add(step.local_step_id)
+            steps.append(step)
         result[identifier] = ProcedureTemplateRecord(
             identifier,
             _enum(record, "lifecycle_phase", LifecyclePhase, location),
             _text_tuple(record["action_refs"], f"{location}.action_refs"),
-            steps,
+            tuple(steps),
         )
     return result
 

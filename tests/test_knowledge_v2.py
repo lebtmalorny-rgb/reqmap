@@ -214,6 +214,21 @@ def test_maintenance_loader_rejects_duplicate_record_ids(tmp_path: Path) -> None
     assert error.value.code == "KNOWLEDGE_V2_DUPLICATE_ID"
 
 
+def test_maintenance_loader_rejects_duplicate_local_step_ids(tmp_path: Path) -> None:
+    root, _ = signed_v2_snapshot(tmp_path)
+    procedures = root / "procedures.jsonl"
+    template = json.loads(procedures.read_text(encoding="utf-8"))
+    template["steps"].append(dict(template["steps"][0]))
+    procedures.write_text(
+        json.dumps(template, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(KnowledgeV2Error) as error:
+        load_knowledge_v2_for_maintenance(root)
+    assert error.value.code == "KNOWLEDGE_V2_DUPLICATE_ID"
+
+
 def test_maintenance_loader_rejects_required_file_symlink(tmp_path: Path) -> None:
     root, _ = signed_v2_snapshot(tmp_path)
     components = root / "components.json"
