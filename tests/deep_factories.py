@@ -1,7 +1,7 @@
 """Synthetic builders for canonical deep-analysis model tests."""
 
-import json
 from pathlib import Path
+import shutil
 import subprocess
 
 from reqmap.deep_models import (
@@ -79,44 +79,30 @@ def signed_v2_snapshot(
     signer_identity: str = "reqmap-snapshot",
     signature_namespace: str = "reqmap-snapshot",
 ) -> tuple[Path, Path]:
-    """Create and sign a minimal raw schema-v2 snapshot with an ephemeral key."""
+    """Copy and sign the static minimal schema-v2 fixture with an ephemeral key."""
     root = tmp_path / "snapshot"
-    (root / "corpus").mkdir(parents=True)
-    raw_files: dict[str, object] = {
-        "metadata.json": {
-            "knowledge_schema_version": 2,
-            "snapshot_id": "epoxy-2025.1-deep-001",
-            "snapshot_status": "approved",
-            "openstack_release": "2025.1",
-            "upgrade_target": "2026.1",
-            "kolla_ansible_release": "2025.1",
-            "host_profile": "rocky_linux_9",
-            "key_id": "reqmap-maintenance-2026",
-        },
-        "components.json": {"components": []},
-        "actors.json": {"actors": []},
-        "targets.jsonl": None,
-        "capabilities.jsonl": None,
-        "actions.jsonl": None,
-        "effects.jsonl": None,
-        "evidence.jsonl": None,
-        "procedures.jsonl": None,
-        "synonyms.json": {},
-        "source-manifest.json": {"sources": []},
-    }
-    for relative, value in raw_files.items():
-        path = root / relative
-        if value is None:
-            path.write_bytes(b"")
-        else:
-            path.write_text(
-                json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-    (root / "corpus" / "source.md").write_text("# Epoxy evidence\n", encoding="utf-8")
+    fixture = Path(__file__).parent / "fixtures" / "kb_v2_minimal"
+    shutil.copytree(fixture, root)
 
-    trust = tmp_path / "trust"
-    trust.mkdir()
+    allowed_signers = sign_existing_v2_snapshot(
+        root,
+        tmp_path / "trust",
+        signer_identity=signer_identity,
+        signature_namespace=signature_namespace,
+    )
+    return root, allowed_signers
+
+
+def sign_existing_v2_snapshot(
+    root: Path,
+    trust: Path,
+    *,
+    signer_identity: str = "reqmap-snapshot",
+    signature_namespace: str = "reqmap-snapshot",
+) -> Path:
+    """Sign an existing raw schema-v2 snapshot using a fresh ephemeral key."""
+
+    trust.mkdir(parents=True)
     private_key = trust / "signing_key"
     subprocess.run(
         ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(private_key)],
@@ -150,4 +136,4 @@ def signed_v2_snapshot(
     manifest_path.with_suffix(manifest_path.suffix + ".sig").replace(
         root / "snapshot-manifest.sig"
     )
-    return root, allowed_signers
+    return allowed_signers

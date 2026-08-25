@@ -1,0 +1,1 @@
+{"after_state":"ACTIVE","before_state":"absent","evidence_ids":["EV-NOVA-CREATE"],"id":"EFFECT-NOVA-SERVER-ACTIVE","reversible":true,"target_ref":"TARGET-NOVA-SERVER","verification_criteria":["server status is ACTIVE"]}

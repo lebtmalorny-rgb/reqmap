@@ -1,0 +1,1 @@
+{"component_ref":"nova","evidence_ids":["EV-NOVA-CREATE"],"id":"CAP-NOVA-CREATE","name_ru":"Создание виртуального сервера","terms":["create server","создание сервера"]}

@@ -124,6 +124,34 @@ def verify_snapshot(root: Path, allowed_signers_path: Path) -> SnapshotTrust:
     return trust
 
 
+def read_verified_snapshot_file(
+    root: Path, trust: SnapshotTrust, relative_path: str
+) -> bytes:
+    """Read one signed file and recheck the exact bytes against verified metadata."""
+    normalized_root = _validated_root(root, "SNAPSHOT_INTEGRITY_FAILED")
+    if type(trust) is not SnapshotTrust:
+        _fail("SNAPSHOT_INTEGRITY_FAILED", "Snapshot trust имеет неверный тип.")
+    relative = _safe_requested_path(relative_path)
+    matches = tuple(item for item in trust.files if item.path == relative)
+    if len(matches) != 1:
+        _fail(
+            "SNAPSHOT_INTEGRITY_FAILED",
+            "Запрошенный файл отсутствует в подтверждённом manifest snapshot.",
+        )
+    payload = _read_regular_file(
+        normalized_root / PurePosixPath(relative),
+        "SNAPSHOT_INTEGRITY_FAILED",
+        "Подтверждённый файл snapshot отсутствует или небезопасен.",
+    )
+    signed = matches[0]
+    if len(payload) != signed.size or hashlib.sha256(payload).hexdigest() != signed.sha256:
+        _fail(
+            "SNAPSHOT_INTEGRITY_FAILED",
+            "Bytes файла snapshot не совпадают с подтверждённым manifest.",
+        )
+    return payload
+
+
 def _parse_manifest_bytes(payload: bytes) -> SnapshotTrust:
     try:
         raw = json.loads(
@@ -435,6 +463,24 @@ def _safe_manifest_path(value: object) -> str:
     normalized = path.as_posix()
     if normalized != value or normalized in _EXCLUDED_ROOT_FILES:
         _fail("SNAPSHOT_MANIFEST_INVALID", "Path файла в manifest неканонический.")
+    return normalized
+
+
+def _safe_requested_path(value: object) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or value == "."
+        or "\\" in value
+        or "\x00" in value
+    ):
+        _fail("SNAPSHOT_INTEGRITY_FAILED", "Запрошенный path snapshot некорректен.")
+    path = PurePosixPath(value)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        _fail("SNAPSHOT_INTEGRITY_FAILED", "Запрошенный path выходит за snapshot.")
+    normalized = path.as_posix()
+    if normalized != value or normalized in _EXCLUDED_ROOT_FILES:
+        _fail("SNAPSHOT_INTEGRITY_FAILED", "Запрошенный path snapshot неканонический.")
     return normalized
 
 

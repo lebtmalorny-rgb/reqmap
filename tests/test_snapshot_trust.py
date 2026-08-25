@@ -19,6 +19,7 @@ from reqmap.snapshot_trust import (
     SnapshotTrustError,
     build_snapshot_manifest,
     parse_snapshot_manifest,
+    read_verified_snapshot_file,
     verify_snapshot,
     verify_snapshot_integrity,
     verify_snapshot_signature,
@@ -46,6 +47,45 @@ def test_verify_snapshot_accepts_ephemeral_ed25519_signature(tmp_path: Path) -> 
     assert tuple(item.path for item in trust.files) == tuple(
         sorted(item.path for item in trust.files)
     )
+
+
+def test_read_verified_snapshot_file_returns_exact_signed_bytes(tmp_path: Path) -> None:
+    root, allowed_signers = signed_v2_snapshot(tmp_path)
+    trust = verify_snapshot(root, allowed_signers)
+
+    payload = read_verified_snapshot_file(root, trust, "components.json")
+
+    assert payload == (root / "components.json").read_bytes()
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["missing.json", "../components.json", "/components.json", "a\\b.json", "."],
+)
+def test_read_verified_snapshot_file_rejects_unlisted_or_unsafe_path(
+    tmp_path: Path, relative_path: str
+) -> None:
+    root, allowed_signers = signed_v2_snapshot(tmp_path)
+    trust = verify_snapshot(root, allowed_signers)
+
+    with pytest.raises(SnapshotTrustError) as error:
+        read_verified_snapshot_file(root, trust, relative_path)
+
+    assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
+
+
+def test_read_verified_snapshot_file_rejects_swap_after_verification(
+    tmp_path: Path,
+) -> None:
+    root, allowed_signers = signed_v2_snapshot(tmp_path)
+    trust = verify_snapshot(root, allowed_signers)
+    components = root / "components.json"
+    components.write_bytes(b"X" * components.stat().st_size)
+
+    with pytest.raises(SnapshotTrustError) as error:
+        read_verified_snapshot_file(root, trust, "components.json")
+
+    assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
 
 
 def test_snapshot_results_are_immutable() -> None:
