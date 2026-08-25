@@ -1,6 +1,8 @@
 """Synthetic builders for canonical deep-analysis model tests."""
 
 from pathlib import Path
+import hashlib
+import json
 import shutil
 import subprocess
 
@@ -16,6 +18,103 @@ from reqmap.ids import responsibility_id
 from reqmap.models import EvidencePolarity, EvidenceStrength, SupportStatus
 from reqmap.export_json import canonical_json_bytes
 from reqmap.snapshot_trust import build_snapshot_manifest
+
+
+def write_v1_knowledge_snapshot(
+    root: Path,
+    *,
+    component_id: str,
+    component_kind: str,
+    capability_id: str,
+    evidence_id: str,
+    source_id: str,
+    strength: str = "direct",
+) -> Path:
+    """Create a complete strict v1 fixture for migration integration tests."""
+    root.mkdir()
+    source_path = root / "sources" / f"{component_id}.md"
+    source_path.parent.mkdir()
+    source_bytes = f"# {component_id}\n\nMigration fixture.\n".encode("utf-8")
+    source_path.write_bytes(source_bytes)
+
+    def write_json(relative: str, value: object) -> None:
+        (root / relative).write_text(
+            json.dumps(value, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    write_json(
+        "components.json",
+        {
+            "components": [
+                {
+                    "id": component_id,
+                    "display_name": component_id,
+                    "kind": component_kind,
+                    "release": "2025.1",
+                }
+            ]
+        },
+    )
+    write_json(
+        "source-manifest.json",
+        {
+            "sources": [
+                {
+                    "id": source_id,
+                    "component_ids": [component_id],
+                    "source_url": f"https://example.invalid/{component_id}",
+                    "retrieved_at": "2026-08-25",
+                    "version": "2025.1",
+                    "sha256": hashlib.sha256(source_bytes).hexdigest(),
+                    "local_path": f"sources/{component_id}.md",
+                    "provenance": "official",
+                }
+            ]
+        },
+    )
+    (root / "capabilities.jsonl").write_text(
+        json.dumps(
+            {
+                "id": capability_id,
+                "component_id": component_id,
+                "name_ru": f"{component_id} capability",
+                "terms": [component_id],
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (root / "evidence.jsonl").write_text(
+        json.dumps(
+            {
+                "id": evidence_id,
+                "component_id": component_id,
+                "capability_id": capability_id,
+                "polarity": "positive",
+                "strength": strength,
+                "claim_ru": f"{component_id} is supported",
+                "source_id": source_id,
+                "locator": f"{source_id}:claim",
+                "version_constraint": "2025.1",
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    write_json("synonyms.json", {component_id: [f"{component_id} synonym"]})
+
+    from reqmap.knowledge import snapshot_digest
+
+    write_json(
+        "metadata.json",
+        {"openstack_release": "2025.1", "snapshot_sha256": snapshot_digest(root)},
+    )
+    return root
 
 
 def responsibility(
