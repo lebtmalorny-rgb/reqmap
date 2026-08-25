@@ -5,12 +5,14 @@ from __future__ import annotations
 from dataclasses import FrozenInstanceError
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 
 import pytest
 
 from reqmap.export_json import canonical_json_bytes
+from reqmap import snapshot_trust as snapshot_trust_module
 from reqmap.snapshot_trust import (
     SnapshotFile,
     SnapshotTrust,
@@ -143,6 +145,25 @@ def test_build_manifest_uses_one_sorted_governed_file_set(tmp_path: Path) -> Non
     }
 
 
+def test_build_manifest_rejects_snapshot_walk_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "snapshot"
+    root.mkdir()
+
+    def failing_walk(path, *, topdown, followlinks, onerror=None):
+        if onerror is not None:
+            onerror(PermissionError("hidden governed subtree"))
+        return iter(())
+
+    monkeypatch.setattr(snapshot_trust_module.os, "walk", failing_walk)
+
+    with pytest.raises(SnapshotTrustError) as error:
+        build_snapshot_manifest(root)
+
+    assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -180,7 +201,10 @@ def test_parse_manifest_rejects_unknown_or_malformed_fields(
     assert error.value.code == "SNAPSHOT_MANIFEST_INVALID"
 
 
-@pytest.mark.parametrize("unsafe_path", ["/absolute.json", "../outside.json", "a/../b.json", "a\\b.json"])
+@pytest.mark.parametrize(
+    "unsafe_path",
+    ["/absolute.json", "../outside.json", "a/../b.json", "a\\b.json", "."],
+)
 def test_parse_manifest_rejects_unsafe_paths(tmp_path: Path, unsafe_path: str) -> None:
     root, _ = signed_v2_snapshot(tmp_path)
     manifest = _manifest(root)
@@ -276,6 +300,20 @@ def test_integrity_rejects_unlisted_governed_files(
     assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO creation is unavailable")
+def test_verify_snapshot_rejects_ungoverned_fifo(tmp_path: Path) -> None:
+    root, allowed_signers = signed_v2_snapshot(tmp_path)
+    try:
+        os.mkfifo(root / "ignored.txt")
+    except (NotImplementedError, OSError) as exc:
+        pytest.skip(f"FIFO creation is unavailable: {exc}")
+
+    with pytest.raises(SnapshotTrustError) as error:
+        verify_snapshot(root, allowed_signers)
+
+    assert error.value.code == "SNAPSHOT_INTEGRITY_FAILED"
+
+
 @pytest.mark.parametrize("target", ["components.json", "snapshot-manifest.json", "snapshot-manifest.sig"])
 def test_verify_snapshot_rejects_snapshot_symlinks(tmp_path: Path, target: str) -> None:
     root, allowed_signers = signed_v2_snapshot(tmp_path)
@@ -314,6 +352,48 @@ def test_verify_snapshot_rejects_non_ed25519_signer(tmp_path: Path) -> None:
     )
     public_key = rsa_key.with_suffix(".pub").read_text(encoding="utf-8").strip()
     allowed_signers.write_text(f"reqmap-snapshot {public_key}\n", encoding="utf-8")
+    signature = root / "snapshot-manifest.sig"
+    signature.unlink()
+    manifest = root / "snapshot-manifest.json"
+    subprocess.run(
+        [
+            "ssh-keygen",
+            "-Y",
+            "sign",
+            "-f",
+            str(rsa_key),
+            "-n",
+            "reqmap-snapshot",
+            str(manifest),
+        ],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+    )
+    manifest.with_suffix(manifest.suffix + ".sig").replace(signature)
+
+    with pytest.raises(SnapshotTrustError) as error:
+        verify_snapshot(root, allowed_signers)
+
+    assert error.value.code == "SNAPSHOT_UNTRUSTED"
+
+
+def test_verify_snapshot_rejects_rsa_signature_with_mixed_trusted_keys(
+    tmp_path: Path,
+) -> None:
+    root, allowed_signers = signed_v2_snapshot(tmp_path)
+    rsa_key = tmp_path / "trust" / "mixed_rsa_key"
+    subprocess.run(
+        ["ssh-keygen", "-q", "-t", "rsa", "-b", "2048", "-N", "", "-f", str(rsa_key)],
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=10,
+    )
+    rsa_public_key = rsa_key.with_suffix(".pub").read_text(encoding="utf-8").strip()
+    with allowed_signers.open("a", encoding="utf-8") as stream:
+        stream.write(f"reqmap-snapshot {rsa_public_key}\n")
     signature = root / "snapshot-manifest.sig"
     signature.unlink()
     manifest = root / "snapshot-manifest.json"

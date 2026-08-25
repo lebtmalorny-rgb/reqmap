@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import base64
+import binascii
 from dataclasses import dataclass
 import hashlib
 import json
@@ -187,19 +189,26 @@ def _snapshot_files(root: Path, error_code: str) -> tuple[SnapshotFile, ...]:
     candidates: list[tuple[str, Path]] = []
     try:
         for directory, directory_names, file_names in os.walk(
-            normalized_root, topdown=True, followlinks=False
+            normalized_root,
+            topdown=True,
+            onerror=lambda exc: _fail(
+                error_code,
+                "Не удалось безопасно перечислить файлы snapshot.",
+                exc,
+            ),
+            followlinks=False,
         ):
             base = Path(directory)
             for name in directory_names:
                 candidate = base / name
-                if candidate.is_symlink():
-                    _fail(error_code, "Snapshot не должен содержать symlink.")
+                if not stat.S_ISDIR(candidate.lstat().st_mode):
+                    _fail(error_code, "Snapshot должен содержать только обычные каталоги.")
             for name in file_names:
                 candidate = base / name
                 relative_path = candidate.relative_to(normalized_root)
                 relative = relative_path.as_posix()
-                if candidate.is_symlink():
-                    _fail(error_code, "Snapshot не должен содержать symlink.")
+                if not stat.S_ISREG(candidate.lstat().st_mode):
+                    _fail(error_code, "Snapshot должен содержать только обычные файлы.")
                 if relative in _EXCLUDED_ROOT_FILES:
                     continue
                 if _is_governed(relative_path):
@@ -271,11 +280,12 @@ def _verify_signature_bytes(
     root: Path, allowed_signers_path: Path, manifest_bytes: bytes
 ) -> None:
     _require_ed25519_signer(allowed_signers_path)
-    _read_regular_file(
+    signature_bytes = _read_regular_file(
         root / _SIGNATURE_NAME,
         "SNAPSHOT_UNTRUSTED",
         "Подпись snapshot отсутствует или небезопасна.",
     )
+    _require_ed25519_signature(signature_bytes)
     try:
         completed = subprocess.run(
             [
@@ -312,6 +322,40 @@ def _verify_signature_bytes(
         _fail_without_context("SNAPSHOT_UNTRUSTED", "Не удалось проверить доверие к snapshot.")
     if completed.returncode != 0:
         _fail("SNAPSHOT_UNTRUSTED", "Подпись snapshot не подтверждена.")
+
+
+def _require_ed25519_signature(payload: bytes) -> None:
+    try:
+        lines = payload.decode("ascii").splitlines()
+        if (
+            len(lines) < 3
+            or lines[0] != "-----BEGIN SSH SIGNATURE-----"
+            or lines[-1] != "-----END SSH SIGNATURE-----"
+        ):
+            raise ValueError("invalid SSH signature armor")
+        envelope = base64.b64decode("".join(lines[1:-1]), validate=True)
+        if not envelope.startswith(b"SSHSIG"):
+            raise ValueError("invalid SSH signature magic")
+        offset = len(b"SSHSIG")
+        if envelope[offset : offset + 4] != b"\x00\x00\x00\x01":
+            raise ValueError("unsupported SSH signature version")
+        public_key, _ = _ssh_string(envelope, offset + 4)
+        key_type, _ = _ssh_string(public_key, 0)
+    except (UnicodeDecodeError, ValueError, binascii.Error):
+        _fail_without_context("SNAPSHOT_UNTRUSTED", "Формат подписи snapshot не разрешён.")
+    if key_type != b"ssh-ed25519":
+        _fail("SNAPSHOT_UNTRUSTED", "Подпись snapshot должна использовать Ed25519.")
+
+
+def _ssh_string(payload: bytes, offset: int) -> tuple[bytes, int]:
+    if offset < 0 or offset + 4 > len(payload):
+        raise ValueError("truncated SSH string")
+    size = int.from_bytes(payload[offset : offset + 4], "big")
+    start = offset + 4
+    end = start + size
+    if end > len(payload):
+        raise ValueError("truncated SSH string payload")
+    return payload[start:end], end
 
 
 def _require_ed25519_signer(allowed_signers_path: Path) -> None:
@@ -377,7 +421,13 @@ def _read_regular_file(path: Path, code: str, message: str) -> bytes:
 
 
 def _safe_manifest_path(value: object) -> str:
-    if type(value) is not str or not value or "\\" in value or "\x00" in value:
+    if (
+        type(value) is not str
+        or not value
+        or value == "."
+        or "\\" in value
+        or "\x00" in value
+    ):
         _fail("SNAPSHOT_MANIFEST_INVALID", "Path файла в manifest некорректен.")
     path = PurePosixPath(value)
     if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
