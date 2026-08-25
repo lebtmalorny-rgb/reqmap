@@ -3,6 +3,7 @@
 import json
 import math
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -43,12 +44,25 @@ class InputProfile:
     hint_columns: tuple[str, ...] = ()
 
 
+class AnalysisProfile(str, Enum):
+    LEGACY = "legacy"
+    DEEP = "deep"
+
+
+@dataclass(frozen=True)
+class KnowledgeTrustConfig:
+    allowed_signers_path: Path
+    signer_identity: str = "reqmap-snapshot"
+
+
 @dataclass(frozen=True)
 class AppConfig:
     model: ModelConfig
     knowledge_path: Path
     input_profile: InputProfile | None
     top_k: int
+    analysis_profile: AnalysisProfile = AnalysisProfile.LEGACY
+    knowledge_trust: KnowledgeTrustConfig | None = None
 
 
 def load_config(path: Path, environ: Mapping[str, str]) -> AppConfig:
@@ -65,7 +79,17 @@ def load_config(path: Path, environ: Mapping[str, str]) -> AppConfig:
         ) from exc
 
     _require_mapping(raw, "конфигурация")
-    _reject_unknown(raw, {"model", "knowledge_path", "input_profile", "top_k"})
+    _reject_unknown(
+        raw,
+        {
+            "model",
+            "knowledge_path",
+            "input_profile",
+            "top_k",
+            "analysis_profile",
+            "knowledge_trust",
+        },
+    )
     return _build_app_config(raw, environ, path.parent)
 
 
@@ -86,7 +110,37 @@ def _build_app_config(
 
     profile_raw = raw.get("input_profile")
     input_profile = None if profile_raw is None else _build_input_profile(profile_raw)
-    return AppConfig(model, knowledge_path, input_profile, top_k)
+    analysis_profile = _build_analysis_profile(raw.get("analysis_profile", "legacy"))
+    knowledge_trust_raw = raw.get("knowledge_trust")
+    knowledge_trust = (
+        None
+        if knowledge_trust_raw is None
+        else _build_knowledge_trust(knowledge_trust_raw, config_directory)
+    )
+    if analysis_profile is AnalysisProfile.DEEP and knowledge_trust is None:
+        _invalid("knowledge_trust обязателен для analysis_profile=deep")
+    return AppConfig(model, knowledge_path, input_profile, top_k, analysis_profile, knowledge_trust)
+
+
+def _build_analysis_profile(raw: object) -> AnalysisProfile:
+    _require_nonblank_string(raw, "analysis_profile")
+    try:
+        return AnalysisProfile(raw)
+    except ValueError:
+        _invalid("analysis_profile должен быть legacy или deep")
+
+
+def _build_knowledge_trust(raw: object, config_directory: Path) -> KnowledgeTrustConfig:
+    _require_mapping(raw, "knowledge_trust")
+    _reject_unknown(raw, {"allowed_signers_path", "signer_identity"})
+    allowed_signers_path_value = _required(raw, "allowed_signers_path", "knowledge_trust")
+    _require_nonblank_string(allowed_signers_path_value, "knowledge_trust.allowed_signers_path")
+    allowed_signers_path = Path(allowed_signers_path_value)
+    if not allowed_signers_path.is_absolute():
+        allowed_signers_path = config_directory / allowed_signers_path
+    signer_identity = raw.get("signer_identity", "reqmap-snapshot")
+    _require_nonblank_string(signer_identity, "knowledge_trust.signer_identity")
+    return KnowledgeTrustConfig(allowed_signers_path, signer_identity)
 
 
 def _build_model(raw: object, environ: Mapping[str, str]) -> ModelConfig:
@@ -210,6 +264,11 @@ def _require_mapping(value: object, location: str) -> None:
 
 def _require_nonempty_string(value: object, field: str) -> None:
     if not isinstance(value, str) or not value:
+        _invalid(f"{field} должен быть непустой строкой")
+
+
+def _require_nonblank_string(value: object, field: str) -> None:
+    if not isinstance(value, str) or not value.strip():
         _invalid(f"{field} должен быть непустой строкой")
 
 

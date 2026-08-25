@@ -1,10 +1,106 @@
+import json
 from pathlib import Path
 import math
 
 import pytest
 
 from reqmap import config as config_module
-from reqmap.config import ConfigError, load_config
+from reqmap.config import (
+    AnalysisProfile,
+    AppConfig,
+    ConfigError,
+    ModelConfig,
+    load_config,
+)
+
+
+BASE_CONFIG = {
+    "model": {"base_url": "http://llm/v1", "model": "local"},
+    "knowledge_path": "knowledge/epoxy-2025.1",
+    "top_k": 8,
+}
+
+
+def write_config(tmp_path: Path, value: object) -> Path:
+    path = tmp_path / "config.yaml"
+    path.write_text(json.dumps(value), encoding="utf-8")
+    return path
+
+
+def test_config_without_profile_remains_legacy(tmp_path: Path) -> None:
+    config = load_config(write_config(tmp_path, BASE_CONFIG), {})
+
+    assert config.analysis_profile is AnalysisProfile.LEGACY
+    assert config.knowledge_trust is None
+
+
+def test_deep_config_resolves_allowed_signers_relative_to_config(tmp_path: Path) -> None:
+    config = load_config(
+        write_config(
+            tmp_path,
+            {
+                **BASE_CONFIG,
+                "analysis_profile": "deep",
+                "knowledge_trust": {"allowed_signers_path": "trust/allowed_signers"},
+            },
+        ),
+        {},
+    )
+
+    assert config.analysis_profile is AnalysisProfile.DEEP
+    assert config.knowledge_trust is not None
+    assert config.knowledge_trust.allowed_signers_path == tmp_path / "trust/allowed_signers"
+    assert config.knowledge_trust.signer_identity == "reqmap-snapshot"
+
+
+def test_deep_config_requires_trust(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="knowledge_trust"):
+        load_config(write_config(tmp_path, {**BASE_CONFIG, "analysis_profile": "deep"}), {})
+
+
+@pytest.mark.parametrize(
+    ("knowledge_trust", "expected_message"),
+    [
+        ({"allowed_signers_path": "trust/allowed_signers", "unexpected": "value"}, "unexpected"),
+        ({"allowed_signers_path": ""}, "allowed_signers_path"),
+        ({"allowed_signers_path": 7}, "allowed_signers_path"),
+        ({"allowed_signers_path": "trust/allowed_signers", "signer_identity": ""}, "signer_identity"),
+        ({"allowed_signers_path": "trust/allowed_signers", "signer_identity": 7}, "signer_identity"),
+        (None, "knowledge_trust"),
+    ],
+)
+def test_deep_config_rejects_invalid_trust_values(
+    tmp_path: Path, knowledge_trust: object, expected_message: str
+) -> None:
+    with pytest.raises(ConfigError, match=expected_message):
+        load_config(
+            write_config(
+                tmp_path,
+                {
+                    **BASE_CONFIG,
+                    "analysis_profile": "deep",
+                    "knowledge_trust": knowledge_trust,
+                },
+            ),
+            {},
+        )
+
+
+@pytest.mark.parametrize("analysis_profile", ["", "unknown", 7, None])
+def test_config_rejects_invalid_analysis_profile(tmp_path: Path, analysis_profile: object) -> None:
+    with pytest.raises(ConfigError, match="analysis_profile"):
+        load_config(
+            write_config(tmp_path, {**BASE_CONFIG, "analysis_profile": analysis_profile}), {}
+        )
+
+
+def test_app_config_keeps_legacy_positional_constructor() -> None:
+    model = ModelConfig("http://llm/v1", "local", None, None)
+
+    config = AppConfig(model, Path("knowledge"), None, 8)
+
+    assert config.analysis_profile is AnalysisProfile.LEGACY
+    assert config.knowledge_trust is None
 
 
 def test_load_config_reads_api_key_only_from_environment(tmp_path: Path) -> None:

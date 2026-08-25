@@ -1,0 +1,7 @@
+{
+  "analysis_profile": "deep",
+  "model": {"base_url": "http://127.0.0.1:8000/v1", "model": "local-model"},
+  "knowledge_path": "knowledge/epoxy-2025.1-deep",
+  "knowledge_trust": {"allowed_signers_path": "trust/allowed_signers"},
+  "top_k": 12
+}
