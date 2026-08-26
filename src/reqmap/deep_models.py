@@ -273,6 +273,39 @@ class DeepRunResult:
         _text_tuple(self.diagnostics, "diagnostics")
 
 
+@dataclass(frozen=True)
+class CorpusCandidate:
+    """An untrusted, discovery-only reference to an already loaded source."""
+
+    source_id: str
+    locator: str
+    content_sha256: str
+    score: float
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DeepCandidate:
+    """A normalized KB-only retrieval candidate with direct evidence references."""
+
+    component_ref: str
+    capability_ref: str
+    action_ref: str | None
+    effect_ref: str | None
+    evidence_ids: tuple[str, ...]
+    version_scope: VersionScope
+    score: float
+    reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class DeepRetrievalResult:
+    """Separate normalized KB evidence from untrusted corpus discovery results."""
+
+    normalized_candidates: tuple[DeepCandidate, ...]
+    corpus_candidates: tuple[CorpusCandidate, ...]
+
+
 def _safe_identifier(value: str, field_name: str) -> None:
     if type(value) is not str or _SAFE_IDENTIFIER.fullmatch(value) is None:
         raise ValueError(f"{field_name} must be a non-empty safe technical identifier")
