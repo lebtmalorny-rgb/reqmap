@@ -1,13 +1,17 @@
 """Synthetic builders for canonical deep-analysis model tests."""
 
+from dataclasses import replace
 from pathlib import Path
 import hashlib
 import json
 import shutil
 import subprocess
+from types import MappingProxyType
 
 from reqmap.deep_models import (
     DeepEvidence,
+    DeepCandidate,
+    DeepRetrievalResult,
     DeepRunResult,
     LifecyclePhase,
     ResponsibilityContour,
@@ -15,6 +19,14 @@ from reqmap.deep_models import (
     VersionScope,
 )
 from reqmap.ids import responsibility_id
+from reqmap.knowledge_v2 import (
+    ActionRecord,
+    ActorRecord,
+    DeepCapabilityRecord,
+    DeepComponentRecord,
+    EffectRecord,
+    TargetRecord,
+)
 from reqmap.models import EvidencePolarity, EvidenceStrength, SupportStatus
 from reqmap.export_json import canonical_json_bytes
 from reqmap.snapshot_trust import build_snapshot_manifest
@@ -199,6 +211,184 @@ def immutable_v2_kb(tmp_path: Path):
 
     root, _ = signed_v2_snapshot(tmp_path)
     return load_knowledge_v2_for_maintenance(root)
+
+
+def deep_candidate(kb, *evidence_ids: str) -> DeepRetrievalResult:
+    """Return a real, coherent Nova candidate from the loaded v2 fixture."""
+    action = kb.actions["ACTION-NOVA-CREATE"]
+    return DeepRetrievalResult(
+        (
+            DeepCandidate(
+                "nova",
+                "CAP-NOVA-CREATE",
+                action.action_id,
+                "EFFECT-NOVA-SERVER-ACTIVE",
+                tuple(evidence_ids) or action.evidence_ids,
+                action.version_scope,
+                1.0,
+                ("fixture",),
+            ),
+        ),
+        (),
+    )
+
+
+def with_nova_evidence(
+    kb,
+    evidence_id: str,
+    *,
+    polarity: EvidencePolarity = EvidencePolarity.POSITIVE,
+    strength: EvidenceStrength = EvidenceStrength.DIRECT,
+):
+    """Attach evidence to every entity in the real Nova candidate relation."""
+    base = kb.evidence["EV-NOVA-CREATE"]
+    item = replace(base, evidence_id=evidence_id, polarity=polarity, strength=strength)
+    capability = replace(
+        kb.capabilities["CAP-NOVA-CREATE"],
+        evidence_ids=(*kb.capabilities["CAP-NOVA-CREATE"].evidence_ids, evidence_id),
+    )
+    action = replace(
+        kb.actions["ACTION-NOVA-CREATE"],
+        evidence_ids=(*kb.actions["ACTION-NOVA-CREATE"].evidence_ids, evidence_id),
+    )
+    effect = replace(
+        kb.effects["EFFECT-NOVA-SERVER-ACTIVE"],
+        evidence_ids=(*kb.effects["EFFECT-NOVA-SERVER-ACTIVE"].evidence_ids, evidence_id),
+    )
+    return replace(
+        kb,
+        capabilities=MappingProxyType({**kb.capabilities, capability.capability_id: capability}),
+        actions=MappingProxyType({**kb.actions, action.action_id: action}),
+        effects=MappingProxyType({**kb.effects, effect.effect_id: effect}),
+        evidence=MappingProxyType({**kb.evidence, evidence_id: item}),
+    )
+
+
+def mixed_kolla_host_kb(kb):
+    """Add one verified Kolla action whose explicit target is a Rocky Linux host entity."""
+    component = DeepComponentRecord(
+        "kolla_ansible", "Kolla-Ansible", "deployment_tool", ("2025.1",)
+    )
+    host = DeepComponentRecord(
+        "rocky_linux_9", "Rocky Linux 9", "host_os_subsystem", ("2025.1",)
+    )
+    actor = ActorRecord("actor:kolla_ansible", "automation", "kolla_ansible")
+    target = TargetRecord(
+        "rocky_linux_9.kernel_sysctl",
+        ResponsibilityContour.HOST_OS,
+        "rocky_linux_9",
+        "rocky_linux_9",
+    )
+    capability = DeepCapabilityRecord(
+        "CAP-KOLLA-SYSCTL",
+        "kolla_ansible",
+        "Применение sysctl через Kolla-Ansible",
+        ("sysctl", "kolla-ansible"),
+        ("EV-KOLLA-SYSCTL",),
+    )
+    scope = VersionScope("2025.1", "2025.1", "2025.1", "rocky_linux_9", "2025.1")
+    action = ActionRecord(
+        "ACTION-KOLLA-SYSCTL",
+        "kolla_ansible",
+        ResponsibilityContour.KOLLA_ANSIBLE,
+        "kolla_ansible_action",
+        "kolla-ansible reconfigure",
+        target.target_id,
+        ("EFFECT-HOST-SYSCTL",),
+        scope,
+        ("EV-KOLLA-SYSCTL",),
+        False,
+    )
+    effect = EffectRecord(
+        "EFFECT-HOST-SYSCTL",
+        target.target_id,
+        "ip_forward=0",
+        "ip_forward=1",
+        ("sysctl value is 1",),
+        True,
+        ("EV-KOLLA-SYSCTL",),
+    )
+    evidence = replace(
+        kb.evidence["EV-NOVA-CREATE"],
+        evidence_id="EV-KOLLA-SYSCTL",
+        claim="Kolla-Ansible applies the sysctl setting to the Rocky Linux host.",
+        applicable_contours=(
+            ResponsibilityContour.KOLLA_ANSIBLE,
+            ResponsibilityContour.HOST_OS,
+        ),
+        supports_entity_refs=(
+            capability.capability_id,
+            action.action_id,
+            effect.effect_id,
+        ),
+    )
+    changed = replace(
+        kb,
+        components=MappingProxyType(
+            {**kb.components, component.component_id: component, host.component_id: host}
+        ),
+        actors=MappingProxyType({**kb.actors, actor.actor_id: actor}),
+        targets=MappingProxyType({**kb.targets, target.target_id: target}),
+        capabilities=MappingProxyType({**kb.capabilities, capability.capability_id: capability}),
+        actions=MappingProxyType({**kb.actions, action.action_id: action}),
+        effects=MappingProxyType({**kb.effects, effect.effect_id: effect}),
+        evidence=MappingProxyType({**kb.evidence, evidence.evidence_id: evidence}),
+    )
+    retrieval = DeepRetrievalResult(
+        (
+            DeepCandidate(
+                component.component_id,
+                capability.capability_id,
+                action.action_id,
+                effect.effect_id,
+                action.evidence_ids,
+                action.version_scope,
+                1.0,
+                ("fixture",),
+            ),
+        ),
+        (),
+    )
+    return changed, retrieval
+
+
+def responsibility_selection(**changes: object) -> dict[str, object]:
+    item: dict[str, object] = {
+        "contour": "openstack_runtime",
+        "component_ref": "nova",
+        "executor_ref": "ACTOR-NOVA-API",
+        "target_contour": "openstack_runtime",
+        "target_ref": "TARGET-NOVA-SERVER",
+        "action_ref": "ACTION-NOVA-CREATE",
+        "effect_ref": "EFFECT-NOVA-SERVER-ACTIVE",
+        "lifecycle_phase": "runtime",
+        "version_scope": {
+            "source_release": "2025.1",
+            "target_release": "2025.1",
+            "kolla_ansible_release": "2025.1",
+            "host_profile": "rocky_linux_9",
+            "version_constraint": "2025.1",
+        },
+        "evidence_ids": ["EV-NOVA-CREATE"],
+        "support_status": "supported",
+        "related_indexes": [],
+    }
+    item.update(changes)
+    return item
+
+
+def deep_mapping_response(
+    *responsibilities: dict[str, object],
+    support_status: str = "supported",
+    procedure_template_ids: tuple[str, ...] = ("PROC-NOVA-CREATE",),
+) -> dict[str, object]:
+    return {
+        "support_status": support_status,
+        "supported_aspects": ["Создание виртуальной машины"],
+        "unconfirmed_aspects": [],
+        "responsibilities": list(responsibilities or (responsibility_selection(),)),
+        "procedure_template_ids": list(procedure_template_ids),
+    }
 
 
 def sign_existing_v2_snapshot(

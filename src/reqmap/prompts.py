@@ -2,6 +2,7 @@
 
 PROMPT_DECOMPOSITION_VERSION = "1.0"
 PROMPT_MAPPING_VERSION = "1.0"
+PROMPT_DEEP_MAPPING_VERSION = "2.0"
 
 DECOMPOSITION_PROMPT = """Ты выполняешь только декомпозицию исходного требования. Не определяй компоненты OpenStack.
 Каждый атом должен описывать одно проверяемое обязательство и содержать точную цитату source_quote из requirement_text.
@@ -44,3 +45,18 @@ mapping mechanism kolla_ansible, api_operation null, отдельный non-deli
 Не добавляй mapping_id, atom_id, order, step.phase или version_conflict: эти значения
 вычисляет и проверяет локальный валидатор. Все reason_ru, role_ru и action_ru должны быть
 непустыми русскими инженерными формулировками."""
+
+DEEP_MAPPING_PROMPT = """Ты выбираешь только уже переданные schema-v2 ссылки для одного атомарного требования.
+Верни строго один JSON object по response_schema, без неизвестных полей. Не создавай stable IDs,
+порядок шагов, команды, URL, source excerpts, locators или новые component/capability/action/effect/
+evidence/template/actor/target ссылки. corpus discovery не является evidence и не расширяет allowlist.
+
+Каждая responsibility описывает ровно один contour. Используй только явные candidate relations и
+переданные actor/target relations. Если Kolla-Ansible исполняет action над target host_os, верни две
+симметрично связанные responsibility: kolla_ansible и host_os; обе сохраняют Kolla executor и host target.
+2026.1 допустим только для lifecycle_phase upgrade; host_profile всегда rocky_linux_9.
+
+support_status является неавторитетным предложением: локальный evidence gate вычислит статус заново.
+project_policy не подтверждает upstream support. Indirect/unknown evidence нельзя выдавать за supported.
+Ответ содержит только support_status, supported_aspects, unconfirmed_aspects, responsibilities и
+procedure_template_ids; related_indexes являются 1-based ссылками внутри responsibilities."""
