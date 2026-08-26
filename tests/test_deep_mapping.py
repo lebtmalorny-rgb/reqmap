@@ -379,6 +379,69 @@ def test_reversed_model_order_produces_identical_ids_and_records(v2_kb) -> None:
     assert to_dict(first) == to_dict(second)
 
 
+def test_duplicate_semantic_responsibility_is_rejected_before_ids(v2_kb) -> None:
+    from reqmap.deep_mapping import map_atom_deep
+
+    duplicate = responsibility_selection()
+    invalid = deep_mapping_response(
+        duplicate,
+        responsibility_selection(),
+        procedure_template_ids=("PROC-NOVA-CREATE",),
+    )
+    outcome = map_atom_deep(
+        FakeModel([invalid, invalid]), atom(), deep_candidate(v2_kb), v2_kb
+    )
+
+    assert outcome.atom_result.analysis_state is AnalysisState.VALIDATION_FAILED
+    assert "RESPONSIBILITY_SEMANTIC_DUPLICATE" in outcome.atom_result.diagnostics[0]
+
+
+@pytest.mark.parametrize("extra_contour", ("kolla_ansible", "host_os"))
+def test_kolla_host_bundle_rejects_extra_record_cardinality(v2_kb, extra_contour) -> None:
+    from reqmap.deep_mapping import map_atom_deep
+
+    kb, retrieval = mixed_kolla_host_kb(v2_kb)
+    component = "kolla_ansible" if extra_contour == "kolla_ansible" else "rocky_linux_9"
+    records = [
+        _mixed_selection("kolla_ansible", "kolla_ansible", [2, 3]),
+        _mixed_selection("host_os", "rocky_linux_9", [1, 3]),
+        _mixed_selection(extra_contour, component, [1, 2]),
+    ]
+    records[2]["evidence_ids"] = []
+    records[2]["support_status"] = "insufficient_evidence"
+    invalid = deep_mapping_response(*records, procedure_template_ids=())
+
+    outcome = map_atom_deep(FakeModel([invalid, invalid]), atom(), retrieval, kb)
+
+    assert outcome.atom_result.analysis_state is AnalysisState.VALIDATION_FAILED
+    assert "HOST_OS_BUNDLE_CARDINALITY" in outcome.atom_result.diagnostics[0]
+
+
+def test_template_from_unselected_retrieval_candidate_is_rejected(v2_kb) -> None:
+    from reqmap.deep_mapping import map_atom_deep
+    from reqmap.deep_models import DeepRetrievalResult
+
+    kb, kolla_retrieval = mixed_kolla_host_kb(v2_kb)
+    nova_retrieval = deep_candidate(kb)
+    retrieval = DeepRetrievalResult(
+        (*nova_retrieval.normalized_candidates, *kolla_retrieval.normalized_candidates),
+        (),
+    )
+    selected = (
+        _mixed_selection("kolla_ansible", "kolla_ansible", [2]),
+        _mixed_selection("host_os", "rocky_linux_9", [1]),
+    )
+    invalid = deep_mapping_response(
+        *selected,
+        procedure_template_ids=("PROC-NOVA-CREATE",),
+    )
+
+    outcome = map_atom_deep(FakeModel([invalid, invalid]), atom(), retrieval, kb)
+
+    assert outcome.atom_result.analysis_state is AnalysisState.VALIDATION_FAILED
+    assert "PROCEDURE_TEMPLATE_TRIGGER_NOT_SELECTED" in outcome.atom_result.diagnostics[0]
+
+
 def test_prompt_payload_excludes_urls_local_excerpts_locators_and_commands(v2_kb) -> None:
     from reqmap.deep_mapping import map_atom_deep
     from reqmap.prompts import PROMPT_DEEP_MAPPING_VERSION, PROMPT_MAPPING_VERSION

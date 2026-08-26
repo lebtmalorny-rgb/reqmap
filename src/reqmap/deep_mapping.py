@@ -13,6 +13,7 @@ from reqmap.deep_models import (
     ResponsibilityContour,
     ResponsibilityRecord,
     VersionScope,
+    validate_version_scope,
 )
 from reqmap.errors import ModelOutputError, ValidationError
 from reqmap.ids import responsibility_id
@@ -75,6 +76,21 @@ class DeepMappingOutcome:
     atom_result: DeepAtomResult
     responsibility_records: tuple[ResponsibilityRecord, ...]
     procedure_template_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class _ResponsibilitySelection:
+    contour: ResponsibilityContour
+    component_ref: str
+    executor_ref: str
+    target_contour: ResponsibilityContour
+    target_ref: str
+    action_ref: str | None
+    effect_ref: str | None
+    lifecycle_phase: LifecyclePhase
+    version_scope: VersionScope
+    evidence_ids: tuple[str, ...]
+    claimed_support_status: SupportStatus
 
 
 class _SelectionError(Exception):
@@ -310,36 +326,51 @@ def _build_outcome(
 ) -> DeepMappingOutcome:
     raw_records = cast(list[dict[str, object]], raw["responsibilities"])
     adjacency = _raw_adjacency(raw_records)
-    order = sorted(range(len(raw_records)), key=lambda index: _selection_sort_key(raw_records[index]))
+    selections: dict[
+        int, tuple[_ResponsibilitySelection, SupportStatus, tuple[str, ...]]
+    ] = {}
+    semantic_keys: set[tuple[object, ...]] = set()
+    for index, item in enumerate(raw_records):
+        selection, status, diagnostics = _validated_selection(item, retrieval, kb)
+        semantic_key = _semantic_responsibility_key(selection, status)
+        if semantic_key in semantic_keys:
+            raise _SelectionError(
+                "RESPONSIBILITY_SEMANTIC_DUPLICATE: duplicate semantic responsibility запрещена."
+            )
+        semantic_keys.add(semantic_key)
+        selections[index] = (selection, status, diagnostics)
+    order = sorted(
+        range(len(raw_records)),
+        key=lambda index: _semantic_responsibility_key(
+            selections[index][0], selections[index][1]
+        ),
+    )
     ordinal_by_raw = {raw_index: ordinal for ordinal, raw_index in enumerate(order, 1)}
     records: list[ResponsibilityRecord] = []
     for ordinal, raw_index in enumerate(order, 1):
-        item = raw_records[raw_index]
-        scope = cast(dict[str, str], item["version_scope"])
+        selection, status, diagnostics = selections[raw_index]
         related = tuple(
             responsibility_id(atom.atom_id, ordinal_by_raw[index])
             for index in sorted(adjacency[raw_index], key=ordinal_by_raw.__getitem__)
         )
-        try:
-            record = ResponsibilityRecord(
-                responsibility_id(atom.atom_id, ordinal),
-                atom.requirement_id,
-                atom.atom_id,
-                ResponsibilityContour(cast(str, item["contour"])),
-                cast(str, item["component_ref"]),
-                cast(str, item["executor_ref"]),
-                ResponsibilityContour(cast(str, item["target_contour"])),
-                cast(str, item["target_ref"]),
-                cast(str | None, item["action_ref"]),
-                cast(str | None, item["effect_ref"]),
-                LifecyclePhase(cast(str, item["lifecycle_phase"])),
-                VersionScope(**scope),
-                tuple(cast(list[str], item["evidence_ids"])),
-                SupportStatus(cast(str, item["support_status"])),
-                related,
-            )
-        except ValueError as exc:
-            raise _SelectionError(f"VERSION_OR_RECORD_INVALID: {exc}") from exc
+        record = ResponsibilityRecord(
+            responsibility_id(atom.atom_id, ordinal),
+            atom.requirement_id,
+            atom.atom_id,
+            selection.contour,
+            selection.component_ref,
+            selection.executor_ref,
+            selection.target_contour,
+            selection.target_ref,
+            selection.action_ref,
+            selection.effect_ref,
+            selection.lifecycle_phase,
+            selection.version_scope,
+            selection.evidence_ids,
+            status,
+            related,
+            diagnostics=diagnostics,
+        )
         records.append(record)
     try:
         normalized = validate_responsibility_records(tuple(records), retrieval, kb)
@@ -352,6 +383,14 @@ def _build_outcome(
     for template in templates:
         if template not in allowed_templates:
             raise _SelectionError(f"PROCEDURE_TEMPLATE_NOT_ALLOWLISTED: {template}.")
+    selected_action_refs = {
+        item.action_ref for item in normalized if item.action_ref is not None
+    }
+    for template in templates:
+        if not selected_action_refs.intersection(kb.procedures[template].action_refs):
+            raise _SelectionError(
+                f"PROCEDURE_TEMPLATE_TRIGGER_NOT_SELECTED: {template}."
+            )
     statuses = tuple(item.support_status for item in normalized)
     status = _aggregate_status(statuses)
     diagnostics = tuple(dict.fromkeys(item for record in normalized for item in record.diagnostics))
@@ -371,8 +410,36 @@ def _build_outcome(
     return DeepMappingOutcome(atom_result, normalized, templates)
 
 
+def _validated_selection(
+    item: dict[str, object], retrieval: DeepRetrievalResult, kb: KnowledgeBaseV2
+) -> tuple[_ResponsibilitySelection, SupportStatus, tuple[str, ...]]:
+    scope = cast(dict[str, str], item["version_scope"])
+    try:
+        selection = _ResponsibilitySelection(
+            ResponsibilityContour(cast(str, item["contour"])),
+            cast(str, item["component_ref"]),
+            cast(str, item["executor_ref"]),
+            ResponsibilityContour(cast(str, item["target_contour"])),
+            cast(str, item["target_ref"]),
+            cast(str | None, item["action_ref"]),
+            cast(str | None, item["effect_ref"]),
+            LifecyclePhase(cast(str, item["lifecycle_phase"])),
+            VersionScope(**scope),
+            tuple(cast(list[str], item["evidence_ids"])),
+            SupportStatus(cast(str, item["support_status"])),
+        )
+        validate_version_scope(selection.version_scope, selection.lifecycle_phase)
+    except ValueError as exc:
+        raise _SelectionError(f"VERSION_OR_RECORD_INVALID: {exc}") from exc
+    candidate = _candidate_for(selection, retrieval, kb)
+    status, diagnostics = _computed_support(selection, candidate, kb)
+    return selection, status, diagnostics
+
+
 def _candidate_for(
-    record: ResponsibilityRecord, retrieval: DeepRetrievalResult, kb: KnowledgeBaseV2
+    record: ResponsibilityRecord | _ResponsibilitySelection,
+    retrieval: DeepRetrievalResult,
+    kb: KnowledgeBaseV2,
 ) -> DeepCandidate:
     matches = [
         item
@@ -406,7 +473,9 @@ def _candidate_for(
 
 
 def _computed_support(
-    record: ResponsibilityRecord, candidate: DeepCandidate, kb: KnowledgeBaseV2
+    record: ResponsibilityRecord | _ResponsibilitySelection,
+    candidate: DeepCandidate,
+    kb: KnowledgeBaseV2,
 ) -> tuple[SupportStatus, tuple[str, ...]]:
     allowed = set(candidate.evidence_ids)
     if len(record.evidence_ids) != len(set(record.evidence_ids)):
@@ -444,7 +513,12 @@ def _computed_support(
         return SupportStatus.SUPPORTED, ()
     if negative:
         return SupportStatus.NOT_SUPPORTED, ()
-    if record.support_status is SupportStatus.SUPPORTED and selected:
+    claimed_status = (
+        record.support_status
+        if isinstance(record, ResponsibilityRecord)
+        else record.claimed_support_status
+    )
+    if claimed_status is SupportStatus.SUPPORTED and selected:
         raise _SelectionError("INDIRECT_SUPPORT_CLAIM: indirect/unknown evidence cannot establish supported.")
     return SupportStatus.INSUFFICIENT_EVIDENCE, ()
 
@@ -481,22 +555,34 @@ def _validate_record_relations(records: tuple[ResponsibilityRecord, ...]) -> Non
 
 
 def _validate_host_bundles(records: tuple[ResponsibilityRecord, ...], kb: KnowledgeBaseV2) -> None:
-    groups: dict[tuple[str, str, str], list[ResponsibilityRecord]] = {}
+    groups: dict[tuple[object, ...], list[ResponsibilityRecord]] = {}
     for item in records:
         actor = kb.actors[item.executor_ref]
         target = kb.targets[item.target_ref]
         if actor.component_ref == "kolla_ansible" and target.contour is ResponsibilityContour.HOST_OS:
-            groups.setdefault((item.executor_ref, item.target_ref, item.action_ref or ""), []).append(item)
+            groups.setdefault(
+                (
+                    item.executor_ref,
+                    item.target_ref,
+                    item.action_ref,
+                    item.effect_ref,
+                    item.lifecycle_phase,
+                    item.version_scope,
+                ),
+                [],
+            ).append(item)
     for bundle in groups.values():
-        contours = {item.contour for item in bundle}
-        if contours != {ResponsibilityContour.KOLLA_ANSIBLE, ResponsibilityContour.HOST_OS}:
-            raise _SelectionError("HOST_OS_RECORD_REQUIRED: Kolla host action требует kolla_ansible и host_os records.")
-        if any(
-            other.record_id not in item.related_record_ids
-            for item in bundle
-            for other in bundle
-            if other is not item
-        ):
+        kolla = [item for item in bundle if item.contour is ResponsibilityContour.KOLLA_ANSIBLE]
+        host = [item for item in bundle if item.contour is ResponsibilityContour.HOST_OS]
+        if len(bundle) == 1:
+            raise _SelectionError(
+                "HOST_OS_RECORD_REQUIRED: Kolla host action требует kolla_ansible и host_os records."
+            )
+        if len(bundle) != 2 or len(kolla) != 1 or len(host) != 1:
+            raise _SelectionError(
+                "HOST_OS_BUNDLE_CARDINALITY: Kolla host action требует exactly one kolla_ansible and one host_os record."
+            )
+        if host[0].record_id not in kolla[0].related_record_ids or kolla[0].record_id not in host[0].related_record_ids:
             raise _SelectionError("HOST_OS_LINK_REQUIRED: mixed contour records должны быть linked.")
 
 
@@ -518,15 +604,25 @@ def _aggregate_status(statuses: tuple[SupportStatus, ...]) -> SupportStatus:
     return SupportStatus.PARTIAL
 
 
-def _selection_sort_key(item: dict[str, object]) -> tuple[object, ...]:
-    contour = ResponsibilityContour(cast(str, item["contour"]))
+def _semantic_responsibility_key(
+    item: _ResponsibilitySelection, computed_support: SupportStatus
+) -> tuple[object, ...]:
     return (
-        _CONTOUR_ORDER[contour],
-        cast(str, item["component_ref"]),
-        cast(str | None, item["action_ref"]) or "",
-        cast(str | None, item["effect_ref"]) or "",
-        cast(str, item["executor_ref"]),
-        cast(str, item["target_ref"]),
+        _CONTOUR_ORDER[item.contour],
+        item.component_ref,
+        item.executor_ref,
+        _CONTOUR_ORDER[item.target_contour],
+        item.target_ref,
+        item.action_ref or "",
+        item.effect_ref or "",
+        item.lifecycle_phase.value,
+        item.version_scope.source_release,
+        item.version_scope.target_release,
+        item.version_scope.kolla_ansible_release,
+        item.version_scope.host_profile,
+        item.version_scope.version_constraint,
+        tuple(sorted(item.evidence_ids)),
+        computed_support.value,
     )
 
 
