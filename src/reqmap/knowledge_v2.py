@@ -607,11 +607,23 @@ def _validate_v2_procedures(
                     procedure.template_id,
                     f"Procedure ссылается на неизвестный action: {action_ref}.",
                 )
-        local_ids = {step.local_step_id for step in procedure.steps}
+        local_id_values = [step.local_step_id for step in procedure.steps]
+        local_ids = set(local_id_values)
+        if len(local_id_values) != len(local_ids):
+            issue(
+                "PROCEDURE_STEP_DUPLICATE",
+                procedure.template_id,
+                "Procedure template содержит duplicate local step ID.",
+            )
         adjacency: dict[str, set[str]] = {step_id: set() for step_id in local_ids}
+        rollback_targets: set[str] = set()
+        steps_by_id = {step.local_step_id: step for step in procedure.steps}
         for step in procedure.steps:
             owner_id = f"{procedure.template_id}:{step.local_step_id}"
-            if step.action_ref not in kb.actions:
+            action = kb.actions.get(step.action_ref)
+            actor = kb.actors.get(step.executor_ref)
+            target = kb.targets.get(step.target_ref)
+            if action is None:
                 issue(
                     "PROCEDURE_ACTION_UNKNOWN",
                     owner_id,
@@ -623,7 +635,104 @@ def _validate_v2_procedures(
                     owner_id,
                     "Action step отсутствует в action_refs template.",
                 )
+            if actor is None:
+                issue(
+                    "PROCEDURE_ACTOR_UNKNOWN",
+                    owner_id,
+                    f"Step ссылается на неизвестный actor: {step.executor_ref}.",
+                )
+            elif action is not None and actor.component_ref != action.component_ref:
+                issue(
+                    "PROCEDURE_ACTOR_MISMATCH",
+                    owner_id,
+                    "Actor и action принадлежат разным component.",
+                )
+            if target is None:
+                issue(
+                    "PROCEDURE_TARGET_UNKNOWN",
+                    owner_id,
+                    f"Step ссылается на неизвестный target: {step.target_ref}.",
+                )
+            elif action is not None and action.target_ref != step.target_ref:
+                issue(
+                    "PROCEDURE_TARGET_MISMATCH",
+                    owner_id,
+                    "Step target не совпадает с ActionRecord.target_ref.",
+                )
+            if action is not None and action.contour is not step.contour:
+                issue(
+                    "PROCEDURE_CONTOUR_MISMATCH",
+                    owner_id,
+                    "Step contour не совпадает с ActionRecord.contour.",
+                )
+            if not step.preconditions or any(
+                type(item) is not str or not item.strip()
+                for item in step.preconditions
+            ):
+                issue(
+                    "PROCEDURE_PRECONDITION_BLANK",
+                    owner_id,
+                    "Step требует непустые preconditions.",
+                )
+            if not step.success_criteria or any(
+                type(item) is not str or not item.strip()
+                for item in step.success_criteria
+            ):
+                issue(
+                    "PROCEDURE_SUCCESS_CRITERIA_BLANK",
+                    owner_id,
+                    "Step требует непустые success criteria.",
+                )
             _unknown_evidence_refs(owner_id, step.evidence_ids, kb, issue)
+            applicable_direct = False
+            for evidence_id in step.evidence_ids:
+                evidence = kb.evidence.get(evidence_id)
+                if evidence is None:
+                    continue
+                source = kb.sources.get(evidence.source_id)
+                scoped = (
+                    action is not None
+                    and step.contour in evidence.applicable_contours
+                    and evidence.version_constraint
+                    in {
+                        action.version_scope.version_constraint,
+                        action.version_scope.source_release,
+                        action.version_scope.target_release,
+                    }
+                )
+                action_evidence = (
+                    scoped
+                    and step.action_ref in evidence.supports_entity_refs
+                    and source is not None
+                    and source.provenance == "official"
+                    and source.source_type != "project_policy"
+                )
+                workflow_evidence = (
+                    scoped
+                    and procedure.template_id in evidence.supports_entity_refs
+                    and source is not None
+                    and (
+                        source.provenance == "project_policy"
+                        or source.source_type == "project_policy"
+                    )
+                )
+                if not action_evidence and not workflow_evidence:
+                    issue(
+                        "PROCEDURE_EVIDENCE_MISMATCH",
+                        owner_id,
+                        f"Evidence не подтверждает action/contour/version: {evidence_id}.",
+                    )
+                elif action_evidence and (
+                    evidence.polarity is EvidencePolarity.POSITIVE
+                    and evidence.strength is EvidenceStrength.DIRECT
+                ):
+                    applicable_direct = True
+            if not applicable_direct:
+                issue(
+                    "PROCEDURE_DIRECT_EVIDENCE_REQUIRED",
+                    owner_id,
+                    "Executable/verify/rollback step требует applicable direct evidence.",
+                )
             for dependency in step.depends_on:
                 if dependency not in local_ids:
                     issue(
@@ -632,7 +741,7 @@ def _validate_v2_procedures(
                         f"Dependency не принадлежит template: {dependency}.",
                     )
                 else:
-                    adjacency[step.local_step_id].add(dependency)
+                    adjacency[dependency].add(step.local_step_id)
             rollback = step.rollback_step_local_id
             if rollback is not None:
                 if rollback not in local_ids:
@@ -643,6 +752,23 @@ def _validate_v2_procedures(
                     )
                 else:
                     adjacency[step.local_step_id].add(rollback)
+                    rollback_targets.add(rollback)
+                    if steps_by_id[rollback].phase is not LifecyclePhase.ROLLBACK:
+                        issue(
+                            "PROCEDURE_ROLLBACK_PHASE_INVALID",
+                            owner_id,
+                            "rollback_step_local_id должен указывать на rollback phase.",
+                        )
+        for step in procedure.steps:
+            if (
+                step.phase is LifecyclePhase.ROLLBACK
+                and step.local_step_id not in rollback_targets
+            ):
+                issue(
+                    "PROCEDURE_ROLLBACK_LINK_ASYMMETRIC",
+                    f"{procedure.template_id}:{step.local_step_id}",
+                    "Rollback step не связан с forward step.",
+                )
         if _has_cycle(adjacency):
             issue(
                 "PROCEDURE_CYCLE",

@@ -25,6 +25,8 @@ from reqmap.knowledge_v2 import (
     DeepCapabilityRecord,
     DeepComponentRecord,
     EffectRecord,
+    ProcedureTemplateRecord,
+    ProcedureTemplateStepRecord,
     TargetRecord,
 )
 from reqmap.models import EvidencePolarity, EvidenceStrength, SupportStatus
@@ -350,6 +352,118 @@ def mixed_kolla_host_kb(kb):
         (),
     )
     return changed, retrieval
+
+
+def procedure_kb(kb):
+    """Add a reviewed four-phase Kolla/host procedure to a real loaded KB."""
+    changed, _ = mixed_kolla_host_kb(kb)
+    action = replace(
+        changed.actions["ACTION-KOLLA-SYSCTL"], procedure_required=True
+    )
+    evidence_ids = ("EV-KOLLA-SYSCTL",)
+    steps = (
+        ProcedureTemplateStepRecord(
+            "check-current",
+            LifecyclePhase.PREFLIGHT,
+            ResponsibilityContour.KOLLA_ANSIBLE,
+            "actor:kolla_ansible",
+            "rocky_linux_9.kernel_sysctl",
+            action.action_id,
+            ("Rocky Linux host is reachable",),
+            ("current sysctl value is recorded",),
+            evidence_ids,
+            (),
+            None,
+        ),
+        ProcedureTemplateStepRecord(
+            "apply-sysctl",
+            LifecyclePhase.RECONFIGURE,
+            ResponsibilityContour.KOLLA_ANSIBLE,
+            "actor:kolla_ansible",
+            "rocky_linux_9.kernel_sysctl",
+            action.action_id,
+            ("current sysctl value is recorded",),
+            ("Kolla-Ansible reconfigure completes",),
+            evidence_ids,
+            ("check-current",),
+            "restore-sysctl",
+        ),
+        ProcedureTemplateStepRecord(
+            "verify-sysctl",
+            LifecyclePhase.VERIFY,
+            ResponsibilityContour.KOLLA_ANSIBLE,
+            "actor:kolla_ansible",
+            "rocky_linux_9.kernel_sysctl",
+            action.action_id,
+            ("Kolla-Ansible reconfigure completes",),
+            ("sysctl value is 1",),
+            evidence_ids,
+            ("apply-sysctl",),
+            None,
+        ),
+        ProcedureTemplateStepRecord(
+            "restore-sysctl",
+            LifecyclePhase.ROLLBACK,
+            ResponsibilityContour.KOLLA_ANSIBLE,
+            "actor:kolla_ansible",
+            "rocky_linux_9.kernel_sysctl",
+            action.action_id,
+            ("previous sysctl value is recorded",),
+            ("previous sysctl value is restored",),
+            evidence_ids,
+            (),
+            None,
+        ),
+    )
+    procedure = ProcedureTemplateRecord(
+        "PROC-SYSCTL",
+        LifecyclePhase.RECONFIGURE,
+        (action.action_id,),
+        steps,
+    )
+    return replace(
+        changed,
+        actions=MappingProxyType({**changed.actions, action.action_id: action}),
+        procedures=MappingProxyType(
+            {**changed.procedures, procedure.template_id: procedure}
+        ),
+    )
+
+
+def mixed_sysctl_records(kb) -> tuple[ResponsibilityRecord, ResponsibilityRecord]:
+    """Return symmetric Kolla and host responsibility projections for one action."""
+    action = kb.actions["ACTION-KOLLA-SYSCTL"]
+    shared = dict(
+        requirement_id="REQ-0001",
+        atomic_claim_id="REQ-0001-A001",
+        executor_ref="actor:kolla_ansible",
+        target_contour=ResponsibilityContour.HOST_OS,
+        target_ref=action.target_ref,
+        action_ref=action.action_id,
+        effect_ref="EFFECT-HOST-SYSCTL",
+        lifecycle_phase=LifecyclePhase.RECONFIGURE,
+        version_scope=action.version_scope,
+        evidence_ids=action.evidence_ids,
+        support_status=SupportStatus.SUPPORTED,
+    )
+    kolla_id = responsibility_id("REQ-0001-A001", 1)
+    host_id = responsibility_id("REQ-0001-A001", 2)
+    return (
+        ResponsibilityRecord(
+            record_id=kolla_id,
+            contour=ResponsibilityContour.KOLLA_ANSIBLE,
+            component_ref="kolla_ansible",
+            related_record_ids=(host_id,),
+            **shared,
+        ),
+        ResponsibilityRecord(
+            record_id=host_id,
+            contour=ResponsibilityContour.HOST_OS,
+            component_ref="rocky_linux_9",
+            related_record_ids=(kolla_id,),
+            **shared,
+        ),
+    )
 
 
 def responsibility_selection(**changes: object) -> dict[str, object]:
