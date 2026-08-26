@@ -1,6 +1,7 @@
 """Evidence-backed procedure instantiation and public DAG validation."""
 
 from dataclasses import fields, replace
+import json
 from types import MappingProxyType
 
 import pytest
@@ -12,7 +13,7 @@ from reqmap.deep_models import (
     ResponsibilityContour,
     ResponsibilityRecord,
 )
-from reqmap.knowledge_v2 import validate_knowledge_v2
+from reqmap.knowledge_v2 import load_knowledge_v2, validate_knowledge_v2
 from reqmap.models import EvidenceStrength, SupportStatus
 from reqmap.procedure import (
     ProcedureError,
@@ -23,6 +24,8 @@ from tests.deep_factories import (
     immutable_v2_kb,
     mixed_sysctl_records,
     procedure_kb,
+    sign_existing_v2_snapshot,
+    signed_v2_snapshot,
 )
 
 
@@ -296,6 +299,54 @@ def test_unverified_rollback_is_reported_and_not_instantiated(v2_kb) -> None:
     assert result.diagnostics == ("rollback_unverified",)
 
 
+def test_signed_loader_accepts_missing_rollback_proof_for_runtime_omission(
+    tmp_path,
+) -> None:
+    root, _ = signed_v2_snapshot(tmp_path / "raw")
+    procedures_path = root / "procedures.jsonl"
+    procedure = json.loads(procedures_path.read_text(encoding="utf-8"))
+    forward = {
+        **procedure["steps"][0],
+        "rollback_step_local_id": "delete-server",
+    }
+    verified_rollback = {
+        **procedure["steps"][0],
+        "local_step_id": "delete-server",
+        "phase": "rollback",
+        "preconditions": ["created server is known"],
+        "success_criteria": ["server is absent"],
+        "depends_on": [],
+        "rollback_step_local_id": None,
+    }
+    procedure["steps"] = [forward, verified_rollback]
+    procedures_path.write_text(
+        json.dumps(procedure, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    verified_signers = sign_existing_v2_snapshot(root, tmp_path / "verified")
+    assert load_knowledge_v2(root, verified_signers).trust is not None
+
+    # This is the only semantic delta from the signed valid rollback template.
+    procedure["steps"][1]["evidence_ids"] = []
+    procedures_path.write_text(
+        json.dumps(procedure, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    allowed_signers = sign_existing_v2_snapshot(root, tmp_path / "resigned")
+
+    kb = load_knowledge_v2(root, allowed_signers)
+    result = instantiate_procedure_graphs(
+        "REQ-0001", ("PROC-NOVA-CREATE",), (_nova_record(kb),), kb
+    )
+
+    assert [step.phase for step in result.graphs[0].steps] == [
+        LifecyclePhase.RUNTIME
+    ]
+    assert result.graphs[0].steps[0].rollback_step_id is None
+    assert result.graphs[0].diagnostics == ("rollback_unverified",)
+    assert result.diagnostics == ("rollback_unverified",)
+
+
 @pytest.mark.parametrize(
     ("mutator", "expected"),
     [
@@ -416,6 +467,19 @@ def test_public_validator_rejects_foreign_responsibility_step_link(v2_kb) -> Non
     )
     assert "PROCEDURE_CROSS_GRAPH_REFERENCE" in _issue_codes(
         graph, (cross,), v2_kb
+    )
+
+
+def test_public_validator_requires_matching_responsibility_for_every_step(
+    v2_kb,
+) -> None:
+    graph = _instantiate(v2_kb).graphs[0]
+
+    assert "PROCEDURE_STEP_RESPONSIBILITY_MISSING" in _issue_codes(
+        graph, (), v2_kb
+    )
+    assert "PROCEDURE_STEP_RESPONSIBILITY_MISSING" in _issue_codes(
+        graph, (_nova_record(v2_kb),), v2_kb
     )
 
 

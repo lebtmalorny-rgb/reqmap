@@ -727,7 +727,10 @@ def _validate_v2_procedures(
                     and evidence.strength is EvidenceStrength.DIRECT
                 ):
                     applicable_direct = True
-            if not applicable_direct:
+            if (
+                step.phase is not LifecyclePhase.ROLLBACK
+                and not applicable_direct
+            ):
                 issue(
                     "PROCEDURE_DIRECT_EVIDENCE_REQUIRED",
                     owner_id,

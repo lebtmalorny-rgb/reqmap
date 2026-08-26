@@ -283,6 +283,19 @@ def validate_procedure_graph(
 
     steps_by_id = {step.step_id: step for step in graph.steps}
     records = tuple(responsibilities)
+    responsibility_actions = {
+        record.action_ref
+        for record in records
+        if record.requirement_id == graph.requirement_id
+        and record.action_ref is not None
+    }
+    for step in graph.steps:
+        if step.action_ref not in responsibility_actions:
+            issue(
+                "PROCEDURE_STEP_RESPONSIBILITY_MISSING",
+                step.step_id,
+                "Для step отсутствует responsibility того же requirement/action.",
+            )
     record_ids = {record.record_id for record in records}
     if len(record_ids) != len(records):
         issue(
@@ -747,7 +760,11 @@ def _validate_step(
         )
 
 
-def _validate_stable_step_id(step_id: str, graph_id: str, issue) -> None:
+def _validate_stable_step_id(
+    step_id: str,
+    graph_id: str,
+    issue: Callable[[str, str, str], None],
+) -> None:
     match = re.fullmatch(rf"{re.escape(graph_id)}-S([0-9]{{3}})", step_id)
     valid = False
     if match is not None and int(match.group(1)) > 0:
