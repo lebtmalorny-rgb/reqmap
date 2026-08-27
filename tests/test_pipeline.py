@@ -19,6 +19,10 @@ from reqmap.models import (
     RequirementResult,
     SupportStatus,
 )
+from reqmap.output_safety import (
+    clear_published_artifacts,
+    validate_analysis_request,
+)
 from reqmap.pipeline import analyze, preflight, run_status
 from tests.factories import atom, requirement
 
@@ -606,3 +610,22 @@ def test_run_status_is_independent_from_subject_support() -> None:
     assert run_status((skipped,), preflight_ok=True) == "FAILED"
     assert run_status((completed,), preflight_ok=False) == "FAILED"
     assert run_status((), preflight_ok=True) == "FAILED"
+
+
+def test_extracted_output_safety_preserves_legacy_validation_and_cleanup(
+    tmp_path: Path,
+) -> None:
+    request = request_for(tmp_path)
+
+    assert validate_analysis_request(request) == ()
+
+    for name in (
+        "result.json",
+        "result.xlsx",
+        "report.md",
+        "run.jsonl",
+        "manifest.json",
+    ):
+        (request.output_dir / name).write_bytes(b"stale")
+    assert clear_published_artifacts(request.output_dir) == ()
+    assert tuple(request.output_dir.iterdir()) == ()
