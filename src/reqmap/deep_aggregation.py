@@ -10,6 +10,7 @@ from reqmap.deep_models import (
     DeepGroupResult,
     DeepRequirementResult,
     DeepRunResult,
+    LifecyclePhase,
     ProcedureGraph,
     ProcedureStep,
     ResponsibilityRecord,
@@ -76,6 +77,12 @@ def aggregate_deep_requirement(
         for message in atom_result.diagnostics
     )
     diagnostics = _ordered_unique((*diagnostics, *procedure_diagnostics))
+    diagnostics = _ordered_unique(
+        (
+            *diagnostics,
+            *(message for graph in graphs for message in graph.diagnostics),
+        )
+    )
     return (
         DeepRequirementResult(
             requirement,
@@ -341,6 +348,33 @@ def _validate_requirement_result(
         raise ValueError("requirement references unknown responsibility")
     if any(graph_id not in graphs_by_id for graph_id in result.procedure_graph_ids):
         raise ValueError("requirement references unknown procedure graph")
+    if any(
+        graphs_by_id[graph_id].requirement_id != source.requirement_id
+        for graph_id in result.procedure_graph_ids
+    ):
+        raise ValueError("procedure graph belongs to another requirement")
+    if len(result.diagnostics) != len(set(result.diagnostics)):
+        raise ValueError("requirement diagnostics contain duplicates")
+    required_diagnostics = _ordered_unique(
+        message
+        for atom_result in result.atom_results
+        for message in atom_result.diagnostics
+    )
+    required_diagnostics = _ordered_unique(
+        (
+            *required_diagnostics,
+            *(
+                message
+                for graph_id in result.procedure_graph_ids
+                for message in graphs_by_id[graph_id].diagnostics
+            ),
+        )
+    )
+    if any(message not in result.diagnostics for message in required_diagnostics):
+        raise ValueError("requirement diagnostic projection is incomplete")
+    positions = tuple(result.diagnostics.index(item) for item in required_diagnostics)
+    if positions != tuple(sorted(positions)):
+        raise ValueError("requirement diagnostic projection order is not canonical")
     if result.analysis_state is not _aggregate_analysis_state(
         tuple(item.analysis_state for item in result.atom_results)
     ):
@@ -386,6 +420,8 @@ def _validate_record_relations(
         if record.record_id != responsibility_id(record.atomic_claim_id, ordinal):
             raise ValueError("responsibility ID is not canonical or source-stable")
         validate_version_scope(record.version_scope, record.lifecycle_phase)
+        if len(record.evidence_ids) != len(set(record.evidence_ids)):
+            raise ValueError("responsibility evidence IDs contain duplicates")
         if (record.action_ref is None) != (record.effect_ref is None):
             raise ValueError("action/effect usage is orphaned")
         if record.record_id in record.related_record_ids:
@@ -421,16 +457,22 @@ def _validate_graphs(
         local_ids = {step.step_id for step in graph.steps}
         if len(local_ids) != len(graph.steps):
             raise ValueError("procedure step IDs must be unique")
-        for step in graph.steps:
-            _validate_stable_step_id(step.step_id, graph.graph_id)
+        ordinals = {
+            step.step_id: _validate_stable_step_id(step.step_id, graph.graph_id)
+            for step in graph.steps
+        }
+        steps_by_local_id = {step.step_id: step for step in graph.steps}
         position = {step.step_id: index for index, step in enumerate(graph.steps)}
         adjacency: dict[str, set[str]] = {item: set() for item in local_ids}
+        rollback_targets: set[str] = set()
         for step in graph.steps:
             if step.step_id in steps_by_id:
                 raise ValueError("procedure step IDs must be globally unique")
             steps_by_id[step.step_id] = (graph, step)
             if not step.evidence_ids:
                 raise ValueError("procedure step must cite evidence")
+            if len(step.evidence_ids) != len(set(step.evidence_ids)):
+                raise ValueError("procedure step evidence IDs contain duplicates")
             if len(step.depends_on) != len(set(step.depends_on)):
                 raise ValueError("procedure step dependencies must be unique")
             for dependency in step.depends_on:
@@ -440,13 +482,33 @@ def _validate_graphs(
                     raise ValueError("procedure step tuple is not topological")
                 adjacency[dependency].add(step.step_id)
             if step.rollback_step_id is not None:
+                if step.phase is LifecyclePhase.ROLLBACK:
+                    raise ValueError("rollback step cannot have a rollback link")
                 if step.rollback_step_id not in local_ids:
                     raise ValueError("procedure graph contains an unknown rollback step")
+                if (
+                    steps_by_local_id[step.rollback_step_id].phase
+                    is not LifecyclePhase.ROLLBACK
+                ):
+                    raise ValueError("rollback target must have rollback phase")
                 if position[step.rollback_step_id] <= position[step.step_id]:
                     raise ValueError("procedure rollback tuple is not topological")
+                rollback_targets.add(step.rollback_step_id)
                 adjacency[step.step_id].add(step.rollback_step_id)
+        if any(
+            step.phase is LifecyclePhase.ROLLBACK
+            and step.step_id not in rollback_targets
+            for step in graph.steps
+        ):
+            raise ValueError("rollback step is orphaned from a forward link")
         if _has_cycle(adjacency):
             raise ValueError("procedure graph contains a cycle")
+        if tuple(step.step_id for step in graph.steps) != _canonical_step_order(
+            adjacency, ordinals
+        ):
+            raise ValueError(
+                "procedure topological order violates numeric source ordinal tie break"
+            )
         if not any(
             record.requirement_id == graph.requirement_id
             and any(record.action_ref == step.action_ref for step in graph.steps)
@@ -461,6 +523,7 @@ def _validate_responsibility_step_links(
     steps_by_id: dict[str, tuple[ProcedureGraph, ProcedureStep]],
 ) -> None:
     linked_steps: set[str] = set()
+    contour_linked_steps: set[str] = set()
     for record in records:
         if len(record.procedure_step_ids) != len(set(record.procedure_step_ids)):
             raise ValueError("responsibility procedure step links must be unique")
@@ -477,8 +540,14 @@ def _validate_responsibility_step_links(
             ):
                 raise ValueError("responsibility-to-step action linkage is inconsistent")
             linked_steps.add(step_id)
+            if record.contour is step.contour:
+                contour_linked_steps.add(step_id)
     if linked_steps != set(steps_by_id):
         raise ValueError("procedure step has no matching responsibility link")
+    if contour_linked_steps != set(steps_by_id):
+        raise ValueError(
+            "procedure step contour has no matching responsibility contour"
+        )
 
 
 def _validate_evidence_closure(
@@ -632,7 +701,7 @@ def _ordered_unique(values) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
 
 
-def _validate_stable_step_id(step_id: str, graph_id: str) -> None:
+def _validate_stable_step_id(step_id: str, graph_id: str) -> int:
     prefix = f"{graph_id}-S"
     suffix = step_id.removeprefix(prefix)
     if (
@@ -643,6 +712,30 @@ def _validate_stable_step_id(step_id: str, graph_id: str) -> None:
         or procedure_step_id(graph_id, int(suffix)) != step_id
     ):
         raise ValueError("procedure step ID is not canonical for its graph")
+    return int(suffix)
+
+
+def _canonical_step_order(
+    adjacency: dict[str, set[str]], ordinals: dict[str, int]
+) -> tuple[str, ...]:
+    indegree = {step_id: 0 for step_id in adjacency}
+    for targets in adjacency.values():
+        for target in targets:
+            indegree[target] += 1
+    ready = sorted(
+        (step_id for step_id, count in indegree.items() if count == 0),
+        key=ordinals.__getitem__,
+    )
+    ordered: list[str] = []
+    while ready:
+        current = ready.pop(0)
+        ordered.append(current)
+        for target in sorted(adjacency[current], key=ordinals.__getitem__):
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                ready.append(target)
+                ready.sort(key=ordinals.__getitem__)
+    return tuple(ordered)
 
 
 def _has_cycle(adjacency: dict[str, set[str]]) -> bool:

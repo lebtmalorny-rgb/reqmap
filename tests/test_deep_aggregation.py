@@ -166,6 +166,33 @@ def _run(*, with_procedure: bool = False) -> DeepRunResult:
     )
 
 
+def _run_with_rollback() -> DeepRunResult:
+    run = _run(with_procedure=True)
+    graph = run.procedure_graphs[0]
+    rollback_id = procedure_step_id(graph.graph_id, 3)
+    forward = replace(graph.steps[0], rollback_step_id=rollback_id)
+    rollback = ProcedureStep(
+        rollback_id,
+        LifecyclePhase.ROLLBACK,
+        forward.contour,
+        forward.executor_ref,
+        forward.target_ref,
+        forward.action_ref,
+        ("created server is known",),
+        ("server is absent",),
+        forward.evidence_ids,
+    )
+    linked = replace(
+        run.responsibility_records[0],
+        procedure_step_ids=(forward.step_id, rollback.step_id),
+    )
+    return replace(
+        run,
+        responsibility_records=(linked,),
+        procedure_graphs=(replace(graph, steps=(forward, rollback)),),
+    )
+
+
 def _forge(value, **changes):
     forged = object.__new__(type(value))
     values = {field.name: getattr(value, field.name) for field in fields(value)}
@@ -605,3 +632,332 @@ def test_deep_graph_requires_source_ordered_generated_requirement_ids(
 
     with pytest.raises(ValueError, match="requirement.*ID.*order"):
         validate_deep_graph(replace(run, requirements=(forged,)))
+
+
+def test_requirement_diagnostics_project_atom_and_graph_diagnostics_canonically() -> None:
+    run = _run(with_procedure=True)
+    atom_diagnostic = "evidence_conflict:EV-NOVA-CREATE"
+    graph_diagnostic = "rollback_unverified"
+    atom_result = replace(
+        run.requirements[0].atom_results[0], diagnostics=(atom_diagnostic,)
+    )
+    graph = replace(run.procedure_graphs[0], diagnostics=(graph_diagnostic,))
+    requirement_result = replace(
+        run.requirements[0],
+        atom_results=(atom_result,),
+        diagnostics=(atom_diagnostic, graph_diagnostic),
+    )
+    valid = replace(
+        run,
+        run_status="PARTIAL",
+        requirements=(requirement_result,),
+        procedure_graphs=(graph,),
+    )
+
+    assert validate_deep_graph(valid) is None
+    with pytest.raises(ValueError, match="diagnostic.*projection"):
+        validate_deep_graph(
+            replace(
+                valid,
+                run_status="SUCCESS",
+                requirements=(replace(requirement_result, diagnostics=()),),
+            )
+        )
+    with pytest.raises(ValueError, match="diagnostic.*duplicate"):
+        validate_deep_graph(
+            replace(
+                valid,
+                requirements=(
+                    replace(
+                        requirement_result,
+                        diagnostics=(
+                            atom_diagnostic,
+                            graph_diagnostic,
+                            graph_diagnostic,
+                        ),
+                    ),
+                ),
+            )
+        )
+    with pytest.raises(ValueError, match="diagnostic.*order"):
+        validate_deep_graph(
+            replace(
+                valid,
+                requirements=(
+                    replace(
+                        requirement_result,
+                        diagnostics=(graph_diagnostic, atom_diagnostic),
+                    ),
+                ),
+            )
+        )
+
+
+def test_requirement_cannot_claim_another_requirements_procedure_graph() -> None:
+    first = _run(with_procedure=True)
+    source = replace(
+        requirement(ordinal=2, requirement_id="REQ-0002"),
+        group_ids=("GRP-A",),
+    )
+    claim = atom(requirement_id="REQ-0002")
+    record = _record(claim, 1)
+    graph_id = procedure_graph_id(source.requirement_id, 1)
+    step = ProcedureStep(
+        procedure_step_id(graph_id, 1),
+        LifecyclePhase.RUNTIME,
+        record.contour,
+        record.executor_ref,
+        record.target_ref,
+        record.action_ref or "",
+        ("request is valid",),
+        ("server reaches ACTIVE",),
+        record.evidence_ids,
+    )
+    graph = ProcedureGraph(graph_id, source.requirement_id, "PROC-NOVA", (step,))
+    procedure_result = ProcedureBuildResult(
+        (graph,),
+        (replace(record, procedure_step_ids=(step.step_id,)),),
+        (),
+    )
+    second_result, second_records = aggregate_deep_requirement(
+        source, (_outcome(claim, (record,)),), procedure_result
+    )
+    requirements = (first.requirements[0], second_result)
+    records = (*first.responsibility_records, *second_records)
+    valid = replace(
+        first,
+        requirements=requirements,
+        groups=aggregate_deep_groups(requirements, records),
+        responsibility_records=records,
+        procedure_graphs=(*first.procedure_graphs, graph),
+    )
+    swapped = (
+        replace(requirements[0], procedure_graph_ids=(graph.graph_id,)),
+        replace(
+            requirements[1],
+            procedure_graph_ids=(first.procedure_graphs[0].graph_id,),
+        ),
+    )
+
+    assert validate_deep_graph(valid) is None
+    with pytest.raises(ValueError, match="graph.*requirement"):
+        validate_deep_graph(
+            replace(
+                valid,
+                requirements=swapped,
+                procedure_graphs=(graph, first.procedure_graphs[0]),
+            )
+        )
+
+
+def test_independent_steps_use_numeric_source_ordinal_as_topological_tie_break() -> None:
+    run = _run(with_procedure=True)
+    graph = run.procedure_graphs[0]
+    first = graph.steps[0]
+    independent = ProcedureStep(
+        procedure_step_id(graph.graph_id, 3),
+        LifecyclePhase.VERIFY,
+        first.contour,
+        first.executor_ref,
+        first.target_ref,
+        first.action_ref,
+        ("request is valid",),
+        ("server remains observable",),
+        first.evidence_ids,
+    )
+    linked = replace(
+        run.responsibility_records[0],
+        procedure_step_ids=(independent.step_id, first.step_id),
+    )
+    forged = replace(
+        run,
+        responsibility_records=(linked,),
+        procedure_graphs=(replace(graph, steps=(independent, first)),),
+    )
+
+    with pytest.raises(ValueError, match="topological.*source ordinal"):
+        validate_deep_graph(forged)
+
+
+def test_rollback_target_must_be_rollback_phase() -> None:
+    run = _run_with_rollback()
+    graph = run.procedure_graphs[0]
+    verify_target = replace(graph.steps[1], phase=LifecyclePhase.VERIFY)
+
+    assert validate_deep_graph(run) is None
+    with pytest.raises(ValueError, match="rollback target.*phase"):
+        validate_deep_graph(
+            replace(run, procedure_graphs=(replace(graph, steps=(graph.steps[0], verify_target)),))
+        )
+
+
+def test_rollback_step_cannot_link_to_another_rollback() -> None:
+    run = _run_with_rollback()
+    graph = run.procedure_graphs[0]
+    chained_id = procedure_step_id(graph.graph_id, 4)
+    chained = replace(graph.steps[1], step_id=chained_id)
+    first_rollback = replace(graph.steps[1], rollback_step_id=chained_id)
+    linked = replace(
+        run.responsibility_records[0],
+        procedure_step_ids=(
+            graph.steps[0].step_id,
+            first_rollback.step_id,
+            chained.step_id,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="rollback step.*rollback link"):
+        validate_deep_graph(
+            replace(
+                run,
+                responsibility_records=(linked,),
+                procedure_graphs=(
+                    replace(
+                        graph,
+                        steps=(graph.steps[0], first_rollback, chained),
+                    ),
+                ),
+            )
+        )
+
+
+def test_every_rollback_step_is_targeted_by_a_forward_step() -> None:
+    run = _run_with_rollback()
+    graph = run.procedure_graphs[0]
+    unlinked_forward = replace(graph.steps[0], rollback_step_id=None)
+
+    with pytest.raises(ValueError, match="rollback step.*orphan"):
+        validate_deep_graph(
+            replace(
+                run,
+                procedure_graphs=(
+                    replace(graph, steps=(unlinked_forward, graph.steps[1])),
+                ),
+            )
+        )
+
+
+def test_step_requires_at_least_one_linked_responsibility_with_same_contour() -> None:
+    run = _run(with_procedure=True)
+    graph = run.procedure_graphs[0]
+    host_step = replace(
+        graph.steps[0], contour=ResponsibilityContour.HOST_OS
+    )
+    evidence = replace(
+        run.evidence[0],
+        applicable_contours=(
+            ResponsibilityContour.OPENSTACK_RUNTIME,
+            ResponsibilityContour.HOST_OS,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="step.*contour.*responsibility"):
+        validate_deep_graph(
+            replace(
+                run,
+                procedure_graphs=(replace(graph, steps=(host_step,)),),
+                evidence=(evidence,),
+            )
+        )
+
+
+def test_kolla_step_may_be_shared_with_linked_kolla_and_host_records() -> None:
+    source = replace(requirement(), group_ids=("GRP-A",))
+    claim = atom()
+    kolla_id = responsibility_id(claim.atom_id, 1)
+    host_id = responsibility_id(claim.atom_id, 2)
+    shared = dict(
+        executor_ref="actor:kolla_ansible",
+        target_contour=ResponsibilityContour.HOST_OS,
+        target_ref="rocky_linux_9.kernel_sysctl",
+        action_ref="ACTION-KOLLA-SYSCTL",
+        effect_ref="EFFECT-HOST-SYSCTL",
+    )
+    kolla = _record(
+        claim,
+        1,
+        contour=ResponsibilityContour.KOLLA_ANSIBLE,
+        component_ref="kolla_ansible",
+        related_record_ids=(host_id,),
+        **shared,
+    )
+    host = _record(
+        claim,
+        2,
+        contour=ResponsibilityContour.HOST_OS,
+        component_ref="rocky_linux_9",
+        related_record_ids=(kolla_id,),
+        **shared,
+    )
+    graph_id = procedure_graph_id(source.requirement_id, 1)
+    step = ProcedureStep(
+        procedure_step_id(graph_id, 1),
+        LifecyclePhase.RECONFIGURE,
+        ResponsibilityContour.KOLLA_ANSIBLE,
+        kolla.executor_ref,
+        kolla.target_ref,
+        kolla.action_ref or "",
+        ("host is reachable",),
+        ("sysctl is applied",),
+        kolla.evidence_ids,
+    )
+    graph = ProcedureGraph(graph_id, source.requirement_id, "PROC-SYSCTL", (step,))
+    procedure_result = ProcedureBuildResult(
+        (graph,),
+        tuple(
+            replace(record, procedure_step_ids=(step.step_id,))
+            for record in (kolla, host)
+        ),
+        (),
+    )
+    result, records = aggregate_deep_requirement(
+        source, (_outcome(claim, (kolla, host)),), procedure_result
+    )
+    evidence = replace(
+        _evidence(),
+        applicable_contours=(
+            ResponsibilityContour.KOLLA_ANSIBLE,
+            ResponsibilityContour.HOST_OS,
+        ),
+        supports_entity_refs=(
+            "ACTION-KOLLA-SYSCTL",
+            "EFFECT-HOST-SYSCTL",
+        ),
+    )
+    run = DeepRunResult(
+        "RUN-0001",
+        "2.0",
+        "SUCCESS",
+        (result,),
+        aggregate_deep_groups((result,), records),
+        records,
+        (graph,),
+        (evidence,),
+        {},
+    )
+
+    assert validate_deep_graph(run) is None
+
+
+def test_runtime_owners_reject_duplicate_evidence_ids_before_flattening() -> None:
+    run = _run()
+    record = replace(
+        run.responsibility_records[0],
+        evidence_ids=("EV-NOVA-CREATE", "EV-NOVA-CREATE"),
+    )
+    with pytest.raises(ValueError, match="responsibility.*evidence.*duplicate"):
+        validate_deep_graph(replace(run, responsibility_records=(record,)))
+
+    procedure_run = _run(with_procedure=True)
+    graph = procedure_run.procedure_graphs[0]
+    step = replace(
+        graph.steps[0],
+        evidence_ids=("EV-NOVA-CREATE", "EV-NOVA-CREATE"),
+    )
+    with pytest.raises(ValueError, match="step.*evidence.*duplicate"):
+        validate_deep_graph(
+            replace(
+                procedure_run,
+                procedure_graphs=(replace(graph, steps=(step,)),),
+            )
+        )
