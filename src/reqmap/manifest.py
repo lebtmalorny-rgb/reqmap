@@ -6,6 +6,7 @@ from collections.abc import Mapping as MappingABC
 import hashlib
 import os
 from pathlib import Path
+import re
 from urllib.parse import urlsplit, urlunsplit
 
 from reqmap.export_json import (
@@ -47,6 +48,7 @@ _UNSAFE_DIAGNOSTIC_FRAGMENTS = (
     "source_url",
     "token=",
 )
+_PATH_KEY_VALUE = re.compile(r"\b[A-Za-z0-9_-]*path\s*[:=]", re.IGNORECASE)
 
 
 def write_manifest(
@@ -165,7 +167,15 @@ def _safe_diagnostics(value: tuple[str, ...]) -> list[str]:
         ):
             raise ValueError("diagnostic must be safe non-empty single-line text")
         normalized = item.casefold()
-        if any(fragment in normalized for fragment in _UNSAFE_DIAGNOSTIC_FRAGMENTS):
+        if (
+            "/" in item
+            or "\\" in item
+            or _PATH_KEY_VALUE.search(item) is not None
+            or any(
+                fragment in normalized
+                for fragment in _UNSAFE_DIAGNOSTIC_FRAGMENTS
+            )
+        ):
             raise ValueError("diagnostic contains secret, URL, or local-path data")
         result.append(item)
     return result

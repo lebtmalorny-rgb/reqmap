@@ -113,6 +113,9 @@ def _deep_metadata_payload(run: DeepRunResult) -> dict[str, object]:
         "release_profile": _release_profile(
             metadata.get("release_profile"),
             run.responsibility_records,
+            allow_empty_transition=(
+                run.run_status == "FAILED" and not run.responsibility_records
+            ),
         ),
         "retry_counts": _stage_mapping(
             metadata.get("retry_counts"), value_kind="count"
@@ -367,6 +370,8 @@ def _stage_mapping(value: object, *, value_kind: str) -> dict[str, object]:
 def _release_profile(
     value: object,
     records: tuple[ResponsibilityRecord, ...],
+    *,
+    allow_empty_transition: bool,
 ) -> dict[str, str]:
     if not isinstance(value, Mapping) or set(value) != _RELEASE_FIELDS:
         raise ValueError("release_profile must contain the exact release fields")
@@ -397,6 +402,7 @@ def _release_profile(
         raise ValueError("2025.1 release profile cannot contain 2026.1 records")
     if (
         result["target_release"] == "2026.1"
+        and not allow_empty_transition
         and not any(
             record.lifecycle_phase is LifecyclePhase.UPGRADE
             and record.version_scope.target_release == "2026.1"

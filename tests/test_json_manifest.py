@@ -453,6 +453,46 @@ def test_deep_manifest_accepts_mixed_baseline_and_upgrade_transition_scopes(
     assert payload["release_profile"]["target_release"] == "2026.1"
 
 
+def test_deep_preflight_accepts_empty_requested_upgrade_transition(
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    skipped = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.SKIPPED,
+        support_status=None,
+        atom_results=(),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=("SKIPPED: deep preflight failed",),
+    )
+    failed = replace(
+        run,
+        run_status="FAILED",
+        requirements=(skipped,),
+        groups=aggregate_deep_groups((skipped,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        metadata={
+            **run.metadata,
+            "release_profile": {
+                **run.metadata["release_profile"],  # type: ignore[dict-item]
+                "target_release": "2026.1",
+            },
+        },
+        diagnostics=("SNAPSHOT_UNTRUSTED: подпись не прошла проверку",),
+    )
+    output = tmp_path / "output"
+
+    write_deep_preflight_artifacts(failed, output)
+
+    manifest = json.loads(
+        (output / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["release_profile"]["target_release"] == "2026.1"
+
+
 @pytest.mark.parametrize(
     "artifact_hashes",
     (
@@ -576,6 +616,54 @@ def test_deep_preflight_rejects_unsafe_diagnostics_before_writing(
         diagnostics=(
             "MODEL_FAILED: https://user:password@127.0.0.1/v1?token=secret",
         ),
+    )
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="diagnostic"):
+        write_deep_preflight_artifacts(failed, output)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "on_requirement"),
+    (
+        ("SNAPSHOT_UNTRUSTED: snapshot_path=/private/tmp/snapshot", False),
+        (r"INPUT_INVALID: input_path=C:\private\requirements.xlsx", False),
+        ("SNAPSHOT_UNTRUSTED: /private/tmp/snapshot", False),
+        (r"INPUT_INVALID: C:\private\requirements.xlsx", False),
+        (r"SNAPSHOT_UNTRUSTED: \\server\share\snapshot", False),
+        ("SNAPSHOT_UNTRUSTED: ../private/snapshot", False),
+        ("SNAPSHOT_UNTRUSTED: snapshots/private/metadata.json", False),
+        ("SKIPPED: snapshot_path=private/snapshot", True),
+    ),
+)
+def test_deep_preflight_rejects_path_bearing_diagnostics_before_writing(
+    diagnostic: str,
+    on_requirement: bool,
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    safe_requirement = "SKIPPED: deep preflight failed"
+    safe_run = "SNAPSHOT_UNTRUSTED: подпись не прошла проверку"
+    skipped = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.SKIPPED,
+        support_status=None,
+        atom_results=(),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=((diagnostic,) if on_requirement else (safe_requirement,)),
+    )
+    failed = replace(
+        run,
+        run_status="FAILED",
+        requirements=(skipped,),
+        groups=aggregate_deep_groups((skipped,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        diagnostics=((safe_run,) if on_requirement else (diagnostic,)),
     )
     output = tmp_path / "output"
 
