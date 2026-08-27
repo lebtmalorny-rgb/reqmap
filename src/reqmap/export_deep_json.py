@@ -21,7 +21,14 @@ from reqmap.deep_models import (
     VersionScope,
 )
 from reqmap.export_json import atomic_write_bytes, canonical_json_bytes
-from reqmap.models import AtomicClaim, Requirement, SourceCoordinate, SourceField, SourceHint
+from reqmap.models import (
+    AnalysisState,
+    AtomicClaim,
+    Requirement,
+    SourceCoordinate,
+    SourceField,
+    SourceHint,
+)
 
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -113,14 +120,29 @@ def _deep_metadata_payload(run: DeepRunResult) -> dict[str, object]:
         "release_profile": _release_profile(
             metadata.get("release_profile"),
             run.responsibility_records,
-            allow_empty_transition=(
-                run.run_status == "FAILED" and not run.responsibility_records
-            ),
+            allow_empty_transition=_is_failed_preflight_shape(run),
         ),
         "retry_counts": _stage_mapping(
             metadata.get("retry_counts"), value_kind="count"
         ),
     }
+
+
+def _is_failed_preflight_shape(run: DeepRunResult) -> bool:
+    return (
+        run.run_status == "FAILED"
+        and not run.responsibility_records
+        and not run.procedure_graphs
+        and not run.evidence
+        and all(
+            item.analysis_state is AnalysisState.SKIPPED
+            and item.support_status is None
+            and not item.atom_results
+            and not item.responsibility_ids
+            and not item.procedure_graph_ids
+            for item in run.requirements
+        )
+    )
 
 
 def _requirement_result(value: DeepRequirementResult) -> dict[str, object]:

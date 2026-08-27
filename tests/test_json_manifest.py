@@ -493,6 +493,50 @@ def test_deep_preflight_accepts_empty_requested_upgrade_transition(
     assert manifest["release_profile"]["target_release"] == "2026.1"
 
 
+def test_deep_manifest_rejects_failed_subject_analysis_without_upgrade_record(
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    failed_atom = replace(
+        run.requirements[0].atom_results[0],
+        analysis_state=AnalysisState.MODEL_FAILED,
+        support_status=None,
+        responsibility_ids=(),
+        diagnostics=("MODEL_FAILED: subject analysis failed",),
+    )
+    failed_requirement = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.MODEL_FAILED,
+        support_status=None,
+        atom_results=(failed_atom,),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=failed_atom.diagnostics,
+    )
+    failed = replace(
+        run,
+        run_status="FAILED",
+        requirements=(failed_requirement,),
+        groups=aggregate_deep_groups((failed_requirement,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        metadata={
+            **run.metadata,
+            "release_profile": {
+                **run.metadata["release_profile"],  # type: ignore[dict-item]
+                "target_release": "2026.1",
+            },
+        },
+    )
+    path = tmp_path / "manifest.json"
+
+    with pytest.raises(ValueError, match="upgrade"):
+        write_deep_manifest(failed, {"result.json": "c" * 64}, path)
+
+    assert not path.exists()
+
+
 @pytest.mark.parametrize(
     "artifact_hashes",
     (
@@ -583,6 +627,40 @@ def test_deep_failed_preflight_writes_exactly_the_diagnostic_pair(
         assert not (output / forbidden_name).exists()
 
 
+def test_deep_preflight_allows_standalone_models_endpoint_token(
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    skipped = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.SKIPPED,
+        support_status=None,
+        atom_results=(),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=("SKIPPED: deep preflight failed",),
+    )
+    diagnostic = (
+        "MODEL_NOT_AVAILABLE: Настроенная модель недоступна в endpoint-е /models."
+    )
+    failed = replace(
+        run,
+        run_status="FAILED",
+        requirements=(skipped,),
+        groups=aggregate_deep_groups((skipped,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        diagnostics=(diagnostic,),
+    )
+    output = tmp_path / "output"
+
+    write_deep_preflight_artifacts(failed, output)
+
+    record = json.loads((output / "run.jsonl").read_text(encoding="utf-8"))
+    assert record["diagnostics"] == [diagnostic]
+
+
 def test_deep_preflight_rejects_subject_payload_before_writing(tmp_path: Path) -> None:
     output = tmp_path / "output"
 
@@ -636,6 +714,10 @@ def test_deep_preflight_rejects_unsafe_diagnostics_before_writing(
         ("SNAPSHOT_UNTRUSTED: ../private/snapshot", False),
         ("SNAPSHOT_UNTRUSTED: snapshots/private/metadata.json", False),
         ("SKIPPED: snapshot_path=private/snapshot", True),
+        ("MODEL_NOT_AVAILABLE: /models/private", False),
+        ("MODEL_NOT_AVAILABLE: x/models", False),
+        ("MODEL_NOT_AVAILABLE: //models", False),
+        ("MODEL_NOT_AVAILABLE: https://private.invalid/models", False),
     ),
 )
 def test_deep_preflight_rejects_path_bearing_diagnostics_before_writing(

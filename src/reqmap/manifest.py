@@ -49,6 +49,10 @@ _UNSAFE_DIAGNOSTIC_FRAGMENTS = (
     "token=",
 )
 _PATH_KEY_VALUE = re.compile(r"\b[A-Za-z0-9_-]*path\s*[:=]", re.IGNORECASE)
+_SAFE_MODELS_ENDPOINT_TOKEN = re.compile(
+    r'''(?<![A-Za-z0-9_./:?=#&%+-])/models'''
+    r'''(?=$|[\s,;!?)\]"']|\.(?:$|\s))'''
+)
 
 
 def write_manifest(
@@ -166,11 +170,12 @@ def _safe_diagnostics(value: tuple[str, ...]) -> list[str]:
             character in item for character in "\r\n\x00"
         ):
             raise ValueError("diagnostic must be safe non-empty single-line text")
-        normalized = item.casefold()
+        value_for_checks = _SAFE_MODELS_ENDPOINT_TOKEN.sub("", item)
+        normalized = value_for_checks.casefold()
         if (
-            "/" in item
-            or "\\" in item
-            or _PATH_KEY_VALUE.search(item) is not None
+            "/" in value_for_checks
+            or "\\" in value_for_checks
+            or _PATH_KEY_VALUE.search(value_for_checks) is not None
             or any(
                 fragment in normalized
                 for fragment in _UNSAFE_DIAGNOSTIC_FRAGMENTS
