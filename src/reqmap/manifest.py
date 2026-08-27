@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping as MappingABC
+import hashlib
 import os
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -13,6 +14,8 @@ from reqmap.export_json import (
     ensure_secure_directory,
     symlink_component,
 )
+from reqmap.export_deep_json import _deep_metadata_payload, validate_deep_run_result
+from reqmap.deep_models import DeepRunResult
 from reqmap.models import RunResult, to_dict
 
 
@@ -21,6 +24,29 @@ _ARTIFACT_NAMES = frozenset(
     {"result.json", "result.xlsx", "report.md", "run.jsonl"}
 )
 _MODEL_STAGES = ("decomposition", "mapping")
+_DEEP_ARTIFACT_NAMES = frozenset(
+    {"result.json", "result.xlsx", "report.md", "run.jsonl"}
+)
+_SHA256_LENGTH = 64
+_UNSAFE_DIAGNOSTIC_FRAGMENTS = (
+    "://",
+    "/users/",
+    "/home/",
+    "\\users\\",
+    "allowed_signers_path",
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer ",
+    "credential",
+    "local_path",
+    "output_path",
+    "password",
+    "private_key",
+    "raw_model",
+    "source_url",
+    "token=",
+)
 
 
 def write_manifest(
@@ -70,6 +96,118 @@ def write_manifest(
         "artifact_hashes": dict(sorted(safe_hashes.items())),
     }
     atomic_write_json(path, manifest)
+
+
+def write_deep_manifest(
+    run: DeepRunResult,
+    artifact_hashes: MappingABC[str, str],
+    path: Path,
+) -> None:
+    """Publish a strict allowlisted schema-v2 run manifest."""
+    validate_deep_run_result(run)
+    manifest = _deep_manifest_payload(run, artifact_hashes)
+    atomic_write_json(path, manifest)
+
+
+def write_deep_preflight_artifacts(run: DeepRunResult, output_dir: Path) -> None:
+    """Publish only the safe diagnostic pair for a failed deep preflight."""
+    validate_deep_run_result(run)
+    if run.run_status != "FAILED":
+        raise ValueError("deep preflight artifacts require a FAILED run")
+    if run.responsibility_records or run.procedure_graphs or run.evidence:
+        raise ValueError("deep preflight run cannot contain subject payload")
+    if any(
+        item.analysis_state.value != "skipped"
+        or item.support_status is not None
+        or item.atom_results
+        or item.responsibility_ids
+        or item.procedure_graph_ids
+        for item in run.requirements
+    ):
+        raise ValueError("deep preflight requirements must be skipped without payload")
+    if not isinstance(output_dir, Path):
+        raise ValueError("output_dir must be Path")
+    run_diagnostics = _safe_diagnostics(run.diagnostics)
+    requirement_diagnostics = tuple(
+        _safe_diagnostics(item.diagnostics) for item in run.requirements
+    )
+    record = {
+        "event": "preflight_failed",
+        "level": "error",
+        "message_ru": "Preflight не пройден; предметный анализ не запускался.",
+        "run_id": run.run_id,
+        "run_status": run.run_status,
+        "diagnostics": run_diagnostics,
+        "requirements": [
+            {
+                "requirement_id": item.requirement.requirement_id,
+                "analysis_state": item.analysis_state.value,
+                "support_status": None,
+                "diagnostics": diagnostics,
+            }
+            for item, diagnostics in zip(
+                run.requirements, requirement_diagnostics, strict=True
+            )
+        ],
+    }
+    log_payload = canonical_json_bytes(record)
+    log_hash = hashlib.sha256(log_payload).hexdigest()
+    manifest = _deep_manifest_payload(run, {"run.jsonl": log_hash})
+    atomic_write_bytes(output_dir / "run.jsonl", log_payload)
+    atomic_write_json(output_dir / "manifest.json", manifest)
+
+
+def _safe_diagnostics(value: tuple[str, ...]) -> list[str]:
+    result: list[str] = []
+    for item in value:
+        if type(item) is not str or not item.strip() or any(
+            character in item for character in "\r\n\x00"
+        ):
+            raise ValueError("diagnostic must be safe non-empty single-line text")
+        normalized = item.casefold()
+        if any(fragment in normalized for fragment in _UNSAFE_DIAGNOSTIC_FRAGMENTS):
+            raise ValueError("diagnostic contains secret, URL, or local-path data")
+        result.append(item)
+    return result
+
+
+def _deep_manifest_payload(
+    run: DeepRunResult,
+    artifact_hashes: MappingABC[str, str],
+) -> dict[str, object]:
+    if not isinstance(artifact_hashes, MappingABC):
+        raise ValueError("artifact_hashes must be a mapping")
+    safe_hashes: dict[str, str] = {}
+    for name, digest in artifact_hashes.items():
+        if name == "manifest.json":
+            continue
+        if type(name) is not str or name not in _DEEP_ARTIFACT_NAMES:
+            raise ValueError(f"unknown deep artifact hash: {name}")
+        if (
+            type(digest) is not str
+            or len(digest) != _SHA256_LENGTH
+            or any(character not in "0123456789abcdef" for character in digest)
+        ):
+            raise ValueError(f"artifact hash for {name} must be lowercase SHA-256")
+        safe_hashes[name] = digest
+    metadata = _deep_metadata_payload(run)
+    return {
+        "schema_version": run.schema_version,
+        "run_id": run.run_id,
+        "run_status": run.run_status,
+        "reqmap_version": metadata["reqmap_version"],
+        "analysis_profile": metadata["analysis_profile"],
+        "model": metadata["model"],
+        "seed": metadata["seed"],
+        "top_k": metadata["top_k"],
+        "input_sha256": metadata["input_sha256"],
+        "snapshot_id": metadata["snapshot_id"],
+        "knowledge_trust": metadata["knowledge_trust"],
+        "prompt_versions": metadata["prompt_versions"],
+        "release_profile": metadata["release_profile"],
+        "retry_counts": metadata["retry_counts"],
+        "artifact_hashes": dict(sorted(safe_hashes.items())),
+    }
 
 
 def atomic_write_json(

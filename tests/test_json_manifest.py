@@ -11,7 +11,14 @@ import stat
 import pytest
 
 from reqmap.export_json import write_canonical_json
-from reqmap.manifest import RunLogger, write_manifest
+from reqmap.deep_aggregation import aggregate_deep_groups
+from reqmap.deep_models import LifecyclePhase, VersionScope
+from reqmap.manifest import (
+    RunLogger,
+    write_deep_manifest,
+    write_deep_preflight_artifacts,
+    write_manifest,
+)
 from reqmap.models import (
     AnalysisState,
     AtomResult,
@@ -26,6 +33,7 @@ from reqmap.models import (
     SupportStatus,
 )
 from tests.factories import atom, mapping, requirement
+from tests.test_export_deep_json import FORBIDDEN_METADATA, deep_run
 
 
 def completed_run() -> RunResult:
@@ -268,6 +276,313 @@ def test_manifest_is_allowlisted_safe_and_has_no_self_hash(tmp_path: Path) -> No
     assert "token=hidden" not in serialized
     assert "self-hash-must-not-appear" not in serialized
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_deep_manifest_contains_only_allowlisted_trust_and_run_metadata(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "manifest.json"
+
+    write_deep_manifest(
+        deep_run(),
+        {
+            "result.json": "c" * 64,
+            "result.xlsx": "d" * 64,
+            "report.md": "e" * 64,
+            "run.jsonl": "f" * 64,
+            "manifest.json": "0" * 64,
+        },
+        path,
+    )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload == {
+        "analysis_profile": "deep",
+        "artifact_hashes": {
+            "report.md": "e" * 64,
+            "result.json": "c" * 64,
+            "result.xlsx": "d" * 64,
+            "run.jsonl": "f" * 64,
+        },
+        "input_sha256": "a" * 64,
+        "knowledge_trust": {
+            "key_id": "reqmap-maintenance-2026",
+            "manifest_sha256": "b" * 64,
+            "signer_identity": "reqmap-snapshot",
+        },
+        "model": "local-model",
+        "prompt_versions": {
+            "decomposition": "1.0",
+            "deep_mapping": "2.0",
+        },
+        "release_profile": {
+            "host_profile": "rocky_linux_9",
+            "kolla_ansible_release": "2025.1",
+            "source_release": "2025.1",
+            "target_release": "2025.1",
+        },
+        "reqmap_version": "0.2.0",
+        "retry_counts": {"decomposition": 0, "deep_mapping": 1},
+        "run_id": "RUN-0001",
+        "run_status": "SUCCESS",
+        "schema_version": "2.0",
+        "seed": 7,
+        "snapshot_id": "epoxy-2025.1-deep-001",
+        "top_k": 12,
+    }
+    serialized = path.read_text(encoding="utf-8")
+    for key, value in FORBIDDEN_METADATA.items():
+        assert key not in serialized
+        if isinstance(value, str):
+            assert value not in serialized
+    assert "private raw model response" not in serialized
+    assert "private arbitrary value" not in serialized
+    assert "untrusted_stage" not in serialized
+    assert "manifest.json" not in payload["artifact_hashes"]
+
+
+@pytest.mark.parametrize(
+    "metadata_change",
+    (
+        {"input_sha256": "not-a-sha256"},
+        {"manifest_sha256": "B" * 64},
+        {"key_id": "unsafe/key"},
+        {"signer_identity": ""},
+        {"snapshot_id": "../snapshot"},
+        {"analysis_profile": "legacy"},
+        {"model": "/Users/private/model"},
+        {"model": "sk-proj-private-credential"},
+        {"reqmap_version": "/Users/private/reqmap"},
+        {
+            "prompt_versions": {
+                "decomposition": "https://private.invalid/prompt",
+                "deep_mapping": "2.0",
+            }
+        },
+        {
+            "prompt_versions": {
+                "decomposition": "private credential",
+                "deep_mapping": "2.0",
+            }
+        },
+        {
+            "release_profile": {
+                "source_release": "2026.1",
+                "target_release": "2026.1",
+                "kolla_ansible_release": "2025.1",
+                "host_profile": "rocky_linux_9",
+            }
+        },
+        {
+            "release_profile": {
+                "source_release": "2025.1",
+                "target_release": "2026.1",
+                "kolla_ansible_release": "2025.1",
+                "host_profile": "rocky_linux_9",
+            }
+        },
+        {
+            "release_profile": {
+                "source_release": "2025.1",
+                "target_release": "2025.1",
+                "kolla_ansible_release": "2025.1",
+                "host_profile": "ubuntu_22_04",
+                "unexpected": "value",
+            }
+        },
+    ),
+)
+def test_deep_manifest_rejects_malformed_hash_trust_and_release_metadata(
+    metadata_change: dict[str, object], tmp_path: Path
+) -> None:
+    run = deep_run()
+    malformed = replace(run, metadata={**run.metadata, **metadata_change})
+    path = tmp_path / "manifest.json"
+
+    with pytest.raises(ValueError):
+        write_deep_manifest(malformed, {"result.json": "c" * 64}, path)
+
+    assert not path.exists()
+
+
+def test_deep_manifest_accepts_mixed_baseline_and_upgrade_transition_scopes(
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    runtime = run.responsibility_records[0]
+    upgrade = replace(
+        runtime,
+        record_id="REQ-0001-A001-R002",
+        lifecycle_phase=LifecyclePhase.UPGRADE,
+        version_scope=VersionScope(
+            "2025.1",
+            "2026.1",
+            "2025.1",
+            "rocky_linux_9",
+            "2025.1 -> 2026.1",
+        ),
+        procedure_step_ids=(),
+    )
+    atom_result = replace(
+        run.requirements[0].atom_results[0],
+        responsibility_ids=(runtime.record_id, upgrade.record_id),
+    )
+    requirement_result = replace(
+        run.requirements[0],
+        atom_results=(atom_result,),
+        responsibility_ids=(runtime.record_id, upgrade.record_id),
+    )
+    transitioning = replace(
+        run,
+        requirements=(requirement_result,),
+        groups=aggregate_deep_groups((requirement_result,), (runtime, upgrade)),
+        responsibility_records=(runtime, upgrade),
+        metadata={
+            **run.metadata,
+            "release_profile": {
+                **run.metadata["release_profile"],  # type: ignore[dict-item]
+                "target_release": "2026.1",
+            },
+        },
+    )
+    path = tmp_path / "manifest.json"
+
+    write_deep_manifest(transitioning, {"result.json": "c" * 64}, path)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert payload["release_profile"]["target_release"] == "2026.1"
+
+
+@pytest.mark.parametrize(
+    "artifact_hashes",
+    (
+        {"result.json": "short"},
+        {"result.json": "C" * 64},
+        {"checkpoint.json": "c" * 64},
+        {"result.json": "c" * 64, 1: "d" * 64},
+    ),
+)
+def test_deep_manifest_rejects_malformed_or_unknown_artifact_hashes(
+    artifact_hashes: dict[object, str], tmp_path: Path
+) -> None:
+    path = tmp_path / "manifest.json"
+
+    with pytest.raises(ValueError, match="artifact|SHA-256"):
+        write_deep_manifest(deep_run(), artifact_hashes, path)  # type: ignore[arg-type]
+
+    assert not path.exists()
+
+
+def test_deep_failed_preflight_writes_exactly_the_diagnostic_pair(
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    skipped = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.SKIPPED,
+        support_status=None,
+        atom_results=(),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=("SKIPPED: deep preflight failed",),
+    )
+    failed = replace(
+        run,
+        run_status="FAILED",
+        requirements=(skipped,),
+        groups=aggregate_deep_groups((skipped,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        diagnostics=(
+            "SNAPSHOT_UNTRUSTED: Подпись snapshot не прошла проверку.",
+        ),
+    )
+    output = tmp_path / "output"
+
+    write_deep_preflight_artifacts(failed, output)
+
+    assert sorted(path.name for path in output.iterdir()) == [
+        "manifest.json",
+        "run.jsonl",
+    ]
+    record = json.loads((output / "run.jsonl").read_text(encoding="utf-8"))
+    assert record["requirements"] == [
+        {
+            "analysis_state": "skipped",
+            "diagnostics": ["SKIPPED: deep preflight failed"],
+            "requirement_id": "REQ-0001",
+            "support_status": None,
+        }
+    ]
+    assert record["diagnostics"] == [
+        "SNAPSHOT_UNTRUSTED: Подпись snapshot не прошла проверку."
+    ]
+    for forbidden in (
+        "responsibility_records",
+        "procedure_graphs",
+        "evidence",
+        "artifact_hashes",
+    ):
+        assert forbidden not in record
+    manifest = json.loads(
+        (output / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert manifest["run_status"] == "FAILED"
+    assert manifest["artifact_hashes"] == {
+        "run.jsonl": hashlib.sha256(
+            (output / "run.jsonl").read_bytes()
+        ).hexdigest()
+    }
+    serialized = "".join(
+        path.read_text(encoding="utf-8") for path in output.iterdir()
+    )
+    assert "top-secret-api-key" not in serialized
+    assert "private raw model response" not in serialized
+    for forbidden_name in ("result.json", "result.xlsx", "report.md"):
+        assert not (output / forbidden_name).exists()
+
+
+def test_deep_preflight_rejects_subject_payload_before_writing(tmp_path: Path) -> None:
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="preflight|skipped|payload"):
+        write_deep_preflight_artifacts(deep_run(), output)
+
+    assert not output.exists()
+
+
+def test_deep_preflight_rejects_unsafe_diagnostics_before_writing(
+    tmp_path: Path,
+) -> None:
+    run = deep_run()
+    skipped = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.SKIPPED,
+        support_status=None,
+        atom_results=(),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=("SKIPPED: deep preflight failed",),
+    )
+    failed = replace(
+        run,
+        run_status="FAILED",
+        requirements=(skipped,),
+        groups=aggregate_deep_groups((skipped,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        diagnostics=(
+            "MODEL_FAILED: https://user:password@127.0.0.1/v1?token=secret",
+        ),
+    )
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="diagnostic"):
+        write_deep_preflight_artifacts(failed, output)
+
+    assert not output.exists()
 
 
 def test_run_log_is_jsonl_recursive_redacted_and_append_only(
