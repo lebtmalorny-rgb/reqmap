@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from reqmap.export_deep_markdown import write_deep_markdown
+from reqmap.models import EvidencePolarity
 from tests.test_export_deep_json import FORBIDDEN_METADATA, deep_run
 
 
@@ -15,7 +16,7 @@ def problematic_run():
     result = run.requirements[0]
     atom_result = replace(
         result.atom_results[0],
-        diagnostics=("evidence_conflict:EV-NOVA-CREATE",),
+        diagnostics=("evidence_conflict",),
     )
     graph = replace(
         run.procedure_graphs[0],
@@ -23,13 +24,24 @@ def problematic_run():
     )
     record = replace(
         run.responsibility_records[0],
+        evidence_ids=("EV-NOVA-CREATE", "EV-NOVA-CREATE-NEG"),
         diagnostics=("responsibility_ambiguous:REQ-0001-A001",),
+    )
+    negative = replace(
+        run.evidence[0],
+        evidence_id="EV-NOVA-CREATE-NEG",
+        claim="Nova does not support the conflicting operation.",
+        polarity=EvidencePolarity.NEGATIVE,
+        source_id="SRC-NOVA-NEG",
+        locator="release-notes#unsupported-operation",
+        version_constraint="2025.1",
+        local_excerpt="The operation is unsupported.",
     )
     changed_result = replace(
         result,
         atom_results=(atom_result,),
         diagnostics=(
-            "evidence_conflict:EV-NOVA-CREATE",
+            "evidence_conflict",
             "rollback_unverified:PROC-NOVA",
         ),
     )
@@ -39,6 +51,7 @@ def problematic_run():
         requirements=(changed_result,),
         responsibility_records=(record,),
         procedure_graphs=(graph,),
+        evidence=(*run.evidence, negative),
         diagnostics=("processing_notice:synthetic",),
     )
 
@@ -54,7 +67,7 @@ def test_deep_markdown_exposes_contours_links_versions_gaps_and_trust(
 
     assert digest == hashlib.sha256(path.read_bytes()).hexdigest()
     assert (
-        '<!-- reqmap-counts:{"atoms":1,"diagnostics":6,"evidence":1,'
+        '<!-- reqmap-counts:{"atoms":1,"diagnostics":6,"evidence":2,'
         '"procedure_steps":1,"requirements":1,"responsibilities":1} -->'
     ) in text
     for heading in (
@@ -72,7 +85,7 @@ def test_deep_markdown_exposes_contours_links_versions_gaps_and_trust(
     assert "ACTOR-NOVA-API → TARGET-NOVA-SERVER" in text
     assert "2025.1" in text
     assert "rollback_unverified:PROC-NOVA" in text
-    assert "evidence_conflict:EV-NOVA-CREATE" in text
+    assert "evidence_conflict" in text
     assert "reqmap-maintenance-2026" in text
     assert "reqmap-snapshot" in text
     assert "local-model" in text
@@ -84,6 +97,30 @@ def test_deep_markdown_exposes_contours_links_versions_gaps_and_trust(
     assert "allowed_signers" not in text
     assert "source_url" not in text
     assert "raw_model" not in text
+
+
+def test_deep_markdown_derives_both_exact_conflict_positions_from_atom_links(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "conflict.md"
+
+    write_deep_markdown(problematic_run(), path)
+    text = path.read_text(encoding="utf-8")
+
+    assert (
+        "| Evidence ID | Polarity | Strength | Source ID | Locator | "
+        "Version constraint | Claim |"
+    ) in text
+    assert (
+        "| EV-NOVA-CREATE | positive | direct | SRC-NOVA | servers#create | "
+        "2025.1 | Nova creates a server. |"
+    ) in text
+    assert (
+        "| EV-NOVA-CREATE-NEG | negative | direct | SRC-NOVA-NEG | "
+        "release-notes#unsupported-operation | 2025.1 | "
+        "Nova does not support the conflicting operation. |"
+    ) in text
+    assert "evidence_conflict:" not in text
 
 
 def test_deep_markdown_escapes_table_cells_and_preserves_full_problem_text(

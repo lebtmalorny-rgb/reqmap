@@ -3,16 +3,19 @@
 from pathlib import Path
 
 from openpyxl import load_workbook
+import pytest
 
+import reqmap.crosscheck_deep as crosscheck_module
 from reqmap.crosscheck_deep import crosscheck_deep
 from reqmap.export_deep_json import write_deep_canonical_json
 from reqmap.export_deep_markdown import write_deep_markdown
 from reqmap.export_deep_xlsx import write_deep_xlsx
 from tests.test_export_deep_json import deep_run
+from tests.test_export_deep_markdown import problematic_run
 
 
-def _artifacts(tmp_path: Path):
-    run = deep_run()
+def _artifacts(tmp_path: Path, run=None):
+    run = deep_run() if run is None else run
     json_path = tmp_path / "result.json"
     xlsx_path = tmp_path / "result.xlsx"
     markdown_path = tmp_path / "report.md"
@@ -24,6 +27,33 @@ def _artifacts(tmp_path: Path):
 
 def _codes(issues) -> set[str]:
     return {issue.code for issue in issues}
+
+
+def _replace_semantic_cell(
+    text: str,
+    *,
+    heading: str,
+    row_id: str,
+    column: str,
+    value: str,
+) -> str:
+    lines = text.splitlines()
+    section = lines.index(f"## {heading}")
+    header_index = next(
+        index for index in range(section + 1, len(lines))
+        if lines[index].startswith("| ")
+    )
+    headers = lines[header_index][2:-2].split(" | ")
+    column_index = headers.index(column)
+    for index in range(header_index + 2, len(lines)):
+        if not lines[index].startswith("| "):
+            break
+        cells = lines[index][2:-2].split(" | ")
+        if row_id in cells:
+            cells[column_index] = value
+            lines[index] = "| " + " | ".join(cells) + " |"
+            return "\n".join(lines) + "\n"
+    raise AssertionError(f"row {row_id} not found under {heading}")
 
 
 def test_deep_crosscheck_accepts_consistent_artifacts(tmp_path: Path) -> None:
@@ -113,7 +143,151 @@ def test_deep_crosscheck_detects_markdown_marker_duplication_and_mutation(
     codes = _codes(crosscheck_deep(run, json_path, xlsx_path, markdown_path))
 
     assert "CROSSCHECK_DEEP_MARKDOWN_MARKER" in codes
-    assert "CROSSCHECK_DEEP_MARKDOWN_BYTES" in codes
+
+
+def test_deep_crosscheck_rejects_any_extra_malformed_marker_occurrence(
+    tmp_path: Path,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+    markdown_path.write_text(
+        markdown_path.read_text(encoding="utf-8")
+        + "\n<!-- reqmap-counts:not-json -->\n",
+        encoding="utf-8",
+    )
+
+    codes = _codes(crosscheck_deep(run, json_path, xlsx_path, markdown_path))
+
+    assert "CROSSCHECK_DEEP_MARKDOWN_MARKER" in codes
+
+
+def test_deep_crosscheck_does_not_call_markdown_renderer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+
+    def forbidden_renderer(_run):
+        raise AssertionError("crosscheck called Markdown renderer")
+
+    monkeypatch.setattr(
+        crosscheck_module,
+        "_markdown_bytes",
+        forbidden_renderer,
+        raising=False,
+    )
+
+    assert crosscheck_deep(run, json_path, xlsx_path, markdown_path) == ()
+
+
+@pytest.mark.parametrize(
+    ("heading", "row_id", "column", "value", "expected_code"),
+    (
+        ("Требования и группы", "GRP-A", "Source requirement IDs", '["REQ-FORGED"]', "CROSSCHECK_DEEP_MARKDOWN_REQUIREMENTS_GROUPS"),
+        ("Атомарные утверждения", "REQ-0001-A001", "Support status", "not_supported", "CROSSCHECK_DEEP_MARKDOWN_ATOMS"),
+        ("Executor → target", "REQ-0001-A001-R001", "Связь", "FORGED → TARGET", "CROSSCHECK_DEEP_MARKDOWN_EXECUTOR_TARGET"),
+        ("Контуры ответственности", "REQ-0001-A001-R001", "Evidence IDs", '["EV-FORGED"]', "CROSSCHECK_DEEP_MARKDOWN_RESPONSIBILITIES"),
+        ("Контуры ответственности", "REQ-0001-A001-R001", "Procedure step IDs", '["STEP-FORGED"]', "CROSSCHECK_DEEP_MARKDOWN_RESPONSIBILITIES"),
+        ("Процедуры", "REQ-0001-P001-S001", "Preconditions", '["forged"]', "CROSSCHECK_DEEP_MARKDOWN_PROCEDURES"),
+        ("Процедуры", "REQ-0001-P001-S001", "Evidence IDs", '["EV-FORGED"]', "CROSSCHECK_DEEP_MARKDOWN_PROCEDURES"),
+        ("Процедуры", "REQ-0001-P001-S001", "Evidence versions", '["2026.1"]', "CROSSCHECK_DEEP_MARKDOWN_PROCEDURES"),
+        ("Процедуры", "REQ-0001-P001-S001", "Depends on", '["forged"]', "CROSSCHECK_DEEP_MARKDOWN_PROCEDURES"),
+        ("Процедуры", "REQ-0001-P001-S001", "Rollback step ID", "STEP-FORGED", "CROSSCHECK_DEEP_MARKDOWN_PROCEDURES"),
+        ("Версии и область применимости", "REQ-0001-A001-R001", "Constraint", "2026.1", "CROSSCHECK_DEEP_MARKDOWN_VERSIONS"),
+        ("Каталог evidence", "EV-NOVA-CREATE", "Locator", "forged#locator", "CROSSCHECK_DEEP_MARKDOWN_EVIDENCE"),
+        ("Каталог evidence", "EV-NOVA-CREATE", "Version constraint", "2026.1", "CROSSCHECK_DEEP_MARKDOWN_EVIDENCE"),
+        ("Каталог evidence", "EV-NOVA-CREATE", "Supports entity refs", '["FORGED"]', "CROSSCHECK_DEEP_MARKDOWN_EVIDENCE"),
+    ),
+)
+def test_deep_crosscheck_semantically_detects_markdown_table_mutations(
+    tmp_path: Path,
+    heading: str,
+    row_id: str,
+    column: str,
+    value: str,
+    expected_code: str,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+    original = markdown_path.read_text(encoding="utf-8")
+    marker = next(line for line in original.splitlines() if line.startswith("<!-- reqmap-counts:"))
+    markdown_path.write_text(
+        _replace_semantic_cell(
+            original,
+            heading=heading,
+            row_id=row_id,
+            column=column,
+            value=value,
+        ),
+        encoding="utf-8",
+    )
+
+    changed = markdown_path.read_text(encoding="utf-8")
+    assert marker in changed
+    assert expected_code in _codes(crosscheck_deep(run, json_path, xlsx_path, markdown_path))
+
+
+def test_deep_crosscheck_semantically_detects_normalized_diagnostic_mutation(
+    tmp_path: Path,
+) -> None:
+    run = problematic_run()
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path, run)
+    text = markdown_path.read_text(encoding="utf-8")
+    markdown_path.write_text(
+        _replace_semantic_cell(
+            text,
+            heading="Нормализованная диагностика",
+            row_id="REQ-0001-A001",
+            column="Diagnostic",
+            value="forged_diagnostic",
+        ),
+        encoding="utf-8",
+    )
+
+    assert "CROSSCHECK_DEEP_MARKDOWN_DIAGNOSTICS" in _codes(
+        crosscheck_deep(run, json_path, xlsx_path, markdown_path)
+    )
+
+
+def test_deep_crosscheck_accepts_nonempty_conflict_warning_and_failure_tables(
+    tmp_path: Path,
+) -> None:
+    run = problematic_run()
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path, run)
+
+    assert crosscheck_deep(run, json_path, xlsx_path, markdown_path) == ()
+
+
+@pytest.mark.parametrize(
+    ("heading", "row_id", "column", "expected_code"),
+    (
+        ("Конфликты evidence", "REQ-0001-A001", "Диагностика", "CROSSCHECK_DEEP_MARKDOWN_CONFLICTS"),
+        ("Предупреждения procedures и rollback", "REQ-0001-P001", "Диагностика", "CROSSCHECK_DEEP_MARKDOWN_WARNINGS"),
+        ("Ошибки обработки", "RUN-0001", "Причина", "CROSSCHECK_DEEP_MARKDOWN_FAILURES"),
+    ),
+)
+def test_deep_crosscheck_detects_diagnostic_projection_mutations(
+    tmp_path: Path,
+    heading: str,
+    row_id: str,
+    column: str,
+    expected_code: str,
+) -> None:
+    run = problematic_run()
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path, run)
+    text = markdown_path.read_text(encoding="utf-8")
+    markdown_path.write_text(
+        _replace_semantic_cell(
+            text,
+            heading=heading,
+            row_id=row_id,
+            column=column,
+            value="forged_projection",
+        ),
+        encoding="utf-8",
+    )
+
+    assert expected_code in _codes(
+        crosscheck_deep(run, json_path, xlsx_path, markdown_path)
+    )
 
 
 def test_deep_crosscheck_returns_independent_read_issues_for_bad_artifacts(
