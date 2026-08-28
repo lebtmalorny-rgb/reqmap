@@ -11,6 +11,36 @@ from reqmap.models import EvidencePolarity
 from tests.test_export_deep_json import FORBIDDEN_METADATA, deep_run
 
 
+LINE_BOUNDARIES = (
+    pytest.param("\u0085", id="next-line"),
+    pytest.param("\u2028", id="line-separator"),
+    pytest.param("\u2029", id="paragraph-separator"),
+)
+
+
+def line_boundary_run(separator: str):
+    run = deep_run()
+    result = run.requirements[0]
+    source_quote = f"quoted{separator}source"
+    atom_result = replace(
+        result.atom_results[0],
+        atom=replace(
+            result.atom_results[0].atom,
+            text=f"atom{separator}text",
+            source_quote=source_quote,
+        ),
+    )
+    changed_result = replace(
+        result,
+        requirement=replace(
+            result.requirement,
+            text=f"Requirement with {source_quote} and literal <br>.",
+        ),
+        atom_results=(atom_result,),
+    )
+    return replace(run, requirements=(changed_result,))
+
+
 def problematic_run():
     run = deep_run()
     result = run.requirements[0]
@@ -155,6 +185,23 @@ def test_deep_markdown_escapes_table_cells_and_preserves_full_problem_text(
     escaped = "Полный &lt;текст&gt; \\| требования\\\\строка<br>вторая строка"
     assert escaped in text
     assert "<текст> | требования" not in text
+
+
+@pytest.mark.parametrize("separator", LINE_BOUNDARIES)
+def test_deep_markdown_normalizes_valid_line_boundaries_inside_cells(
+    tmp_path: Path,
+    separator: str,
+) -> None:
+    path = tmp_path / "line-boundaries.md"
+
+    write_deep_markdown(line_boundary_run(separator), path)
+    text = path.read_text(encoding="utf-8")
+
+    assert separator not in text
+    assert "Requirement with quoted<br>source and literal &lt;br&gt;." in text
+    assert "atom<br>text" in text
+    assert "quoted<br>source" in text
+    assert "literal <br>" not in text
 
 
 def test_deep_markdown_is_deterministic_and_rejects_symlink(tmp_path: Path) -> None:

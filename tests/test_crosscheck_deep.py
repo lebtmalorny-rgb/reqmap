@@ -16,7 +16,11 @@ from reqmap.export_deep_markdown import write_deep_markdown
 from reqmap.export_deep_xlsx import write_deep_xlsx
 from reqmap.models import AnalysisState
 from tests.test_export_deep_json import deep_run
-from tests.test_export_deep_markdown import problematic_run
+from tests.test_export_deep_markdown import (
+    LINE_BOUNDARIES,
+    line_boundary_run,
+    problematic_run,
+)
 
 
 def _artifacts(tmp_path: Path, run=None):
@@ -241,6 +245,19 @@ def test_deep_crosscheck_accepts_failed_preflight_empty_graph_artifacts(
     run, json_path, xlsx_path, markdown_path = _artifacts(
         tmp_path,
         _failed_preflight_run(),
+    )
+
+    assert crosscheck_deep(run, json_path, xlsx_path, markdown_path) == ()
+
+
+@pytest.mark.parametrize("separator", LINE_BOUNDARIES)
+def test_deep_crosscheck_accepts_canonical_unicode_line_boundaries(
+    tmp_path: Path,
+    separator: str,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(
+        tmp_path,
+        line_boundary_run(separator),
     )
 
     assert crosscheck_deep(run, json_path, xlsx_path, markdown_path) == ()

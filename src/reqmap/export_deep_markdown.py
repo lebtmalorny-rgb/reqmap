@@ -416,4 +416,7 @@ def _cell(value: object) -> str:
         .replace("\r\n", "<br>")
         .replace("\r", "<br>")
         .replace("\n", "<br>")
+        .replace("\u0085", "<br>")
+        .replace("\u2028", "<br>")
+        .replace("\u2029", "<br>")
     )

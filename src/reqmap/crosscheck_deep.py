@@ -238,7 +238,7 @@ def _parse_markdown_stream(
     ],
     bool,
 ]:
-    lines = text.splitlines()
+    lines = text.split("\n")
     tokens: list[tuple[str, object]] = []
     tables: list[
         tuple[
@@ -663,6 +663,9 @@ def _markdown_cell(value: object) -> str:
         .replace("\r\n", "<br>")
         .replace("\r", "<br>")
         .replace("\n", "<br>")
+        .replace("\u0085", "<br>")
+        .replace("\u2028", "<br>")
+        .replace("\u2029", "<br>")
     )
 
 
