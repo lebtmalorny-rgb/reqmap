@@ -6,6 +6,8 @@ from collections import deque
 from dataclasses import replace
 import hashlib
 import json
+import multiprocessing
+import os
 from pathlib import Path
 import stat
 
@@ -59,6 +61,19 @@ class FakeModel:
         if isinstance(response, Exception):
             raise response
         return response
+
+
+def _analyze_deep_in_child(connection, request, config, text: str) -> None:
+    try:
+        model = FakeModel(_completed_responses(text))
+        run = analyze_deep(request, config, model)
+        connection.send(
+            (run.run_status, tuple(stage for stage, _payload in model.calls))
+        )
+    except BaseException as exc:
+        connection.send(("ERROR", f"{type(exc).__name__}: {exc}"))
+    finally:
+        connection.close()
 
 
 def _config(
@@ -640,6 +655,51 @@ def test_deep_resume_recomputes_when_checkpoint_integrity_seal_is_unsafe(
 
     assert resumed.requirements[0].analysis_state is AnalysisState.COMPLETED
     assert [stage for stage, _ in model.calls] == ["decomposition", "deep_mapping"]
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo")
+    or "fork" not in multiprocessing.get_all_start_methods(),
+    reason="requires POSIX FIFO and a bounded forked child",
+)
+@pytest.mark.parametrize("artifact", ("checkpoint", "seal"))
+def test_deep_resume_rejects_fifo_without_blocking(
+    tmp_path: Path, artifact: str
+) -> None:
+    config = _signed_config(tmp_path)
+    text = "Создание сервера через Nova API"
+    request = _request(tmp_path, text)
+    analyze_deep(request, config, FakeModel(_completed_responses(text)))
+    checkpoint = _checkpoint(request, "REQ-0001")
+    target = checkpoint if artifact == "checkpoint" else checkpoint.with_suffix(".sha256")
+    target.unlink()
+    os.mkfifo(target, mode=0o600)
+
+    context = multiprocessing.get_context("fork")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_analyze_deep_in_child,
+        args=(sender, request, config, text),
+    )
+    process.start()
+    sender.close()
+    process.join(timeout=2)
+    blocked = process.is_alive()
+    if blocked:
+        process.terminate()
+        process.join(timeout=1)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=1)
+    try:
+        assert not blocked, f"analyze_deep blocked while opening FIFO {artifact}"
+        assert receiver.poll(0.5)
+        assert receiver.recv() == (
+            "PARTIAL",
+            ("decomposition", "deep_mapping"),
+        )
+    finally:
+        receiver.close()
 
 
 def test_valid_second_requirement_resumes_with_source_prefix_placeholders(

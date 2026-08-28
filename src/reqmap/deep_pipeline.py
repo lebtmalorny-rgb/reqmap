@@ -882,6 +882,8 @@ def _checkpoint_seal_path(path: Path) -> Path:
 
 def _read_checkpoint_text(path: Path) -> str:
     flags = os.O_RDONLY
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(path, flags)
