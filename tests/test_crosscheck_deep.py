@@ -1,5 +1,6 @@
 """Independent deep JSON/XLSX/Markdown cross-artifact verification."""
 
+from dataclasses import replace
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -7,9 +8,11 @@ import pytest
 
 import reqmap.crosscheck_deep as crosscheck_module
 from reqmap.crosscheck_deep import crosscheck_deep
+from reqmap.deep_aggregation import aggregate_deep_groups
 from reqmap.export_deep_json import write_deep_canonical_json
 from reqmap.export_deep_markdown import write_deep_markdown
 from reqmap.export_deep_xlsx import write_deep_xlsx
+from reqmap.models import AnalysisState
 from tests.test_export_deep_json import deep_run
 from tests.test_export_deep_markdown import problematic_run
 
@@ -56,8 +59,99 @@ def _replace_semantic_cell(
     raise AssertionError(f"row {row_id} not found under {heading}")
 
 
+def _swap_summary_tables(text: str) -> str:
+    lines = text.splitlines()
+    summary = lines.index("## Сводка")
+    next_section = next(
+        index for index in range(summary + 1, len(lines))
+        if lines[index].startswith("## ")
+    )
+    ranges: list[tuple[int, int]] = []
+    index = summary + 1
+    while index < next_section:
+        if not lines[index].startswith("| "):
+            index += 1
+            continue
+        start = index
+        index += 2
+        while index < next_section and lines[index].startswith("| "):
+            index += 1
+        ranges.append((start, index))
+    assert len(ranges) == 2
+    (first_start, first_end), (second_start, second_end) = ranges
+    swapped = (
+        lines[:first_start]
+        + lines[second_start:second_end]
+        + lines[first_end:second_start]
+        + lines[first_start:first_end]
+        + lines[second_end:]
+    )
+    return "\n".join(swapped) + "\n"
+
+
+def _failed_preflight_run():
+    run = deep_run()
+    skipped = replace(
+        run.requirements[0],
+        analysis_state=AnalysisState.SKIPPED,
+        support_status=None,
+        atom_results=(),
+        responsibility_ids=(),
+        procedure_graph_ids=(),
+        diagnostics=("SKIPPED: deep preflight failed",),
+    )
+    return replace(
+        run,
+        run_status="FAILED",
+        requirements=(skipped,),
+        groups=aggregate_deep_groups((skipped,), ()),
+        responsibility_records=(),
+        procedure_graphs=(),
+        evidence=(),
+        diagnostics=("SNAPSHOT_UNTRUSTED: signature verification failed",),
+    )
+
+
 def test_deep_crosscheck_accepts_consistent_artifacts(tmp_path: Path) -> None:
     run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+
+    assert crosscheck_deep(run, json_path, xlsx_path, markdown_path) == ()
+
+
+def test_deep_crosscheck_rejects_unknown_non_table_markdown_content(
+    tmp_path: Path,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+    markdown_path.write_text(
+        markdown_path.read_text(encoding="utf-8")
+        + "PRIVATE api_key=top-secret-api-key /Users/private/input.xlsx\n",
+        encoding="utf-8",
+    )
+
+    assert "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE" in _codes(
+        crosscheck_deep(run, json_path, xlsx_path, markdown_path)
+    )
+
+
+def test_deep_crosscheck_rejects_reordered_summary_tables(tmp_path: Path) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+    markdown_path.write_text(
+        _swap_summary_tables(markdown_path.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+
+    assert "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE" in _codes(
+        crosscheck_deep(run, json_path, xlsx_path, markdown_path)
+    )
+
+
+def test_deep_crosscheck_accepts_failed_preflight_empty_graph_artifacts(
+    tmp_path: Path,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(
+        tmp_path,
+        _failed_preflight_run(),
+    )
 
     assert crosscheck_deep(run, json_path, xlsx_path, markdown_path) == ()
 

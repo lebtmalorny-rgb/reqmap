@@ -190,7 +190,8 @@ def _check_markdown(run: DeepRunResult, payload: bytes, issues: list[CrosscheckI
             "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE",
             "Порядок или набор Markdown-разделов не совпадает с контрактом.",
         )
-    tables, malformed = _parse_markdown_tables(text)
+    table_sequence, malformed = _parse_markdown_tables(text)
+    tables = dict(table_sequence)
     if malformed:
         _issue(
             issues,
@@ -198,12 +199,13 @@ def _check_markdown(run: DeepRunResult, payload: bytes, issues: list[CrosscheckI
             "Markdown-таблицы имеют неканоническую структуру или escaping.",
         )
     expected = _markdown_expected_tables(run)
-    expected_keys = set(expected)
-    if set(tables) != expected_keys:
+    expected_keys = tuple(expected)
+    actual_keys = tuple(key for key, _rows in table_sequence)
+    if actual_keys != expected_keys:
         _issue(
             issues,
             "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE",
-            "Набор Markdown-таблиц не совпадает с контрактом.",
+            "Порядок или набор Markdown-таблиц не совпадает с контрактом.",
         )
     for key, (code, rows) in expected.items():
         actual = tables.get(key)
@@ -216,16 +218,38 @@ def _check_markdown(run: DeepRunResult, payload: bytes, issues: list[CrosscheckI
             "CROSSCHECK_DEEP_MARKDOWN_SUMMARY",
             "Статус запуска Markdown не совпадает с DeepRunResult.",
         )
+    actual_skeleton = tuple(
+        line for line in text.splitlines()
+        if line and not line.startswith("|")
+    )
+    if actual_skeleton != _expected_markdown_skeleton(run):
+        _issue(
+            issues,
+            "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE",
+            "Вне таблиц Markdown содержит неизвестные, лишние или переставленные строки.",
+        )
 
 
 def _parse_markdown_tables(
     text: str,
 ) -> tuple[
-    dict[tuple[str, tuple[str, ...]], tuple[tuple[str, ...], ...]],
+    tuple[
+        tuple[
+            tuple[str, tuple[str, ...]],
+            tuple[tuple[str, ...], ...],
+        ],
+        ...,
+    ],
     bool,
 ]:
     lines = text.splitlines()
-    tables: dict[tuple[str, tuple[str, ...]], tuple[tuple[str, ...], ...]] = {}
+    tables: list[
+        tuple[
+            tuple[str, tuple[str, ...]],
+            tuple[tuple[str, ...], ...],
+        ]
+    ] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
     current_heading = ""
     malformed = False
     index = 0
@@ -236,6 +260,8 @@ def _parse_markdown_tables(
             index += 1
             continue
         if not line.startswith("| "):
+            if line.startswith("|"):
+                malformed = True
             index += 1
             continue
         try:
@@ -263,11 +289,38 @@ def _parse_markdown_tables(
                 rows.append(row)
             index += 1
         key = (current_heading, headers)
-        if key in tables or not current_heading:
+        if key in seen or not current_heading:
             malformed = True
-        else:
-            tables[key] = tuple(rows)
-    return tables, malformed
+        seen.add(key)
+        tables.append((key, tuple(rows)))
+    return tuple(tables), malformed
+
+
+def _expected_markdown_skeleton(run: DeepRunResult) -> tuple[str, ...]:
+    marker = json.dumps(
+        _counts(run), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    return (
+        "# Глубокий отчёт reqmap",
+        f"<!-- reqmap-counts:{marker} -->",
+        "## Сводка",
+        f"Статус запуска: `{run.run_status}`",
+        "### Проверенные метаданные запуска",
+        "## Требования и группы",
+        "## Атомарные утверждения",
+        "## Контуры ответственности",
+        "### Количество записей по контурам",
+        "## Executor → target",
+        "## Версии и область применимости",
+        "## Процедуры",
+        "## Каталог evidence",
+        "## Нормализованная диагностика",
+        "## Конфликты evidence",
+        "## Предупреждения procedures и rollback",
+        "Диагностики `procedure_gap` и `rollback_unverified` не заменяются придуманными шагами.",
+        "## Проблемные требования и атомы",
+        "## Ошибки обработки",
+    )
 
 
 def _table_cells(line: str) -> tuple[str, ...]:
@@ -427,6 +480,8 @@ def _markdown_expected_tables(
         )
         for item in run.responsibility_records
     )
+    if not executor_rows:
+        executor_rows = (("—", "—", "—", "—", "—", "—"),)
     version_headers = (
         "Record ID", "Phase", "Source release", "Target release", "Kolla-Ansible",
         "Host profile", "Constraint",
@@ -440,6 +495,8 @@ def _markdown_expected_tables(
         )
         for item in run.responsibility_records
     )
+    if not version_rows:
+        version_rows = (("—", "—", "—", "—", "—", "—", "—"),)
     procedure_headers = (
         "Graph ID", "Requirement ID", "Template ID", "Graph diagnostics",
         "Step ID", "Phase", "Contour", "Executor", "Target", "Action",
