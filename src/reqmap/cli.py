@@ -7,13 +7,20 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import sys
 import traceback
 
 from reqmap import __version__
-from reqmap.config import AppConfig, load_config
+from reqmap.config import AnalysisProfile, AppConfig, load_config
 from reqmap.crosscheck import CrosscheckIssue, crosscheck
+from reqmap.crosscheck_deep import crosscheck_deep
+from reqmap.deep_models import DeepRunResult
+from reqmap.deep_pipeline import analyze_deep
 from reqmap.errors import ReqmapError
+from reqmap.export_deep_json import write_deep_canonical_json
+from reqmap.export_deep_markdown import write_deep_markdown
+from reqmap.export_deep_xlsx import write_deep_xlsx
 from reqmap.export_json import symlink_component, write_canonical_json
 from reqmap.export_markdown import write_markdown
 from reqmap.export_xlsx import write_xlsx
@@ -21,8 +28,10 @@ from reqmap.ids import generated_requirement_id
 from reqmap.input_text import load_text
 from reqmap.input_xlsx import load_xlsx_bytes
 from reqmap.knowledge import load_knowledge
+from reqmap.knowledge_v2 import load_knowledge_v2
 from reqmap.llm import OpenAICompatibleClient
-from reqmap.manifest import RunLogger, write_manifest
+from reqmap.manifest import RunLogger, write_deep_manifest, write_manifest
+from reqmap.migrate_v2 import migrate_v1_to_v2
 from reqmap.models import (
     AnalysisRequest,
     AnalysisState,
@@ -31,6 +40,7 @@ from reqmap.models import (
     SourceCoordinate,
 )
 from reqmap.pipeline import analyze
+from reqmap.output_safety import strict_json_object
 
 
 _FINAL_ARTIFACTS = (
@@ -42,6 +52,8 @@ _FINAL_ARTIFACTS = (
 )
 _PREFLIGHT_ARTIFACTS = ("run.jsonl", "manifest.json")
 _STATUS_EXIT_CODES = {"SUCCESS": 0, "PARTIAL": 4, "FAILED": 6}
+_MAX_METADATA_BYTES = 1024 * 1024
+_MAX_DIAGNOSTIC_ARTIFACT_BYTES = 4 * 1024 * 1024
 
 
 class _UsageError(Exception):
@@ -124,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
         return _analyze_command(parsed)
     if parsed.command == "knowledge" and parsed.knowledge_command == "validate":
         return _knowledge_validate_command(parsed)
+    if parsed.command == "knowledge" and parsed.knowledge_command == "migrate-v1":
+        return _knowledge_migrate_command(parsed)
     print("Ошибка: не выбрана команда reqmap.", file=sys.stderr)
     return 2
 
@@ -208,6 +222,34 @@ def _build_parser() -> _RussianArgumentParser:
         help="Путь к snapshot базы знаний",
     )
     validate_parser.add_argument(
+        "--allowed-signers",
+        type=Path,
+        help="Путь к доверенному allowed_signers для schema v2",
+    )
+    validate_parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Показать traceback внутренней ошибки",
+    )
+    migrate_parser = knowledge_subparsers.add_parser(
+        "migrate-v1",
+        help="Создать unsigned draft schema v2 из snapshot v1",
+        add_help=False,
+    )
+    _localize_parser(migrate_parser)
+    migrate_parser.add_argument(
+        "--source",
+        required=True,
+        type=Path,
+        help="Путь к исходному snapshot schema v1",
+    )
+    migrate_parser.add_argument(
+        "--output",
+        required=True,
+        type=Path,
+        help="Каталог нового unsigned draft schema v2",
+    )
+    migrate_parser.add_argument(
         "--debug",
         action="store_true",
         help="Показать traceback внутренней ошибки",
@@ -241,7 +283,16 @@ def _analyze_command(arguments: argparse.Namespace) -> int:
         return 2
 
     try:
-        run = analyze(request, config, model)
+        if config.analysis_profile is AnalysisProfile.DEEP:
+            run = analyze_deep(request, config, model)
+            if type(run) is not DeepRunResult:
+                raise TypeError("deep pipeline вернул неканонический DeepRunResult")
+        elif config.analysis_profile is AnalysisProfile.LEGACY:
+            run = analyze(request, config, model)
+            if type(run) is not RunResult:
+                raise TypeError("legacy pipeline вернул неканонический RunResult")
+        else:
+            raise TypeError("analysis_profile не является canonical AnalysisProfile")
     except Exception as exc:
         _report_exception(
             "Анализ требований завершился внутренней ошибкой.",
@@ -250,32 +301,112 @@ def _analyze_command(arguments: argparse.Namespace) -> int:
         )
         return 6
 
-    if run.metadata.get("preflight_ok") is False:
-        _print_run_summary(run)
+    if type(run) is RunResult and run.metadata.get("preflight_ok") is False:
+        _print_run_summary(run, AnalysisProfile.LEGACY)
         if run.metadata.get("preflight_artifacts_written") is True:
+            _print_artifacts(request.output_dir, _PREFLIGHT_ARTIFACTS)
+        return 3
+    if type(run) is DeepRunResult and _is_deep_failed_preflight(run, request):
+        _print_run_summary(run, AnalysisProfile.DEEP)
+        if _deep_preflight_artifacts_are_current(run, request.output_dir):
             _print_artifacts(request.output_dir, _PREFLIGHT_ARTIFACTS)
         return 3
 
     try:
-        issues = _publish_artifacts(run, request.output_dir, config)
+        if type(run) is DeepRunResult:
+            issues = _publish_deep_artifacts(run, request.output_dir, config)
+        else:
+            issues = _publish_artifacts(run, request.output_dir, config)
     except Exception as exc:
         _report_exception(
             "Не удалось создать или проверить выходные артефакты.",
             exc,
             debug,
         )
-        _record_export_failure(run, request.output_dir, config, exc)
-        _print_run_summary(run)
+        if type(run) is DeepRunResult:
+            _record_deep_export_failure(run, request.output_dir, config, exc)
+            profile = AnalysisProfile.DEEP
+        else:
+            _record_export_failure(run, request.output_dir, config, exc)
+            profile = AnalysisProfile.LEGACY
+        _print_run_summary(run, profile)
         _print_artifacts(request.output_dir, _FINAL_ARTIFACTS)
         return 5
 
-    _print_run_summary(run)
+    profile = (
+        AnalysisProfile.DEEP
+        if type(run) is DeepRunResult
+        else AnalysisProfile.LEGACY
+    )
+    _print_run_summary(run, profile)
     _print_artifacts(request.output_dir, _FINAL_ARTIFACTS)
     if issues:
         for issue in issues:
             print(f"Ошибка {issue.code}: {issue.message_ru}", file=sys.stderr)
         return 5
     return _STATUS_EXIT_CODES[run.run_status]
+
+
+def _is_deep_failed_preflight(
+    run: DeepRunResult,
+    request: AnalysisRequest,
+) -> bool:
+    return (
+        run.run_status == "FAILED"
+        and not run.responsibility_records
+        and not run.procedure_graphs
+        and not run.evidence
+        and tuple(
+            item.requirement.requirement_id for item in run.requirements
+        )
+        == tuple(item.requirement_id for item in request.requirements)
+        and all(
+            item.analysis_state is AnalysisState.SKIPPED
+            and item.support_status is None
+            and not item.atom_results
+            and not item.responsibility_ids
+            and not item.procedure_graph_ids
+            for item in run.requirements
+        )
+    )
+
+
+def _deep_preflight_artifacts_are_current(
+    run: DeepRunResult,
+    output: Path,
+) -> bool:
+    try:
+        log = _strict_regular_bytes(
+            output / "run.jsonl", _MAX_DIAGNOSTIC_ARTIFACT_BYTES
+        )
+        manifest_bytes = _strict_regular_bytes(
+            output / "manifest.json", _MAX_DIAGNOSTIC_ARTIFACT_BYTES
+        )
+        record = strict_json_object(log.decode("utf-8"))
+        manifest = strict_json_object(manifest_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return False
+    return (
+        record.get("event") == "preflight_failed"
+        and record.get("run_id") == run.run_id
+        and record.get("run_status") == "FAILED"
+        and record.get("diagnostics") == list(run.diagnostics)
+        and record.get("requirements")
+        == [
+            {
+                "requirement_id": item.requirement.requirement_id,
+                "analysis_state": item.analysis_state.value,
+                "support_status": None,
+                "diagnostics": list(item.diagnostics),
+            }
+            for item in run.requirements
+        ]
+        and manifest.get("run_id") == run.run_id
+        and manifest.get("run_status") == "FAILED"
+        and manifest.get("analysis_profile") == "deep"
+        and manifest.get("artifact_hashes")
+        == {"run.jsonl": hashlib.sha256(log).hexdigest()}
+    )
 
 
 def _analysis_request(
@@ -436,6 +567,52 @@ def _publish_artifacts(
     return issues
 
 
+def _publish_deep_artifacts(
+    run: DeepRunResult,
+    output: Path,
+    config: AppConfig,
+) -> tuple[CrosscheckIssue, ...]:
+    paths = {name: output / name for name in _FINAL_ARTIFACTS}
+    logger = RunLogger(
+        paths["run.jsonl"],
+        redacted_values=_redacted_values(config),
+    )
+    logger.write(
+        "analysis_finished",
+        "info",
+        "Глубокий предметный анализ требований завершён.",
+        run_status=run.run_status,
+        requirements_count=len(run.requirements),
+    )
+    artifact_hashes = {
+        "result.json": write_deep_canonical_json(run, paths["result.json"]),
+        "result.xlsx": write_deep_xlsx(run, paths["result.xlsx"]),
+        "report.md": write_deep_markdown(run, paths["report.md"]),
+    }
+    issues = crosscheck_deep(
+        run,
+        paths["result.json"],
+        paths["result.xlsx"],
+        paths["report.md"],
+    )
+    if issues:
+        logger.write(
+            "crosscheck_failed",
+            "error",
+            "Обнаружены расхождения deep-артефактов.",
+            issue_codes=[item.code for item in issues],
+        )
+    else:
+        logger.write(
+            "artifacts_verified",
+            "info",
+            "Deep JSON, XLSX и Markdown согласованы с canonical DeepRunResult.",
+        )
+    artifact_hashes["run.jsonl"] = _sha256_file(paths["run.jsonl"])
+    write_deep_manifest(run, artifact_hashes, paths["manifest.json"])
+    return issues
+
+
 def _record_export_failure(
     run: RunResult,
     output: Path,
@@ -463,6 +640,36 @@ def _record_export_failure(
         return
 
 
+def _record_deep_export_failure(
+    run: DeepRunResult,
+    output: Path,
+    config: AppConfig,
+    error: Exception,
+) -> None:
+    paths = {name: output / name for name in _FINAL_ARTIFACTS}
+    try:
+        RunLogger(
+            paths["run.jsonl"],
+            redacted_values=_redacted_values(config),
+        ).write(
+            "export_failed",
+            "error",
+            "Создание deep-артефактов завершилось ошибкой.",
+            error_type=type(error).__name__,
+        )
+        hashes = {
+            name: _sha256_file(path)
+            for name, path in paths.items()
+            if name != "manifest.json"
+            and symlink_component(path) is None
+            and path.is_file()
+            and not path.is_symlink()
+        }
+        write_deep_manifest(run, hashes, paths["manifest.json"])
+    except (OSError, ValueError, ReqmapError):
+        return
+
+
 def _redacted_values(config: AppConfig) -> tuple[str, ...]:
     api_key = config.model.api_key
     return () if not api_key else (api_key,)
@@ -470,7 +677,18 @@ def _redacted_values(config: AppConfig) -> tuple[str, ...]:
 
 def _knowledge_validate_command(arguments: argparse.Namespace) -> int:
     try:
-        knowledge = load_knowledge(arguments.path)
+        schema_version = _knowledge_schema_version(arguments.path)
+        if schema_version == 1:
+            knowledge = load_knowledge(arguments.path)
+        else:
+            if arguments.allowed_signers is None:
+                raise _UsageError(
+                    "--allowed-signers обязателен для knowledge schema v2."
+                )
+            knowledge = load_knowledge_v2(
+                arguments.path,
+                arguments.allowed_signers,
+            )
     except Exception as exc:
         _report_exception(
             "Проверка базы знаний завершилась ошибкой.",
@@ -478,18 +696,115 @@ def _knowledge_validate_command(arguments: argparse.Namespace) -> int:
             bool(arguments.debug),
         )
         return 2
+    if schema_version == 1:
+        print(
+            "База знаний проверена: "
+            f"schema=1, release={knowledge.release}, "
+            f"components={len(knowledge.components)}, "
+            f"capabilities={len(knowledge.capabilities)}, "
+            f"evidence={len(knowledge.evidence)}, "
+            f"SHA-256={knowledge.snapshot_sha256}."
+        )
+    else:
+        trust = knowledge.trust
+        assert trust is not None
+        print(
+            "База знаний проверена: "
+            f"schema=2, release={knowledge.base_release}, "
+            f"snapshot={knowledge.snapshot_id}, "
+            f"components={len(knowledge.components)}, "
+            f"capabilities={len(knowledge.capabilities)}, "
+            f"actions={len(knowledge.actions)}, "
+            f"evidence={len(knowledge.evidence)}, "
+            f"trust=verified, key_id={trust.key_id}, "
+            f"manifest_SHA-256={trust.manifest_sha256}."
+        )
+    return 0
+
+
+def _knowledge_schema_version(path: Path) -> int:
+    payload = _strict_regular_bytes(path / "metadata.json", _MAX_METADATA_BYTES)
+    try:
+        metadata = strict_json_object(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
+        raise _UsageError("metadata.json должен быть строгим UTF-8 JSON object.") from exc
+    if "knowledge_schema_version" not in metadata:
+        return 1
+    marker = metadata["knowledge_schema_version"]
+    if type(marker) is not int:
+        raise _UsageError("knowledge_schema_version должен быть целым числом.")
+    if marker != 2:
+        raise _UsageError("knowledge_schema_version не поддерживается.")
+    return 2
+
+
+def _strict_regular_bytes(path: Path, maximum: int) -> bytes:
+    if symlink_component(path) is not None:
+        raise _UsageError("Путь к metadata или артефакту не может содержать symlink.")
+    try:
+        before = os.lstat(path)
+    except OSError as exc:
+        raise _UsageError("Обязательный обычный файл недоступен.") from exc
+    if not stat.S_ISREG(before.st_mode):
+        raise _UsageError("Ожидался обычный файл.")
+    if before.st_size > maximum:
+        raise _UsageError("Файл превышает допустимый размер.")
+    flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
+    descriptor = os.open(path, flags)
+    try:
+        current = os.fstat(descriptor)
+        if not stat.S_ISREG(current.st_mode):
+            raise _UsageError("Ожидался обычный файл.")
+        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+            raise _UsageError("Файл был заменён во время безопасного чтения.")
+        if current.st_size > maximum:
+            raise _UsageError("Файл превышает допустимый размер.")
+        chunks: list[bytes] = []
+        remaining = maximum + 1
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        if len(payload) > maximum:
+            raise _UsageError("Файл превышает допустимый размер.")
+        return payload
+    finally:
+        os.close(descriptor)
+
+
+def _knowledge_migrate_command(arguments: argparse.Namespace) -> int:
+    try:
+        report = migrate_v1_to_v2(arguments.source, arguments.output)
+    except Exception as exc:
+        _report_exception(
+            "Миграция базы знаний завершилась ошибкой.",
+            exc,
+            bool(arguments.debug),
+        )
+        return 2
     print(
-        "База знаний OpenStack "
-        f"{knowledge.release} проверена: "
-        f"components={len(knowledge.components)}, "
-        f"capabilities={len(knowledge.capabilities)}, "
-        f"evidence={len(knowledge.evidence)}, "
-        f"SHA-256={knowledge.snapshot_sha256}."
+        "Создан unsigned draft schema=2: "
+        f"components={report.components}, "
+        f"capabilities={report.capabilities}, "
+        f"evidence={report.evidence}, "
+        f"inferred_actions={report.inferred_actions}, "
+        f"destination={report.output_path.resolve()}."
     )
     return 0
 
 
-def _print_run_summary(run: RunResult) -> None:
+def _print_run_summary(
+    run: RunResult | DeepRunResult,
+    profile: AnalysisProfile,
+) -> None:
+    print(f"Профиль анализа: {profile.value}")
     print(f"Статус запуска: {run.run_status}")
     incomplete = tuple(
         item.requirement.requirement_id
@@ -498,6 +813,28 @@ def _print_run_summary(run: RunResult) -> None:
     )
     if incomplete:
         print(f"Незавершённые требования: {', '.join(incomplete)}")
+    if type(run) is DeepRunResult:
+        counts = _deep_diagnostic_counts(run)
+        print(f"procedure_gap: {counts['procedure_gap']}")
+        print(f"evidence_conflict: {counts['evidence_conflict']}")
+
+
+def _deep_diagnostic_counts(run: DeepRunResult) -> dict[str, int]:
+    diagnostics = [*run.diagnostics]
+    for result in run.requirements:
+        diagnostics.extend(result.diagnostics)
+        for atom in result.atom_results:
+            diagnostics.extend(atom.diagnostics)
+    for record in run.responsibility_records:
+        diagnostics.extend(record.diagnostics)
+    for graph in run.procedure_graphs:
+        diagnostics.extend(graph.diagnostics)
+    result = {"procedure_gap": 0, "evidence_conflict": 0}
+    for diagnostic in diagnostics:
+        code = diagnostic.partition(":")[0].strip().casefold()
+        if code in result:
+            result[code] += 1
+    return result
 
 
 def _print_artifacts(output: Path, names: tuple[str, ...]) -> None:

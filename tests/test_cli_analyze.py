@@ -150,6 +150,7 @@ def test_cli_multiple_requirements_invokes_one_pipeline_and_writes_artifacts(
     }
     assert {item.name for item in output.iterdir() if item.is_file()} == names
     terminal = capsys.readouterr()
+    assert "Профиль анализа: legacy" in terminal.out
     for name in names:
         assert str((output / name).resolve()) in terminal.out
     assert terminal.out.count("SHA-256") == 5
