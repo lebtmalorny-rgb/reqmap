@@ -15,10 +15,11 @@ from reqmap import __version__
 from reqmap.config import AnalysisProfile, AppConfig, load_config
 from reqmap.crosscheck import CrosscheckIssue, crosscheck
 from reqmap.crosscheck_deep import crosscheck_deep
+from reqmap.deep_aggregation import aggregate_deep_groups
 from reqmap.deep_models import DeepRunResult
 from reqmap.deep_pipeline import analyze_deep
 from reqmap.errors import ReqmapError
-from reqmap.export_deep_json import write_deep_canonical_json
+from reqmap.export_deep_json import validate_deep_run_result, write_deep_canonical_json
 from reqmap.export_deep_markdown import write_deep_markdown
 from reqmap.export_deep_xlsx import write_deep_xlsx
 from reqmap.export_json import symlink_component, write_canonical_json
@@ -30,7 +31,12 @@ from reqmap.input_xlsx import load_xlsx_bytes
 from reqmap.knowledge import load_knowledge
 from reqmap.knowledge_v2 import load_knowledge_v2
 from reqmap.llm import OpenAICompatibleClient
-from reqmap.manifest import RunLogger, write_deep_manifest, write_manifest
+from reqmap.manifest import (
+    RunLogger,
+    deep_preflight_artifact_bytes,
+    write_deep_manifest,
+    write_manifest,
+)
 from reqmap.migrate_v2 import migrate_v1_to_v2
 from reqmap.models import (
     AnalysisRequest,
@@ -40,7 +46,6 @@ from reqmap.models import (
     SourceCoordinate,
 )
 from reqmap.pipeline import analyze
-from reqmap.output_safety import strict_json_object
 
 
 _FINAL_ARTIFACTS = (
@@ -270,6 +275,7 @@ def _localize_parser(parser: argparse.ArgumentParser) -> None:
 
 def _analyze_command(arguments: argparse.Namespace) -> int:
     debug = bool(arguments.debug)
+    deep_failed_preflight = False
     try:
         config = load_config(arguments.config, os.environ)
         request = _analysis_request(arguments, config)
@@ -287,6 +293,12 @@ def _analyze_command(arguments: argparse.Namespace) -> int:
             run = analyze_deep(request, config, model)
             if type(run) is not DeepRunResult:
                 raise TypeError("deep pipeline вернул неканонический DeepRunResult")
+            deep_failed_preflight = _is_deep_failed_preflight(run, request)
+            if (
+                _has_deep_failed_preflight_payload_shape(run)
+                and not deep_failed_preflight
+            ):
+                raise ValueError("deep failed-preflight result неканоничен")
         elif config.analysis_profile is AnalysisProfile.LEGACY:
             run = analyze(request, config, model)
             if type(run) is not RunResult:
@@ -306,7 +318,7 @@ def _analyze_command(arguments: argparse.Namespace) -> int:
         if run.metadata.get("preflight_artifacts_written") is True:
             _print_artifacts(request.output_dir, _PREFLIGHT_ARTIFACTS)
         return 3
-    if type(run) is DeepRunResult and _is_deep_failed_preflight(run, request):
+    if type(run) is DeepRunResult and deep_failed_preflight:
         _print_run_summary(run, AnalysisProfile.DEEP)
         if _deep_preflight_artifacts_are_current(run, request.output_dir):
             _print_artifacts(request.output_dir, _PREFLIGHT_ARTIFACTS)
@@ -351,15 +363,32 @@ def _is_deep_failed_preflight(
     run: DeepRunResult,
     request: AnalysisRequest,
 ) -> bool:
+    validate_deep_run_result(run)
     return (
         run.run_status == "FAILED"
         and not run.responsibility_records
         and not run.procedure_graphs
         and not run.evidence
-        and tuple(
-            item.requirement.requirement_id for item in run.requirements
+        and tuple(item.requirement for item in run.requirements)
+        == request.requirements
+        and run.groups == aggregate_deep_groups(run.requirements, ())
+        and all(
+            item.analysis_state is AnalysisState.SKIPPED
+            and item.support_status is None
+            and not item.atom_results
+            and not item.responsibility_ids
+            and not item.procedure_graph_ids
+            for item in run.requirements
         )
-        == tuple(item.requirement_id for item in request.requirements)
+    )
+
+
+def _has_deep_failed_preflight_payload_shape(run: DeepRunResult) -> bool:
+    return (
+        run.run_status == "FAILED"
+        and not run.responsibility_records
+        and not run.procedure_graphs
+        and not run.evidence
         and all(
             item.analysis_state is AnalysisState.SKIPPED
             and item.support_status is None
@@ -382,31 +411,10 @@ def _deep_preflight_artifacts_are_current(
         manifest_bytes = _strict_regular_bytes(
             output / "manifest.json", _MAX_DIAGNOSTIC_ARTIFACT_BYTES
         )
-        record = strict_json_object(log.decode("utf-8"))
-        manifest = strict_json_object(manifest_bytes.decode("utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError):
+        expected_log, expected_manifest = deep_preflight_artifact_bytes(run)
+    except (OSError, UnicodeDecodeError, ValueError, _UsageError):
         return False
-    return (
-        record.get("event") == "preflight_failed"
-        and record.get("run_id") == run.run_id
-        and record.get("run_status") == "FAILED"
-        and record.get("diagnostics") == list(run.diagnostics)
-        and record.get("requirements")
-        == [
-            {
-                "requirement_id": item.requirement.requirement_id,
-                "analysis_state": item.analysis_state.value,
-                "support_status": None,
-                "diagnostics": list(item.diagnostics),
-            }
-            for item in run.requirements
-        ]
-        and manifest.get("run_id") == run.run_id
-        and manifest.get("run_status") == "FAILED"
-        and manifest.get("analysis_profile") == "deep"
-        and manifest.get("artifact_hashes")
-        == {"run.jsonl": hashlib.sha256(log).hexdigest()}
-    )
+    return log == expected_log and manifest_bytes == expected_manifest
 
 
 def _analysis_request(
@@ -725,7 +733,7 @@ def _knowledge_validate_command(arguments: argparse.Namespace) -> int:
 def _knowledge_schema_version(path: Path) -> int:
     payload = _strict_regular_bytes(path / "metadata.json", _MAX_METADATA_BYTES)
     try:
-        metadata = strict_json_object(payload.decode("utf-8"))
+        metadata = _strict_cli_json_object(payload.decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
         raise _UsageError("metadata.json должен быть строгим UTF-8 JSON object.") from exc
     if "knowledge_schema_version" not in metadata:
@@ -756,12 +764,12 @@ def _strict_regular_bytes(path: Path, maximum: int) -> bytes:
         flags |= os.O_NONBLOCK
     descriptor = os.open(path, flags)
     try:
-        current = os.fstat(descriptor)
-        if not stat.S_ISREG(current.st_mode):
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
             raise _UsageError("Ожидался обычный файл.")
-        if (current.st_dev, current.st_ino) != (before.st_dev, before.st_ino):
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
             raise _UsageError("Файл был заменён во время безопасного чтения.")
-        if current.st_size > maximum:
+        if opened.st_size > maximum:
             raise _UsageError("Файл превышает допустимый размер.")
         chunks: list[bytes] = []
         remaining = maximum + 1
@@ -772,11 +780,56 @@ def _strict_regular_bytes(path: Path, maximum: int) -> bytes:
             chunks.append(chunk)
             remaining -= len(chunk)
         payload = b"".join(chunks)
+        finished = os.fstat(descriptor)
+        opened_state = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_mode,
+            opened.st_size,
+            opened.st_mtime_ns,
+            opened.st_ctime_ns,
+        )
+        finished_state = (
+            finished.st_dev,
+            finished.st_ino,
+            finished.st_mode,
+            finished.st_size,
+            finished.st_mtime_ns,
+            finished.st_ctime_ns,
+        )
+        if not stat.S_ISREG(finished.st_mode) or finished_state != opened_state:
+            raise _UsageError("Файл изменился во время безопасного чтения.")
         if len(payload) > maximum:
             raise _UsageError("Файл превышает допустимый размер.")
         return payload
     finally:
         os.close(descriptor)
+
+
+def _strict_cli_json_object(source: str) -> dict[str, object]:
+    value = json.loads(
+        source,
+        object_pairs_hook=_cli_unique_json_object,
+        parse_constant=_reject_cli_json_constant,
+    )
+    if type(value) is not dict:
+        raise ValueError("Ожидался JSON object")
+    return value
+
+
+def _cli_unique_json_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"Повторяющийся JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_cli_json_constant(value: str) -> object:
+    raise ValueError(f"Недопустимая JSON-константа: {value}")
 
 
 def _knowledge_migrate_command(arguments: argparse.Namespace) -> int:

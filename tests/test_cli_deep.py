@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+import multiprocessing
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,11 +17,16 @@ from reqmap.config import AnalysisProfile, KnowledgeTrustConfig
 from reqmap.crosscheck import CrosscheckIssue
 from reqmap.deep_aggregation import aggregate_deep_groups
 from reqmap.errors import ReqmapError
+from reqmap.export_json import canonical_json_bytes
 from reqmap.manifest import write_deep_preflight_artifacts
 from reqmap.models import AnalysisState
 from tests.deep_factories import signed_v2_snapshot
 from tests.test_export_deep_json import deep_run
 from tests.test_pipeline import config_for
+
+
+def _run_cli_in_fork(arguments: list[str], results) -> None:
+    results.put(cli.main(arguments))
 
 
 def _arguments(output: Path) -> list[str]:
@@ -94,6 +101,7 @@ def _failed_preflight_run():
     run = deep_run()
     skipped = replace(
         run.requirements[0],
+        requirement=cli._requirements_from_arguments(("Создать VM",))[0],
         analysis_state=AnalysisState.SKIPPED,
         support_status=None,
         atom_results=(),
@@ -224,6 +232,77 @@ def test_cli_deep_failed_preflight_reports_only_current_diagnostic_pair(
     terminal = capsys.readouterr().out
     assert "Профиль анализа: deep" in terminal
     assert terminal.count("SHA-256") == 2
+
+
+@pytest.mark.parametrize("mutation", ("groups", "requirement"))
+def test_cli_rejects_malformed_same_class_failed_preflight_without_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    mutation: str,
+) -> None:
+    run = _failed_preflight_run()
+    if mutation == "groups":
+        malformed = replace(run, groups=deep_run().groups)
+    else:
+        requirement = replace(
+            run.requirements[0],
+            requirement=replace(
+                run.requirements[0].requirement,
+                text="Подменённый текст требования с тем же ID",
+            ),
+        )
+        malformed = replace(run, requirements=(requirement,))
+    _install_deep_pipeline(monkeypatch, malformed)
+    output = tmp_path / mutation
+
+    assert cli.main(_arguments(output)) == 6
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("target", "field_path", "replacement"),
+    [
+        ("log", ("level",), "warning"),
+        ("log", ("message_ru",), "Изменённое сообщение"),
+        ("manifest", ("schema_version",), "9.0"),
+        ("manifest", ("input_sha256",), "0" * 64),
+        ("manifest", ("model",), "different-model"),
+        ("manifest", ("release_profile", "host_profile"), "other_os"),
+        ("manifest", ("snapshot_id",), "different-snapshot"),
+        ("manifest", ("knowledge_trust", "key_id"), "different-key"),
+        ("manifest", ("retry_counts", "decomposition"), 99),
+        ("manifest", ("api_key",), "top-secret"),
+    ],
+)
+def test_cli_deep_preflight_rejects_any_noncanonical_diagnostic_pair_value(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    target: str,
+    field_path: tuple[str, ...],
+    replacement: object,
+) -> None:
+    run = _failed_preflight_run()
+    output = tmp_path / f"changed-{target}-{'-'.join(field_path)}"
+    write_deep_preflight_artifacts(run, output)
+    path = output / ("run.jsonl" if target == "log" else "manifest.json")
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    current = payload
+    for key in field_path[:-1]:
+        current = current[key]
+    current[field_path[-1]] = replacement
+    path.write_bytes(canonical_json_bytes(payload))
+    if target == "log":
+        manifest_path = output / "manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["artifact_hashes"]["run.jsonl"] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
+        manifest_path.write_bytes(canonical_json_bytes(manifest))
+    _install_deep_pipeline(monkeypatch, run)
+
+    assert cli.main(_arguments(output)) == 3
+    assert "SHA-256" not in capsys.readouterr().out
 
 
 def test_cli_deep_failed_preflight_does_not_report_stale_pair(
@@ -391,6 +470,9 @@ def test_knowledge_validate_never_falls_back_from_v2_trust_failure(
         b'{"knowledge_schema_version":true}\n',
         b'{"knowledge_schema_version":"2"}\n',
         b'{"knowledge_schema_version":null}\n',
+        b'{"openstack_release":NaN}\n',
+        b'{"openstack_release":Infinity}\n',
+        b'{"openstack_release":-Infinity}\n',
         b'{malformed}\n',
         b" " * (1024 * 1024 + 1),
     ],
@@ -445,6 +527,68 @@ def test_knowledge_validate_rejects_metadata_replacement_during_strict_read(
     monkeypatch.setattr(cli, "load_knowledge", lambda *_args: pytest.fail("loader called"))
 
     assert cli.main(["knowledge", "validate", "--path", str(root)]) == 2
+
+
+def test_knowledge_validate_rejects_same_inode_mutation_during_strict_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "snapshot"
+    root.mkdir()
+    metadata = root / "metadata.json"
+    metadata.write_text('{"unused":1}\n', encoding="utf-8")
+    inode = metadata.stat().st_ino
+    real_read = cli.os.read
+    mutated = False
+
+    def mutate_then_read(descriptor: int, size: int) -> bytes:
+        nonlocal mutated
+        if not mutated:
+            mutated = True
+            metadata.write_text('{}\n', encoding="utf-8")
+            assert metadata.stat().st_ino == inode
+        return real_read(descriptor, size)
+
+    monkeypatch.setattr(cli.os, "read", mutate_then_read)
+    monkeypatch.setattr(cli, "load_knowledge", lambda *_args: pytest.fail("loader called"))
+    monkeypatch.setattr(
+        cli, "load_knowledge_v2", lambda *_args: pytest.fail("v2 loader called")
+    )
+
+    assert cli.main(["knowledge", "validate", "--path", str(root)]) == 2
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo") or "fork" not in multiprocessing.get_all_start_methods(),
+    reason="requires POSIX FIFO and a bounded forked child",
+)
+def test_cli_deep_fifo_substitution_before_publication_returns_five_promptly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "fifo-output"
+    output.mkdir()
+    os.mkfifo(output / "run.jsonl", mode=0o600)
+    _install_deep_pipeline(monkeypatch, deep_run())
+    context = multiprocessing.get_context("fork")
+    results = context.Queue()
+    process = context.Process(
+        target=_run_cli_in_fork,
+        args=(_arguments(output), results),
+    )
+
+    process.start()
+    process.join(timeout=2)
+    blocked = process.is_alive()
+    if blocked:
+        process.terminate()
+        process.join(timeout=1)
+    try:
+        assert not blocked, "CLI blocked while opening substituted run.jsonl FIFO"
+        assert results.get(timeout=1) == 5
+    finally:
+        results.close()
+        process.close()
 
 
 def test_knowledge_migrate_v1_creates_unsigned_draft_and_prints_safe_counts(

@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path
 import re
+import stat
 from urllib.parse import urlsplit, urlunsplit
 
 from reqmap.export_json import (
@@ -117,6 +118,15 @@ def write_deep_manifest(
 
 def write_deep_preflight_artifacts(run: DeepRunResult, output_dir: Path) -> None:
     """Publish only the safe diagnostic pair for a failed deep preflight."""
+    if not isinstance(output_dir, Path):
+        raise ValueError("output_dir must be Path")
+    log_payload, manifest_payload = deep_preflight_artifact_bytes(run)
+    atomic_write_bytes(output_dir / "run.jsonl", log_payload)
+    atomic_write_bytes(output_dir / "manifest.json", manifest_payload)
+
+
+def deep_preflight_artifact_bytes(run: DeepRunResult) -> tuple[bytes, bytes]:
+    """Return the one exact canonical diagnostic pair allowed for ``run``."""
     validate_deep_run_result(run)
     if run.run_status != "FAILED":
         raise ValueError("deep preflight artifacts require a FAILED run")
@@ -131,8 +141,6 @@ def write_deep_preflight_artifacts(run: DeepRunResult, output_dir: Path) -> None
         for item in run.requirements
     ):
         raise ValueError("deep preflight requirements must be skipped without payload")
-    if not isinstance(output_dir, Path):
-        raise ValueError("output_dir must be Path")
     run_diagnostics = _safe_diagnostics(run.diagnostics)
     requirement_diagnostics = tuple(
         _safe_diagnostics(item.diagnostics) for item in run.requirements
@@ -159,8 +167,7 @@ def write_deep_preflight_artifacts(run: DeepRunResult, output_dir: Path) -> None
     log_payload = canonical_json_bytes(record)
     log_hash = hashlib.sha256(log_payload).hexdigest()
     manifest = _deep_manifest_payload(run, {"run.jsonl": log_hash})
-    atomic_write_bytes(output_dir / "run.jsonl", log_payload)
-    atomic_write_json(output_dir / "manifest.json", manifest)
+    return log_payload, canonical_json_bytes(manifest)
 
 
 def _safe_diagnostics(value: tuple[str, ...]) -> list[str]:
@@ -295,11 +302,33 @@ def _append_line(path: Path, payload: bytes) -> None:
             f"Путь журнала не может проходить через symlink: {symlink.name}"
         )
     ensure_secure_directory(path.parent)
+    try:
+        prior = os.lstat(path)
+    except FileNotFoundError:
+        prior = None
+    if prior is not None and not stat.S_ISREG(prior.st_mode):
+        raise ValueError("Путь журнала должен быть обычным файлом.")
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
+    if hasattr(os, "O_NONBLOCK"):
+        flags |= os.O_NONBLOCK
     descriptor = os.open(path, flags, 0o600)
     try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise ValueError("Путь журнала должен быть обычным файлом.")
+        published = os.lstat(path)
+        opened_identity = (opened.st_dev, opened.st_ino)
+        if (
+            not stat.S_ISREG(published.st_mode)
+            or (published.st_dev, published.st_ino) != opened_identity
+            or (
+                prior is not None
+                and (prior.st_dev, prior.st_ino) != opened_identity
+            )
+        ):
+            raise ValueError("Путь журнала был заменён во время открытия.")
         os.fchmod(descriptor, 0o600)
         view = memoryview(payload)
         while view:
