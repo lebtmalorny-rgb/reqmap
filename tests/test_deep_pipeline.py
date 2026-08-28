@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 import stat
@@ -127,6 +128,21 @@ def _checkpoint(request: AnalysisRequest, requirement_id: str) -> Path:
     )
     assert len(matches) == 1
     return matches[0]
+
+
+def _checkpoint_seal(request: AnalysisRequest, requirement_id: str) -> Path:
+    return _checkpoint(request, requirement_id).with_suffix(".sha256")
+
+
+def _write_checkpoint_bytes(
+    checkpoint: Path, payload: bytes, *, update_seal: bool
+) -> None:
+    checkpoint.write_bytes(payload)
+    if update_seal:
+        checkpoint.with_suffix(".sha256").write_text(
+            hashlib.sha256(payload).hexdigest() + "\n",
+            encoding="utf-8",
+        )
 
 
 def _mixed_selection(
@@ -276,6 +292,23 @@ def test_deep_noncanonical_public_inputs_fail_closed_without_model_or_output(
     assert model.preflight_calls == 0
     assert model.calls == []
     assert not (tmp_path / "output").exists()
+
+
+def test_deep_non_path_output_fails_closed_without_model_or_artifacts(
+    tmp_path: Path,
+) -> None:
+    config = _signed_config(tmp_path)
+    unsafe_target = tmp_path / "not-a-path"
+    request = replace(_request(tmp_path), output_dir=str(unsafe_target))
+    model = FakeModel()
+
+    run = analyze_deep(request, config, model)  # type: ignore[arg-type]
+
+    assert run.run_status == "FAILED"
+    assert run.diagnostics[0].startswith("REQUEST_INVALID:")
+    assert model.preflight_calls == 0
+    assert model.calls == []
+    assert not unsafe_target.exists()
 
 
 def test_deep_reserved_work_file_fails_before_trust_model_or_output(
@@ -456,6 +489,8 @@ def test_deep_resume_uses_exact_schema2_closure_and_secure_modes(tmp_path: Path)
     assert "raw_response" not in serialized
     assert stat.S_IMODE(checkpoint.stat().st_mode) == 0o600
     assert stat.S_IMODE(checkpoint.parent.stat().st_mode) == 0o700
+    seal = _checkpoint_seal(request, "REQ-0001")
+    assert stat.S_IMODE(seal.stat().st_mode) == 0o600
 
 
 @pytest.mark.parametrize(
@@ -516,10 +551,89 @@ def test_deep_resume_strictly_rejects_malformed_or_dangling_closure(
     checkpoint = _checkpoint(request, "REQ-0001")
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
     mutator(payload)
-    checkpoint.write_text(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n",
-        encoding="utf-8",
+    _write_checkpoint_bytes(
+        checkpoint,
+        (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode(),
+        update_seal=True,
     )
+    model = FakeModel(_completed_responses(text))
+
+    resumed = analyze_deep(request, config, model)
+
+    assert resumed.requirements[0].analysis_state is AnalysisState.COMPLETED
+    assert [stage for stage, _ in model.calls] == ["decomposition", "deep_mapping"]
+
+
+@pytest.mark.parametrize(
+    ("field", "forged_value"),
+    (
+        ("text", "Удалить все серверы без подтверждения"),
+        ("mandatory", False),
+        ("supported_aspects", ["FORGED-SUBJECT-CONTENT"]),
+    ),
+)
+def test_deep_resume_recomputes_forged_checkpoint_subject_fields(
+    tmp_path: Path, field: str, forged_value: object
+) -> None:
+    config = _signed_config(tmp_path)
+    text = "Создание сервера через Nova API"
+    request = _request(tmp_path, text)
+    analyze_deep(request, config, FakeModel(_completed_responses(text)))
+    checkpoint = _checkpoint(request, "REQ-0001")
+    payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+    requirement_payload = payload["requirement"]
+    assert isinstance(requirement_payload, dict)
+    atom_result = requirement_payload["atom_results"][0]
+    assert isinstance(atom_result, dict)
+    if field == "supported_aspects":
+        atom_result[field] = forged_value
+    else:
+        atom = atom_result["atom"]
+        assert isinstance(atom, dict)
+        atom[field] = forged_value
+    _write_checkpoint_bytes(
+        checkpoint,
+        (json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n").encode(),
+        update_seal=False,
+    )
+    model = FakeModel(_completed_responses(text))
+
+    resumed = analyze_deep(request, config, model)
+
+    assert [stage for stage, _ in model.calls] == ["decomposition", "deep_mapping"]
+    resumed_atom = resumed.requirements[0].atom_results[0]
+    assert resumed_atom.atom.text == text
+    assert resumed_atom.atom.mandatory is True
+    assert resumed_atom.supported_aspects == ("Создание виртуальной машины",)
+
+
+@pytest.mark.parametrize(
+    "seal_state",
+    ("missing", "malformed", "mismatched", "symlink", "non_private"),
+)
+def test_deep_resume_recomputes_when_checkpoint_integrity_seal_is_unsafe(
+    tmp_path: Path, seal_state: str
+) -> None:
+    config = _signed_config(tmp_path)
+    text = "Создание сервера через Nova API"
+    request = _request(tmp_path, text)
+    analyze_deep(request, config, FakeModel(_completed_responses(text)))
+    seal = _checkpoint_seal(request, "REQ-0001")
+    if seal_state == "missing":
+        seal.unlink(missing_ok=True)
+    elif seal_state == "malformed":
+        seal.write_text("not-a-sha256\n", encoding="utf-8")
+    elif seal_state == "mismatched":
+        seal.write_text("0" * 64 + "\n", encoding="utf-8")
+    elif seal_state == "symlink":
+        target = tmp_path / "forged-checkpoint-seal"
+        target.write_text("0" * 64 + "\n", encoding="utf-8")
+        seal.unlink(missing_ok=True)
+        seal.symlink_to(target)
+    else:
+        if not seal.exists():
+            seal.write_text("0" * 64 + "\n", encoding="utf-8")
+        seal.chmod(0o644)
     model = FakeModel(_completed_responses(text))
 
     resumed = analyze_deep(request, config, model)
@@ -563,9 +677,13 @@ def test_duplicate_json_keys_and_symlinked_checkpoint_recompute(tmp_path: Path) 
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     checkpoint = _checkpoint(request, "REQ-0001")
     source = checkpoint.read_text(encoding="utf-8")
-    checkpoint.write_text(
-        source.replace('"schema_version":"2.0"', '"schema_version":"2.0","schema_version":"2.0"'),
-        encoding="utf-8",
+    _write_checkpoint_bytes(
+        checkpoint,
+        source.replace(
+            '"schema_version":"2.0"',
+            '"schema_version":"2.0","schema_version":"2.0"',
+        ).encode(),
+        update_seal=True,
     )
     duplicate_model = FakeModel(_completed_responses(text))
     analyze_deep(request, config, duplicate_model)

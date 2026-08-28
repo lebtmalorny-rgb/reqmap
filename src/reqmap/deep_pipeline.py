@@ -359,6 +359,8 @@ def _deep_request_diagnostics(request: AnalysisRequest) -> tuple[str, ...]:
         diagnostics.append(
             "REQUEST_INVALID: deep requirement_id должны быть canonical REQ-XXXX.",
         )
+    if not isinstance(request.output_dir, Path):
+        return tuple(diagnostics)
     work_dir = request.output_dir / ".work"
     if work_dir.exists() and not work_dir.is_dir():
         diagnostics.append(
@@ -662,14 +664,7 @@ def _failed_preflight_run(
     knowledge: KnowledgeBaseV2 | None,
 ) -> DeepRunResult:
     diagnostic = "; ".join(result.diagnostics) or "Preflight не пройден."
-    source_requirements: tuple[Requirement, ...] = ()
-    if (
-        type(request) is AnalysisRequest
-        and type(request.requirements) is tuple
-        and all(type(item) is Requirement for item in request.requirements)
-        and not _deep_request_diagnostics(request)
-    ):
-        source_requirements = request.requirements
+    source_requirements = _canonical_deep_source_requirements(request)
     requirements = tuple(
         _failed_deep_requirement(
             requirement,
@@ -714,6 +709,26 @@ def _failed_preflight_run(
     ):
         validate_deep_run_result(run)
     return run
+
+
+def _canonical_deep_source_requirements(
+    request: object,
+) -> tuple[Requirement, ...]:
+    if type(request) is not AnalysisRequest or type(request.requirements) is not tuple:
+        return ()
+    requirements = request.requirements
+    if any(type(item) is not Requirement for item in requirements):
+        return ()
+    expected_ids = tuple(
+        generated_requirement_id(index) for index in range(1, len(requirements) + 1)
+    )
+    if tuple(item.requirement_id for item in requirements) != expected_ids:
+        return ()
+    if tuple(item.ordinal for item in requirements) != tuple(
+        range(1, len(requirements) + 1)
+    ):
+        return ()
+    return requirements
 
 
 def _finish_failed_preflight(
@@ -770,7 +785,12 @@ def _write_deep_checkpoint(
         "procedure_graphs": to_dict(build.graphs),
         "evidence": to_dict(build.evidence),
     }
-    atomic_write(path, canonical_bytes(payload))
+    checkpoint_bytes = canonical_bytes(payload)
+    atomic_write(path, checkpoint_bytes)
+    atomic_write(
+        _checkpoint_seal_path(path),
+        (hashlib.sha256(checkpoint_bytes).hexdigest() + "\n").encode("ascii"),
+    )
 
 
 def _load_deep_checkpoint(
@@ -781,16 +801,33 @@ def _load_deep_checkpoint(
     knowledge: KnowledgeBaseV2,
     config: AppConfig,
 ) -> _RequirementBuild | None:
+    seal_path = _checkpoint_seal_path(path)
     if path.is_symlink():
         try:
             path.unlink()
         except OSError:
             pass
         return None
-    if symlink_component(path) is not None or not path.exists():
+    if seal_path.is_symlink():
+        try:
+            seal_path.unlink()
+        except OSError:
+            pass
+        return None
+    if (
+        symlink_component(path) is not None
+        or symlink_component(seal_path) is not None
+        or not path.exists()
+        or not seal_path.exists()
+    ):
         return None
     try:
-        payload = strict_json_object(_read_checkpoint_text(path))
+        checkpoint_text = _read_checkpoint_text(path)
+        seal = _read_checkpoint_text(seal_path)
+        expected_seal = hashlib.sha256(checkpoint_text.encode("utf-8")).hexdigest()
+        if seal != expected_seal + "\n":
+            return None
+        payload = strict_json_object(checkpoint_text)
         item = _exact_object(
             payload,
             {
@@ -837,6 +874,10 @@ def _load_deep_checkpoint(
     ):
         return None
     return build
+
+
+def _checkpoint_seal_path(path: Path) -> Path:
+    return path.with_suffix(".sha256")
 
 
 def _read_checkpoint_text(path: Path) -> str:
