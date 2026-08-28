@@ -1,12 +1,14 @@
 """Independent deep JSON/XLSX/Markdown cross-artifact verification."""
 
 from dataclasses import replace
+import inspect
 from pathlib import Path
 
 from openpyxl import load_workbook
 import pytest
 
 import reqmap.crosscheck_deep as crosscheck_module
+import reqmap.export_deep_xlsx as deep_xlsx_module
 from reqmap.crosscheck_deep import crosscheck_deep
 from reqmap.deep_aggregation import aggregate_deep_groups
 from reqmap.export_deep_json import write_deep_canonical_json
@@ -89,6 +91,33 @@ def _swap_summary_tables(text: str) -> str:
     return "\n".join(swapped) + "\n"
 
 
+def _move_line_before_table(text: str, line: str, heading: str) -> str:
+    lines = text.splitlines()
+    lines.remove(line)
+    section = lines.index(f"## {heading}")
+    table = next(
+        index for index in range(section + 1, len(lines))
+        if lines[index].startswith("| ")
+    )
+    lines.insert(table, line)
+    return "\n".join(lines) + "\n"
+
+
+def _move_line_after_table(text: str, line: str, heading: str) -> str:
+    lines = text.splitlines()
+    lines.remove(line)
+    section = lines.index(f"## {heading}")
+    table = next(
+        index for index in range(section + 1, len(lines))
+        if lines[index].startswith("| ")
+    )
+    index = table + 2
+    while index < len(lines) and lines[index].startswith("| "):
+        index += 1
+    lines.insert(index, line)
+    return "\n".join(lines) + "\n"
+
+
 def _failed_preflight_run():
     run = deep_run()
     skipped = replace(
@@ -142,6 +171,67 @@ def test_deep_crosscheck_rejects_reordered_summary_tables(tmp_path: Path) -> Non
 
     assert "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE" in _codes(
         crosscheck_deep(run, json_path, xlsx_path, markdown_path)
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        lambda text: _move_line_before_table(
+            text,
+            "### Проверенные метаданные запуска",
+            "Сводка",
+        ),
+        lambda text: _move_line_after_table(
+            text,
+            "Статус запуска: `SUCCESS`",
+            "Сводка",
+        ),
+        lambda text: _move_line_before_table(
+            text,
+            "### Количество записей по контурам",
+            "Контуры ответственности",
+        ),
+    ),
+    ids=(
+        "trust-heading-before-summary-table",
+        "status-after-summary-table",
+        "contour-count-heading-before-responsibility-table",
+    ),
+)
+def test_deep_crosscheck_rejects_markdown_cross_kind_reordering(
+    tmp_path: Path,
+    mutation,
+) -> None:
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+    markdown_path.write_text(
+        mutation(markdown_path.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+
+    assert "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE" in _codes(
+        crosscheck_deep(run, json_path, xlsx_path, markdown_path)
+    )
+
+
+def test_deep_crosscheck_uses_independent_literal_xlsx_schema(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    original = deep_xlsx_module.SHEET_HEADERS["Требования"]
+    monkeypatch.setitem(
+        deep_xlsx_module.SHEET_HEADERS,
+        "Требования",
+        ("FORGED Requirement ID", *original[1:]),
+    )
+    run, json_path, xlsx_path, markdown_path = _artifacts(tmp_path)
+
+    codes = _codes(crosscheck_deep(run, json_path, xlsx_path, markdown_path))
+
+    assert "CROSSCHECK_DEEP_XLSX_HEADERS" in codes
+    assert not hasattr(crosscheck_module, "SHEET_HEADERS")
+    assert "export_deep_xlsx import SHEET_HEADERS" not in inspect.getsource(
+        crosscheck_module
     )
 
 

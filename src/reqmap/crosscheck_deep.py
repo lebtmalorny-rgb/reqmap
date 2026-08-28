@@ -14,28 +14,48 @@ from openpyxl.utils.exceptions import InvalidFileException
 from reqmap.crosscheck import CrosscheckIssue
 from reqmap.deep_models import DeepRunResult, ResponsibilityContour
 from reqmap.export_deep_json import _deep_run_payload, validate_deep_run_result
-from reqmap.export_deep_xlsx import SHEET_HEADERS
 from reqmap.export_json import canonical_json_bytes, symlink_component
 from reqmap.models import AnalysisState, SupportStatus
 
 
 _MARKER_PATTERN = re.compile(r"^<!-- reqmap-counts:(\{[^\r\n]*\}) -->$", re.MULTILINE)
 _MARKER_PREFIX = "<!-- reqmap-counts:"
-_MARKDOWN_HEADINGS = (
-    "Сводка",
-    "Требования и группы",
-    "Атомарные утверждения",
-    "Контуры ответственности",
-    "Executor → target",
-    "Версии и область применимости",
-    "Процедуры",
-    "Каталог evidence",
-    "Нормализованная диагностика",
-    "Конфликты evidence",
-    "Предупреждения procedures и rollback",
-    "Проблемные требования и атомы",
-    "Ошибки обработки",
-)
+_EXPECTED_SHEET_HEADERS = {
+    "Требования": (
+        "Requirement ID", "Source ID", "Ordinal", "Файл", "Лист", "Строка",
+        "Текст требования", "Parent ID", "Group IDs", "Source fields",
+        "Source hints", "Состояние: код", "Поддержка: код", "Atom IDs",
+        "Responsibility IDs", "Procedure graph IDs", "Диагностика",
+    ),
+    "Атомарные утверждения": (
+        "Atom ID", "Requirement ID", "Ordinal", "Формулировка атома",
+        "Исходная цитата", "Обязательный", "Состояние: код",
+        "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
+        "Неподтверждённые аспекты", "Диагностика",
+    ),
+    "Ответственность": (
+        "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",
+        "Executor ref", "Target contour", "Target ref", "Action ref", "Effect ref",
+        "Lifecycle phase", "Version scope", "Evidence IDs", "Поддержка: код",
+        "Related record IDs", "Procedure step IDs", "Диагностика",
+    ),
+    "Процедуры": (
+        "Graph ID", "Requirement ID", "Template ID", "Graph diagnostics", "Step ID",
+        "Phase", "Contour", "Executor ref", "Target ref", "Action ref",
+        "Preconditions", "Success criteria", "Evidence IDs", "Depends on",
+        "Rollback step ID",
+    ),
+    "Доказательства": (
+        "Evidence ID", "Claim", "Claim kind", "Polarity", "Strength", "Source ID",
+        "Locator", "Version constraint", "Applicable contours",
+        "Supports entity refs", "Local excerpt", "Review state",
+    ),
+    "Диагностика": (
+        "Порядок", "Scope", "Entity ID", "Requirement ID", "Текст требования",
+        "Atom ID", "Исходная цитата", "Diagnostic",
+    ),
+    "Запуск": ("Параметр", "Значение"),
+}
 _PROBLEM_STATUSES = frozenset(
     {SupportStatus.PARTIAL, SupportStatus.NOT_SUPPORTED, SupportStatus.INSUFFICIENT_EVIDENCE}
 )
@@ -129,9 +149,9 @@ def _check_xlsx(run: DeepRunResult, path: Path, issues: list[CrosscheckIssue]) -
         return
     try:
         expected_rows = _expected_rows(run)
-        if workbook.sheetnames != list(SHEET_HEADERS):
+        if workbook.sheetnames != list(_EXPECTED_SHEET_HEADERS):
             _issue(issues, "CROSSCHECK_DEEP_XLSX_SHEETS", "Набор или порядок листов XLSX неканоничен.")
-        for name, headers in SHEET_HEADERS.items():
+        for name, headers in _EXPECTED_SHEET_HEADERS.items():
             if name not in workbook.sheetnames:
                 _issue(issues, _SHEET_CODES[name], f"Обязательный лист {name} отсутствует.")
                 continue
@@ -179,18 +199,7 @@ def _check_markdown(run: DeepRunResult, payload: bytes, issues: list[CrosscheckI
     if not marker_valid:
         _issue(issues, "CROSSCHECK_DEEP_MARKDOWN_MARKER", "Markdown должен содержать один точный канонический marker counts.")
 
-    headings = tuple(
-        line[3:]
-        for line in text.splitlines()
-        if line.startswith("## ") and not line.startswith("### ")
-    )
-    if headings != _MARKDOWN_HEADINGS:
-        _issue(
-            issues,
-            "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE",
-            "Порядок или набор Markdown-разделов не совпадает с контрактом.",
-        )
-    table_sequence, malformed = _parse_markdown_tables(text)
+    token_stream, table_sequence, malformed = _parse_markdown_stream(text)
     tables = dict(table_sequence)
     if malformed:
         _issue(
@@ -199,13 +208,11 @@ def _check_markdown(run: DeepRunResult, payload: bytes, issues: list[CrosscheckI
             "Markdown-таблицы имеют неканоническую структуру или escaping.",
         )
     expected = _markdown_expected_tables(run)
-    expected_keys = tuple(expected)
-    actual_keys = tuple(key for key, _rows in table_sequence)
-    if actual_keys != expected_keys:
+    if token_stream != _expected_markdown_stream(run, expected):
         _issue(
             issues,
             "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE",
-            "Порядок или набор Markdown-таблиц не совпадает с контрактом.",
+            "Порядок или набор Markdown-элементов не совпадает с контрактом.",
         )
     for key, (code, rows) in expected.items():
         actual = tables.get(key)
@@ -218,21 +225,10 @@ def _check_markdown(run: DeepRunResult, payload: bytes, issues: list[CrosscheckI
             "CROSSCHECK_DEEP_MARKDOWN_SUMMARY",
             "Статус запуска Markdown не совпадает с DeepRunResult.",
         )
-    actual_skeleton = tuple(
-        line for line in text.splitlines()
-        if line and not line.startswith("|")
-    )
-    if actual_skeleton != _expected_markdown_skeleton(run):
-        _issue(
-            issues,
-            "CROSSCHECK_DEEP_MARKDOWN_STRUCTURE",
-            "Вне таблиц Markdown содержит неизвестные, лишние или переставленные строки.",
-        )
-
-
-def _parse_markdown_tables(
+def _parse_markdown_stream(
     text: str,
 ) -> tuple[
+    tuple[tuple[str, object], ...],
     tuple[
         tuple[
             tuple[str, tuple[str, ...]],
@@ -243,6 +239,7 @@ def _parse_markdown_tables(
     bool,
 ]:
     lines = text.splitlines()
+    tokens: list[tuple[str, object]] = []
     tables: list[
         tuple[
             tuple[str, tuple[str, ...]],
@@ -255,23 +252,27 @@ def _parse_markdown_tables(
     index = 0
     while index < len(lines):
         line = lines[index]
-        if line.startswith("## ") and not line.startswith("### "):
-            current_heading = line[3:]
+        if not line:
             index += 1
             continue
+        if line.startswith("## ") and not line.startswith("### "):
+            current_heading = line[3:]
         if not line.startswith("| "):
             if line.startswith("|"):
                 malformed = True
+            tokens.append(("line", line))
             index += 1
             continue
         try:
             headers = _table_cells(line)
         except ValueError:
             malformed = True
+            tokens.append(("line", line))
             index += 1
             continue
         if index + 1 >= len(lines) or not _valid_alignment(lines[index + 1], len(headers)):
             malformed = True
+            tokens.append(("line", line))
             index += 1
             continue
         index += 2
@@ -292,34 +293,58 @@ def _parse_markdown_tables(
         if key in seen or not current_heading:
             malformed = True
         seen.add(key)
+        tokens.append(("table", key))
         tables.append((key, tuple(rows)))
-    return tuple(tables), malformed
+    return tuple(tokens), tuple(tables), malformed
 
 
-def _expected_markdown_skeleton(run: DeepRunResult) -> tuple[str, ...]:
+def _expected_markdown_stream(
+    run: DeepRunResult,
+    tables: dict[
+        tuple[str, tuple[str, ...]],
+        tuple[str, tuple[tuple[object, ...], ...]],
+    ],
+) -> tuple[tuple[str, object], ...]:
     marker = json.dumps(
         _counts(run), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
+    table_keys = tuple(tables)
     return (
-        "# Глубокий отчёт reqmap",
-        f"<!-- reqmap-counts:{marker} -->",
-        "## Сводка",
-        f"Статус запуска: `{run.run_status}`",
-        "### Проверенные метаданные запуска",
-        "## Требования и группы",
-        "## Атомарные утверждения",
-        "## Контуры ответственности",
-        "### Количество записей по контурам",
-        "## Executor → target",
-        "## Версии и область применимости",
-        "## Процедуры",
-        "## Каталог evidence",
-        "## Нормализованная диагностика",
-        "## Конфликты evidence",
-        "## Предупреждения procedures и rollback",
-        "Диагностики `procedure_gap` и `rollback_unverified` не заменяются придуманными шагами.",
-        "## Проблемные требования и атомы",
-        "## Ошибки обработки",
+        ("line", "# Глубокий отчёт reqmap"),
+        ("line", f"<!-- reqmap-counts:{marker} -->"),
+        ("line", "## Сводка"),
+        ("line", f"Статус запуска: `{run.run_status}`"),
+        ("table", table_keys[0]),
+        ("line", "### Проверенные метаданные запуска"),
+        ("table", table_keys[1]),
+        ("line", "## Требования и группы"),
+        ("table", table_keys[2]),
+        ("line", "## Атомарные утверждения"),
+        ("table", table_keys[3]),
+        ("line", "## Контуры ответственности"),
+        ("table", table_keys[4]),
+        ("line", "### Количество записей по контурам"),
+        ("table", table_keys[5]),
+        ("line", "## Executor → target"),
+        ("table", table_keys[6]),
+        ("line", "## Версии и область применимости"),
+        ("table", table_keys[7]),
+        ("line", "## Процедуры"),
+        ("table", table_keys[8]),
+        ("line", "## Каталог evidence"),
+        ("table", table_keys[9]),
+        ("line", "## Нормализованная диагностика"),
+        ("table", table_keys[10]),
+        ("line", "## Конфликты evidence"),
+        ("table", table_keys[11]),
+        ("table", table_keys[12]),
+        ("line", "## Предупреждения procedures и rollback"),
+        ("line", "Диагностики `procedure_gap` и `rollback_unverified` не заменяются придуманными шагами."),
+        ("table", table_keys[13]),
+        ("line", "## Проблемные требования и атомы"),
+        ("table", table_keys[14]),
+        ("line", "## Ошибки обработки"),
+        ("table", table_keys[15]),
     )
 
 
