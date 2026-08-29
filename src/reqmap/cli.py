@@ -33,6 +33,7 @@ from reqmap.knowledge_v2 import load_knowledge_v2
 from reqmap.llm import OpenAICompatibleClient
 from reqmap.manifest import (
     RunLogger,
+    UnsafeLogError,
     deep_preflight_artifact_bytes,
     write_deep_manifest,
     write_manifest,
@@ -335,14 +336,32 @@ def _analyze_command(arguments: argparse.Namespace) -> int:
             exc,
             debug,
         )
+        unsafe_log = isinstance(exc, UnsafeLogError)
         if type(run) is DeepRunResult:
-            _record_deep_export_failure(run, request.output_dir, config, exc)
+            if not unsafe_log:
+                try:
+                    _record_deep_export_failure(run, request.output_dir, config, exc)
+                except UnsafeLogError:
+                    unsafe_log = True
             profile = AnalysisProfile.DEEP
         else:
-            _record_export_failure(run, request.output_dir, config, exc)
+            if not unsafe_log:
+                try:
+                    _record_export_failure(run, request.output_dir, config, exc)
+                except UnsafeLogError:
+                    unsafe_log = True
             profile = AnalysisProfile.LEGACY
         _print_run_summary(run, profile)
-        _print_artifacts(request.output_dir, _FINAL_ARTIFACTS)
+        announced = (
+            tuple(
+                name
+                for name in _FINAL_ARTIFACTS
+                if name not in {"run.jsonl", "manifest.json"}
+            )
+            if unsafe_log
+            else _FINAL_ARTIFACTS
+        )
+        _print_artifacts(request.output_dir, announced)
         return 5
 
     profile = (
@@ -558,19 +577,19 @@ def _publish_artifacts(
         paths["report.md"],
     )
     if issues:
-        logger.write(
+        log_digest = logger.write(
             "crosscheck_failed",
             "error",
             "Обнаружены расхождения выходных артефактов.",
             issue_codes=[item.code for item in issues],
         )
     else:
-        logger.write(
+        log_digest = logger.write(
             "artifacts_verified",
             "info",
             "JSON, XLSX и Markdown согласованы с canonical RunResult.",
         )
-    artifact_hashes["run.jsonl"] = _sha256_file(paths["run.jsonl"])
+    artifact_hashes["run.jsonl"] = log_digest
     write_manifest(run, artifact_hashes, paths["manifest.json"])
     return issues
 
@@ -604,19 +623,19 @@ def _publish_deep_artifacts(
         paths["report.md"],
     )
     if issues:
-        logger.write(
+        log_digest = logger.write(
             "crosscheck_failed",
             "error",
             "Обнаружены расхождения deep-артефактов.",
             issue_codes=[item.code for item in issues],
         )
     else:
-        logger.write(
+        log_digest = logger.write(
             "artifacts_verified",
             "info",
             "Deep JSON, XLSX и Markdown согласованы с canonical DeepRunResult.",
         )
-    artifact_hashes["run.jsonl"] = _sha256_file(paths["run.jsonl"])
+    artifact_hashes["run.jsonl"] = log_digest
     write_deep_manifest(run, artifact_hashes, paths["manifest.json"])
     return issues
 
@@ -629,7 +648,7 @@ def _record_export_failure(
 ) -> None:
     paths = {name: output / name for name in _FINAL_ARTIFACTS}
     try:
-        RunLogger(
+        log_digest = RunLogger(
             paths["run.jsonl"],
             redacted_values=_redacted_values(config),
         ).write(
@@ -641,9 +660,14 @@ def _record_export_failure(
         hashes = {
             name: _sha256_file(path)
             for name, path in paths.items()
-            if name != "manifest.json" and path.is_file() and not path.is_symlink()
+            if name not in {"run.jsonl", "manifest.json"}
+            and path.is_file()
+            and not path.is_symlink()
         }
+        hashes["run.jsonl"] = log_digest
         write_manifest(run, hashes, paths["manifest.json"])
+    except UnsafeLogError:
+        raise
     except (OSError, ValueError, ReqmapError):
         return
 
@@ -656,7 +680,7 @@ def _record_deep_export_failure(
 ) -> None:
     paths = {name: output / name for name in _FINAL_ARTIFACTS}
     try:
-        RunLogger(
+        log_digest = RunLogger(
             paths["run.jsonl"],
             redacted_values=_redacted_values(config),
         ).write(
@@ -668,12 +692,15 @@ def _record_deep_export_failure(
         hashes = {
             name: _sha256_file(path)
             for name, path in paths.items()
-            if name != "manifest.json"
+            if name not in {"run.jsonl", "manifest.json"}
             and symlink_component(path) is None
             and path.is_file()
             and not path.is_symlink()
         }
+        hashes["run.jsonl"] = log_digest
         write_deep_manifest(run, hashes, paths["manifest.json"])
+    except UnsafeLogError:
+        raise
     except (OSError, ValueError, ReqmapError):
         return
 

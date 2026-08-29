@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 import reqmap.cli as cli
+import reqmap.manifest as manifest_module
 from reqmap.config import AnalysisProfile, KnowledgeTrustConfig
 from reqmap.crosscheck import CrosscheckIssue
 from reqmap.deep_aggregation import aggregate_deep_groups
@@ -194,6 +195,94 @@ def test_cli_dispatches_deep_profile_without_legacy_exporters_and_hashes_exact_b
     assert "Профиль анализа: deep" in terminal.out
     assert "Статус запуска: SUCCESS" in terminal.out
     assert terminal.out.count("SHA-256") == 5
+
+
+@pytest.mark.parametrize("mutation", ("replace", "append"))
+def test_cli_deep_rejects_log_mutation_during_final_write(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    mutation: str,
+) -> None:
+    _install_deep_pipeline(monkeypatch, deep_run())
+    output = tmp_path / f"mutated-log-{mutation}"
+    forged_payload = (
+        b'{"event":"forged","source_url":"https://attacker.invalid/private"}\n'
+    )
+    forged_digest = hashlib.sha256(forged_payload).hexdigest()
+    real_write = manifest_module.os.write
+    substituted = False
+
+    def substitute_after_final_write(descriptor: int, payload) -> int:
+        nonlocal substituted
+        written = real_write(descriptor, payload)
+        if not substituted and b'"event":"artifacts_verified"' in bytes(payload):
+            substituted = True
+            if mutation == "replace":
+                replacement = output / "forged.jsonl"
+                replacement.write_bytes(forged_payload)
+                replacement.replace(output / "run.jsonl")
+            else:
+                with (output / "run.jsonl").open("ab") as stream:
+                    stream.write(forged_payload)
+        return written
+
+    monkeypatch.setattr(manifest_module.os, "write", substitute_after_final_write)
+
+    assert cli.main(_arguments(output)) == 5
+    assert substituted
+    published_log = (output / "run.jsonl").read_bytes()
+    assert published_log.endswith(forged_payload)
+    if mutation == "replace":
+        assert published_log == forged_payload
+    else:
+        assert b'"event":"artifacts_verified"' in published_log
+    assert not (output / "manifest.json").exists()
+    terminal = capsys.readouterr()
+    assert "run.jsonl SHA-256" not in terminal.out
+    assert forged_digest not in terminal.out
+    assert "attacker.invalid" not in terminal.out + terminal.err
+
+
+def test_cli_deep_does_not_announce_log_substituted_during_failure_recording(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_deep_pipeline(monkeypatch, deep_run())
+    monkeypatch.setattr(
+        cli,
+        "write_deep_xlsx",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("synthetic failure")),
+    )
+    output = tmp_path / "substituted-failure-log"
+    forged_payload = (
+        b'{"event":"forged","source_url":"https://attacker.invalid/private"}\n'
+    )
+    forged_digest = hashlib.sha256(forged_payload).hexdigest()
+    real_write = manifest_module.os.write
+    substituted = False
+
+    def substitute_after_failure_write(descriptor: int, payload) -> int:
+        nonlocal substituted
+        written = real_write(descriptor, payload)
+        if not substituted and b'"event":"export_failed"' in bytes(payload):
+            substituted = True
+            replacement = output / "forged.jsonl"
+            replacement.write_bytes(forged_payload)
+            replacement.replace(output / "run.jsonl")
+        return written
+
+    monkeypatch.setattr(manifest_module.os, "write", substitute_after_failure_write)
+
+    assert cli.main(_arguments(output)) == 5
+    assert substituted
+    assert (output / "run.jsonl").read_bytes() == forged_payload
+    assert not (output / "manifest.json").exists()
+    terminal = capsys.readouterr()
+    assert "run.jsonl SHA-256" not in terminal.out
+    assert forged_digest not in terminal.out
+    assert "attacker.invalid" not in terminal.out + terminal.err
 
 
 def test_cli_deep_partial_reports_normalized_gap_and_conflict_occurrences(

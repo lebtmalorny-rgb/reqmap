@@ -56,6 +56,10 @@ _SAFE_MODELS_ENDPOINT_TOKEN = re.compile(
 )
 
 
+class UnsafeLogError(ValueError):
+    """The JSONL pathname no longer names the verified opened log inode."""
+
+
 def write_manifest(
     run: RunResult,
     artifact_hashes: MappingABC[str, str],
@@ -271,8 +275,8 @@ class RunLogger:
         level: str,
         message_ru: str,
         **safe_fields: object,
-    ) -> None:
-        """Добавить одну завершённую JSON object строку без раскрытия secret values."""
+    ) -> str:
+        """Append one JSON object and return the verified opened log digest."""
         for label, value in (
             ("event", event),
             ("level", level),
@@ -292,13 +296,13 @@ class RunLogger:
             **safe_fields,
         }
         redacted = _redact(to_dict(record), self._redacted_values)
-        _append_line(self._path, canonical_json_bytes(redacted))
+        return _append_line(self._path, canonical_json_bytes(redacted))
 
 
-def _append_line(path: Path, payload: bytes) -> None:
+def _append_line(path: Path, payload: bytes) -> str:
     symlink = symlink_component(path)
     if symlink is not None:
-        raise ValueError(
+        raise UnsafeLogError(
             f"Путь журнала не может проходить через symlink: {symlink.name}"
         )
     ensure_secure_directory(path.parent)
@@ -307,8 +311,8 @@ def _append_line(path: Path, payload: bytes) -> None:
     except FileNotFoundError:
         prior = None
     if prior is not None and not stat.S_ISREG(prior.st_mode):
-        raise ValueError("Путь журнала должен быть обычным файлом.")
-    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        raise UnsafeLogError("Путь журнала должен быть обычным файлом.")
+    flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     if hasattr(os, "O_NONBLOCK"):
@@ -317,8 +321,8 @@ def _append_line(path: Path, payload: bytes) -> None:
     try:
         opened = os.fstat(descriptor)
         if not stat.S_ISREG(opened.st_mode):
-            raise ValueError("Путь журнала должен быть обычным файлом.")
-        published = os.lstat(path)
+            raise UnsafeLogError("Путь журнала должен быть обычным файлом.")
+        published = _opened_log_path_state(path)
         opened_identity = (opened.st_dev, opened.st_ino)
         if (
             not stat.S_ISREG(published.st_mode)
@@ -328,8 +332,10 @@ def _append_line(path: Path, payload: bytes) -> None:
                 and (prior.st_dev, prior.st_ino) != opened_identity
             )
         ):
-            raise ValueError("Путь журнала был заменён во время открытия.")
+            raise UnsafeLogError("Путь журнала был заменён во время открытия.")
         os.fchmod(descriptor, 0o600)
+        before_write = os.fstat(descriptor)
+        expected_size = before_write.st_size + len(payload)
         view = memoryview(payload)
         while view:
             written = os.write(descriptor, view)
@@ -337,8 +343,79 @@ def _append_line(path: Path, payload: bytes) -> None:
                 raise OSError("Не удалось дописать JSONL record.")
             view = view[written:]
         os.fsync(descriptor)
+        after_write = os.fstat(descriptor)
+        published = _opened_log_path_state(path)
+        if (
+            not stat.S_ISREG(after_write.st_mode)
+            or not stat.S_ISREG(published.st_mode)
+            or (after_write.st_dev, after_write.st_ino) != opened_identity
+            or (published.st_dev, published.st_ino) != opened_identity
+            or after_write.st_size != expected_size
+            or published.st_size != expected_size
+        ):
+            raise UnsafeLogError("Путь или размер журнала изменился во время записи.")
+        digest = _sha256_descriptor(descriptor, expected_size)
+        after_hash = os.fstat(descriptor)
+        published_after_hash = _opened_log_path_state(path)
+        stable_state = (
+            after_write.st_dev,
+            after_write.st_ino,
+            after_write.st_mode,
+            after_write.st_size,
+            after_write.st_mtime_ns,
+            after_write.st_ctime_ns,
+        )
+        if (
+            not stat.S_ISREG(after_hash.st_mode)
+            or not stat.S_ISREG(published_after_hash.st_mode)
+            or (
+                after_hash.st_dev,
+                after_hash.st_ino,
+                after_hash.st_mode,
+                after_hash.st_size,
+                after_hash.st_mtime_ns,
+                after_hash.st_ctime_ns,
+            )
+            != stable_state
+            or (
+                published_after_hash.st_dev,
+                published_after_hash.st_ino,
+                published_after_hash.st_mode,
+                published_after_hash.st_size,
+                published_after_hash.st_mtime_ns,
+                published_after_hash.st_ctime_ns,
+            )
+            != stable_state
+        ):
+            raise UnsafeLogError("Журнал изменился во время вычисления SHA-256.")
+        return digest
     finally:
         os.close(descriptor)
+
+
+def _sha256_descriptor(descriptor: int, expected_size: int) -> str:
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < expected_size:
+        chunk = os.pread(
+            descriptor,
+            min(1024 * 1024, expected_size - offset),
+            offset,
+        )
+        if not chunk:
+            raise UnsafeLogError("Журнал укоротился во время вычисления SHA-256.")
+        digest.update(chunk)
+        offset += len(chunk)
+    if os.pread(descriptor, 1, expected_size):
+        raise UnsafeLogError("Журнал вырос во время вычисления SHA-256.")
+    return digest.hexdigest()
+
+
+def _opened_log_path_state(path: Path) -> os.stat_result:
+    try:
+        return os.lstat(path)
+    except OSError as exc:
+        raise UnsafeLogError("Путь журнала исчез во время безопасной записи.") from exc
 
 
 def _redact(value: object, redacted_values: tuple[str, ...]) -> object:
