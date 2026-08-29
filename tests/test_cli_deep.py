@@ -197,7 +197,7 @@ def test_cli_dispatches_deep_profile_without_legacy_exporters_and_hashes_exact_b
     assert terminal.out.count("SHA-256") == 5
 
 
-@pytest.mark.parametrize("mutation", ("replace", "append"))
+@pytest.mark.parametrize("mutation", ("replace", "append", "overwrite"))
 def test_cli_deep_rejects_log_mutation_during_final_write(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -209,12 +209,13 @@ def test_cli_deep_rejects_log_mutation_during_final_write(
     forged_payload = (
         b'{"event":"forged","source_url":"https://attacker.invalid/private"}\n'
     )
-    forged_digest = hashlib.sha256(forged_payload).hexdigest()
+    forged_prefix = b"FORGED0000"
     real_write = manifest_module.os.write
     substituted = False
+    overwritten_size = 0
 
     def substitute_after_final_write(descriptor: int, payload) -> int:
-        nonlocal substituted
+        nonlocal substituted, overwritten_size
         written = real_write(descriptor, payload)
         if not substituted and b'"event":"artifacts_verified"' in bytes(payload):
             substituted = True
@@ -222,9 +223,18 @@ def test_cli_deep_rejects_log_mutation_during_final_write(
                 replacement = output / "forged.jsonl"
                 replacement.write_bytes(forged_payload)
                 replacement.replace(output / "run.jsonl")
-            else:
+            elif mutation == "append":
                 with (output / "run.jsonl").open("ab") as stream:
                     stream.write(forged_payload)
+            else:
+                attack_fd = os.open(output / "run.jsonl", os.O_WRONLY)
+                try:
+                    overwritten_size = os.fstat(attack_fd).st_size
+                    assert os.pwrite(attack_fd, forged_prefix, 0) == len(
+                        forged_prefix
+                    )
+                finally:
+                    os.close(attack_fd)
         return written
 
     monkeypatch.setattr(manifest_module.os, "write", substitute_after_final_write)
@@ -232,15 +242,18 @@ def test_cli_deep_rejects_log_mutation_during_final_write(
     assert cli.main(_arguments(output)) == 5
     assert substituted
     published_log = (output / "run.jsonl").read_bytes()
-    assert published_log.endswith(forged_payload)
     if mutation == "replace":
         assert published_log == forged_payload
-    else:
+    elif mutation == "append":
+        assert published_log.endswith(forged_payload)
         assert b'"event":"artifacts_verified"' in published_log
+    else:
+        assert published_log.startswith(forged_prefix)
+        assert len(published_log) == overwritten_size
     assert not (output / "manifest.json").exists()
     terminal = capsys.readouterr()
     assert "run.jsonl SHA-256" not in terminal.out
-    assert forged_digest not in terminal.out
+    assert hashlib.sha256(published_log).hexdigest() not in terminal.out
     assert "attacker.invalid" not in terminal.out + terminal.err
 
 
@@ -283,6 +296,52 @@ def test_cli_deep_does_not_announce_log_substituted_during_failure_recording(
     assert "run.jsonl SHA-256" not in terminal.out
     assert forged_digest not in terminal.out
     assert "attacker.invalid" not in terminal.out + terminal.err
+
+
+def test_cli_deep_rejects_prefix_overwrite_between_logger_writes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _install_deep_pipeline(monkeypatch, deep_run())
+    output = tmp_path / "overwritten-between-writes"
+    forged_prefix = b"FORGED0000"
+    real_write_json = cli.write_deep_canonical_json
+    attacked = False
+
+    def write_json_then_overwrite_prefix(run, path: Path) -> str:
+        nonlocal attacked
+        digest = real_write_json(run, path)
+        before = (output / "run.jsonl").stat()
+        attack_fd = os.open(output / "run.jsonl", os.O_WRONLY)
+        try:
+            assert os.pwrite(attack_fd, forged_prefix, 0) == len(forged_prefix)
+        finally:
+            os.close(attack_fd)
+        after = (output / "run.jsonl").stat()
+        assert (after.st_dev, after.st_ino, after.st_size) == (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+        )
+        attacked = True
+        return digest
+
+    monkeypatch.setattr(
+        cli,
+        "write_deep_canonical_json",
+        write_json_then_overwrite_prefix,
+    )
+
+    assert cli.main(_arguments(output)) == 5
+    assert attacked
+    published_log = (output / "run.jsonl").read_bytes()
+    assert published_log.startswith(forged_prefix)
+    assert b'"event":"artifacts_verified"' not in published_log
+    assert not (output / "manifest.json").exists()
+    terminal = capsys.readouterr()
+    assert "run.jsonl SHA-256" not in terminal.out
+    assert hashlib.sha256(published_log).hexdigest() not in terminal.out
 
 
 def test_cli_deep_partial_reports_normalized_gap_and_conflict_occurrences(

@@ -268,6 +268,7 @@ class RunLogger:
                 reverse=True,
             )
         )
+        self._verified_prefix: tuple[int, str] | None = None
 
     def write(
         self,
@@ -296,10 +297,19 @@ class RunLogger:
             **safe_fields,
         }
         redacted = _redact(to_dict(record), self._redacted_values)
-        return _append_line(self._path, canonical_json_bytes(redacted))
+        self._verified_prefix = _append_line(
+            self._path,
+            canonical_json_bytes(redacted),
+            self._verified_prefix,
+        )
+        return self._verified_prefix[1]
 
 
-def _append_line(path: Path, payload: bytes) -> str:
+def _append_line(
+    path: Path,
+    payload: bytes,
+    verified_prefix: tuple[int, str] | None,
+) -> tuple[int, str]:
     symlink = symlink_component(path)
     if symlink is not None:
         raise UnsafeLogError(
@@ -335,6 +345,33 @@ def _append_line(path: Path, payload: bytes) -> str:
             raise UnsafeLogError("Путь журнала был заменён во время открытия.")
         os.fchmod(descriptor, 0o600)
         before_write = os.fstat(descriptor)
+        published_before_write = _opened_log_path_state(path)
+        prefix_state = _log_state(before_write)
+        if (
+            not stat.S_ISREG(before_write.st_mode)
+            or not stat.S_ISREG(published_before_write.st_mode)
+            or _log_state(published_before_write) != prefix_state
+        ):
+            raise UnsafeLogError("Журнал изменился перед безопасной записью.")
+        prefix_digest, expected_digest = _prefix_and_expected_digests(
+            descriptor,
+            before_write.st_size,
+            payload,
+        )
+        prefix_hashed = os.fstat(descriptor)
+        published_prefix_hashed = _opened_log_path_state(path)
+        if (
+            not stat.S_ISREG(prefix_hashed.st_mode)
+            or not stat.S_ISREG(published_prefix_hashed.st_mode)
+            or _log_state(prefix_hashed) != prefix_state
+            or _log_state(published_prefix_hashed) != prefix_state
+        ):
+            raise UnsafeLogError("Журнал изменился при проверке исходного prefix.")
+        if verified_prefix is not None and verified_prefix != (
+            before_write.st_size,
+            prefix_digest,
+        ):
+            raise UnsafeLogError("Проверенный prefix журнала был изменён.")
         expected_size = before_write.st_size + len(payload)
         view = memoryview(payload)
         while view:
@@ -354,43 +391,66 @@ def _append_line(path: Path, payload: bytes) -> str:
             or published.st_size != expected_size
         ):
             raise UnsafeLogError("Путь или размер журнала изменился во время записи.")
+        if _descriptor_region(
+            descriptor,
+            before_write.st_size,
+            len(payload),
+        ) != payload:
+            raise UnsafeLogError("Добавленная запись журнала была изменена.")
         digest = _sha256_descriptor(descriptor, expected_size)
+        if digest != expected_digest:
+            raise UnsafeLogError("Содержимое журнала не совпало с проверенным prefix.")
         after_hash = os.fstat(descriptor)
         published_after_hash = _opened_log_path_state(path)
-        stable_state = (
-            after_write.st_dev,
-            after_write.st_ino,
-            after_write.st_mode,
-            after_write.st_size,
-            after_write.st_mtime_ns,
-            after_write.st_ctime_ns,
-        )
+        stable_state = _log_state(after_write)
         if (
             not stat.S_ISREG(after_hash.st_mode)
             or not stat.S_ISREG(published_after_hash.st_mode)
-            or (
-                after_hash.st_dev,
-                after_hash.st_ino,
-                after_hash.st_mode,
-                after_hash.st_size,
-                after_hash.st_mtime_ns,
-                after_hash.st_ctime_ns,
-            )
-            != stable_state
-            or (
-                published_after_hash.st_dev,
-                published_after_hash.st_ino,
-                published_after_hash.st_mode,
-                published_after_hash.st_size,
-                published_after_hash.st_mtime_ns,
-                published_after_hash.st_ctime_ns,
-            )
-            != stable_state
+            or _log_state(after_hash) != stable_state
+            or _log_state(published_after_hash) != stable_state
         ):
             raise UnsafeLogError("Журнал изменился во время вычисления SHA-256.")
-        return digest
+        return expected_size, digest
     finally:
         os.close(descriptor)
+
+
+def _prefix_and_expected_digests(
+    descriptor: int,
+    prefix_size: int,
+    payload: bytes,
+) -> tuple[str, str]:
+    prefix_hasher = hashlib.sha256()
+    offset = 0
+    while offset < prefix_size:
+        chunk = os.pread(
+            descriptor,
+            min(1024 * 1024, prefix_size - offset),
+            offset,
+        )
+        if not chunk:
+            raise UnsafeLogError("Prefix журнала укоротился во время проверки.")
+        prefix_hasher.update(chunk)
+        offset += len(chunk)
+    if os.pread(descriptor, 1, prefix_size):
+        raise UnsafeLogError("Prefix журнала вырос во время проверки.")
+    expected_hasher = prefix_hasher.copy()
+    expected_hasher.update(payload)
+    return prefix_hasher.hexdigest(), expected_hasher.hexdigest()
+
+
+def _descriptor_region(descriptor: int, offset: int, length: int) -> bytes:
+    result = bytearray()
+    while len(result) < length:
+        chunk = os.pread(
+            descriptor,
+            min(1024 * 1024, length - len(result)),
+            offset + len(result),
+        )
+        if not chunk:
+            raise UnsafeLogError("Добавленная запись журнала укоротилась.")
+        result.extend(chunk)
+    return bytes(result)
 
 
 def _sha256_descriptor(descriptor: int, expected_size: int) -> str:
@@ -409,6 +469,17 @@ def _sha256_descriptor(descriptor: int, expected_size: int) -> str:
     if os.pread(descriptor, 1, expected_size):
         raise UnsafeLogError("Журнал вырос во время вычисления SHA-256.")
     return digest.hexdigest()
+
+
+def _log_state(value: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
 
 
 def _opened_log_path_state(path: Path) -> os.stat_result:
