@@ -67,17 +67,9 @@ class AppConfig:
 
 def load_config(path: Path, environ: Mapping[str, str]) -> AppConfig:
     """Читает конфигурацию без YAML-парсера и без раскрытия секретов."""
-    try:
-        source = path.read_text(encoding="utf-8")
-        without_comments = "\n".join(
-            line for line in source.splitlines() if not line.lstrip().startswith("#")
-        )
-        raw = json.loads(without_comments, parse_constant=_reject_non_finite_constant)
-    except (OSError, ValueError) as exc:
-        raise ConfigError(
-            "CONFIG_INVALID", f"Не удалось прочитать конфигурацию: {exc}"
-        ) from exc
+    from reqmap.config_common import read_config_object
 
+    raw = read_config_object(path)
     _require_mapping(raw, "конфигурация")
     _reject_unknown(
         raw,
