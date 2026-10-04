@@ -97,7 +97,8 @@ def _seed(raw: str) -> SessionSeed:
 
 
 class SessionStore:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, reply_limit: int | None = None):
+        self.reply_limit = reply_limit
         self.root = root.absolute()
         ensure_secure_directory(self.root)
         with self.locked('create'):
@@ -197,6 +198,12 @@ class SessionStore:
         payload = _json(to_dict(reply))
         db.execute('INSERT INTO receipts VALUES(?,?,?,?,?)', (scope,request_id,digest,payload,_hash((digest+payload).encode())))
 
+    def _guard_reply(self, reply):
+        if self.reply_limit is not None:
+            from reqmap.agent_tools import ensure_reply_fits
+            ensure_reply_fits(reply,self.reply_limit)
+        return reply
+
     def create(self, request_id: str, arguments: dict[str, object], prepare: Callable[[], SessionSeed]) -> ToolReply:
         self._request_id(request_id)
         digest = _hash(canonical_json_bytes(arguments))
@@ -218,6 +225,12 @@ class SessionStore:
             _seed(seed_json)
             reply = ToolReply(True, dict(session_id=sid, revision=0, status='active',
                 analysis_profile=seed.settings.analysis_profile.value, requirements_count=len(seed.input_snapshot.requirements)))
+            try:
+                self._guard_reply(reply)
+            except ReqmapError as exc:
+                reply = failure(exc.code,exc.message_ru)
+                self._save_receipt(db,'create',request_id,digest,reply)
+                return reply
             db.execute('BEGIN IMMEDIATE')
             try:
                 db.execute('INSERT INTO sessions VALUES(?,?,?,?,?)', (sid,seed_json,_hash(seed_json.encode()),0,'active'))
@@ -290,6 +303,12 @@ class SessionStore:
                     raise ValueError('invalid mutation decision')
                 revision = record.revision + int(decision.accepted)
                 reply = replace(decision.reply, data={**decision.reply.data,'session_id':record.session_id,'revision':revision})
+                try:
+                    self._guard_reply(reply)
+                except ReqmapError as exc:
+                    decision = MutationDecision(False,failure(exc.code,exc.message_ru),record.status)
+                    revision = record.revision
+                    reply = replace(decision.reply,data=dict(session_id=record.session_id,revision=revision))
                 event = JournalEvent(len(record.events)+1, command.request_id,command.operation,command.arguments,decision.accepted,reply)
                 self._append(db, record, event)
                 db.execute('UPDATE sessions SET revision=?,status=? WHERE session_id=?', (revision,decision.status,record.session_id))

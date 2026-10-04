@@ -117,6 +117,14 @@ def finalize_session(store: SessionStore, config: AgentConfig, command: Mutation
         run = build_agent_run(view,knowledge)
         if run.run_status != 'SUCCESS' and not command.arguments.get('allow_partial',False):
             return store.transact(command,lambda r: MutationDecision(False,failure('ANALYSIS_INCOMPLETE','Анализ неполон; продолжите работу или явно разрешите частичный экспорт.',run_status=run.run_status),r.status))
+        from reqmap.agent_tools import ensure_reply_fits
+        prospective = ToolReply(True,dict(status='finalized',run_status=run.run_status,requirements_count=len(run.requirements),
+            session_id=record.session_id,revision=record.revision+1,
+            artifacts={name:str(config.output_root/('0'*36)/name) for name in ARTIFACTS}))
+        try:
+            ensure_reply_fits(prospective,config.limits.max_response_bytes)
+        except ReqmapError as exc:
+            return store.transact(command,lambda r: MutationDecision(False,failure(exc.code,exc.message_ru),r.status))
         intent = store.reserve_publication(command,proposal_journal_sha256(record))
         staging, final = config.output_root/intent['staging_name'], config.output_root/intent['final_name']
         try:

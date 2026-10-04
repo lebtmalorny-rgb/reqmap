@@ -60,15 +60,32 @@ def validate_reported_model(value):
 class AgentService:
     def __init__(self, config: AgentConfig):
         self.config = config
-        self.store = SessionStore(config.session_root)
+        self.store = SessionStore(config.session_root,config.limits.max_response_bytes)
 
     def call(self, name: str, arguments: dict[str, object]) -> ToolReply:
+        from reqmap.agent_tools import ensure_reply_fits
+        args = dict(arguments) if type(arguments) is dict else arguments
+        while True:
+            reply = self._call(name,args)
+            try:
+                return ensure_reply_fits(reply,self.config.limits.max_response_bytes)
+            except ReqmapError as exc:
+                if reply.ok and name in ('reqmap_get_session','reqmap_search_knowledge','reqmap_get_result'):
+                    size = args.get('page_size',self.config.limits.max_page_size)
+                    if type(size) is int and size > 1:
+                        args['page_size'] = max(1,size//2)
+                        continue
+                return failure(exc.code,exc.message_ru)
+
+    def _call(self, name: str, arguments: dict[str, object]) -> ToolReply:
         try:
             if type(name) is not str or name not in TOOL_FIELDS:
                 return failure('TOOL_UNKNOWN','Неизвестный инструмент reqmap.')
             required, optional = TOOL_FIELDS[name]
             if type(arguments) is not dict or not required.issubset(arguments) or set(arguments) - required - optional:
                 raise ReqmapError('TOOL_ARGUMENTS','Недостающие или неизвестные аргументы инструмента.')
+            from reqmap.agent_tools import validate_arguments
+            validate_arguments(name,arguments)
             if 'reported_model' in arguments:
                 validate_reported_model(arguments['reported_model'])
             if name == 'reqmap_start_session':

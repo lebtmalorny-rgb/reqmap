@@ -138,6 +138,17 @@ def main(argv: list[str] | None = None) -> int:
     except SystemExit as exc:
         return int(exc.code)
 
+    if parsed.command == "agent" and parsed.agent_command == "serve":
+        from reqmap.agent_config import load_agent_config
+        from reqmap.agent_service import AgentService
+        from reqmap.mcp_stdio import serve_stdio
+        try:
+            config = load_agent_config(parsed.config)
+            service = AgentService(config)
+        except (ReqmapError, OSError, ValueError):
+            print("Не удалось запустить агент reqmap; проверьте конфигурацию и права каталогов.",file=sys.stderr)
+            return 2
+        return serve_stdio(service,sys.stdin.buffer,sys.stdout.buffer,sys.stderr,config.limits)
     if parsed.command == "analyze":
         return _analyze_command(parsed)
     if parsed.command == "knowledge" and parsed.knowledge_command == "validate":
@@ -156,6 +167,13 @@ def _build_parser() -> _RussianArgumentParser:
     )
     _localize_parser(parser)
     subparsers = parser.add_subparsers(dest="command")
+
+    agent = subparsers.add_parser("agent",help="Инструменты агента IDE",add_help=False)
+    _localize_parser(agent)
+    agent_sub = agent.add_subparsers(dest="agent_command")
+    serve = agent_sub.add_parser("serve",help="Запустить MCP stdio",add_help=False)
+    _localize_parser(serve)
+    serve.add_argument("--config",type=Path,required=True,help="Конфигурация агента без model endpoint")
 
     analyze_parser = subparsers.add_parser(
         "analyze",
