@@ -189,3 +189,26 @@ def test_deep_example_requires_external_trust_and_no_shipped_production_snapshot
     for file in (ROOT / "tests/fixtures").rglob("*"):
         if file.is_file():
             assert b"BEGIN OPENSSH PRIVATE KEY" not in file.read_bytes()
+
+
+def test_installed_agent_flow_from_offline_copy_without_dev_pythonpath(tmp_path,monkeypatch):
+    import json
+    from reqmap.config import AnalysisProfile
+    from tests.agent_support import scripted_agent_flow
+    repository=tmp_path/'portable checkout';repository.mkdir()
+    for name in ('src','knowledge','vendor'):
+        shutil.copytree(ROOT/name,repository/name,ignore=shutil.ignore_patterns('__pycache__','*.egg-info'))
+    for name in ('install.sh','requirements-vendor.lock','pyproject.toml','README.md'):
+        shutil.copy2(ROOT/name,repository/name)
+    environment={**os.environ,'PYTHON_BIN':sys.executable,'PIP_NO_INDEX':'1'}
+    environment.pop('PYTHONPATH',None)
+    installed=subprocess.run(['bash','install.sh'],cwd=repository,env=environment,capture_output=True,timeout=90)
+    assert installed.returncode==0,installed.stderr
+    monkeypatch.delenv('PYTHONPATH',raising=False)
+    config=repository/'agent.json'
+    config.write_text(json.dumps(dict(knowledge_path='knowledge/epoxy-2025.1',input_root='.',session_root='sessions',output_root='reports')))
+    result=scripted_agent_flow([str(repository/'.venv/bin/reqmap')],config,
+        dict(kind='texts',texts=['создание виртуальной машины через Nova REST API']),AnalysisProfile.LEGACY)
+    assert result['report']['run_status']=='SUCCESS'
+    checked=subprocess.run([str(repository/'.venv/bin/python'),'-m','pip','check'],env=environment,capture_output=True)
+    assert checked.returncode==0,checked.stderr
