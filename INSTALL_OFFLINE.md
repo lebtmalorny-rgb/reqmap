@@ -131,3 +131,22 @@ snapshot deep в архитектурную поставку не входит. 
 Тестовая Linux-лаборатория может использовать контейнер с `--network none`:
 loopback остаётся доступным fake-серверу модели, внешней сети нет. Docker нужен
 только для такой лаборатории и не является зависимостью пользователя reqmap.
+
+## Агентный режим без второго endpoint
+
+Установка `./install.sh` включает `reqmap agent serve`; новых runtime-зависимостей
+для MCP нет. Используются те же offline wheels. После установки скопируйте
+`config.agent.example.yaml` в новый `config.agent.yaml`, затем подключите
+console entry point к клиенту по [CLIENTS_CODEX_OPENCODE.md](CLIENTS_CODEX_OPENCODE.md).
+Проверка локальной установки без модели:
+
+```bash
+.venv/bin/reqmap agent serve --help
+.venv/bin/reqmap agent serve --config config.agent.yaml < /dev/null
+```
+
+Вторая команда завершается с кодом 0 без stdout при корректном config.
+Проверка KB остаётся отдельной командой `knowledge validate`.
+Сам reqmap работает локально; установка клиента, вход и доступ к его provider/model
+готовятся отдельно. Offline Python bundle не содержит IDE, Codex/OpenCode или
+веса модели и не обеспечивает автономность облачного клиента.

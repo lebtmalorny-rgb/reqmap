@@ -1,0 +1,7 @@
+# Замените /ABSOLUTE/PATH/TO/reqmap абсолютным путём к проекту.
+# Объедините блок с конфигурацией Codex; не заменяйте весь файл.
+[mcp_servers.reqmap]
+command = "/ABSOLUTE/PATH/TO/reqmap/.venv/bin/reqmap"
+args = ["agent", "serve", "--config", "/ABSOLUTE/PATH/TO/reqmap/config.agent.yaml"]
+startup_timeout_sec = 30
+tool_timeout_sec = 300

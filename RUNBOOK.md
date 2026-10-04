@@ -148,3 +148,43 @@ manifest, snapshot/key ID, модель, seed, `top_k`, профиль и вер
 
 Команда создаёт только unsigned `draft` и список вопросов для review.
 Дальнейшая нормализация и подпись описаны в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
+
+## 9. Агент в IDE: отдельный режим
+
+Для MCP используйте `config.agent.yaml` по примеру `config.agent.example.yaml`.
+`model`, `base_url`, `api_key` здесь запрещены. Команда запуска:
+
+```bash
+.venv/bin/reqmap agent serve --config config.agent.yaml
+```
+
+Сервер запускает клиент; stdout занят JSON-RPC. EOF завершает процесс с кодом 0,
+ошибка запуска — 2 и stderr. Статус анализа передаётся в tool result и не равен
+exit code процесса. Настройки клиентов: [CLIENTS_CODEX_OPENCODE.md](CLIENTS_CODEX_OPENCODE.md).
+
+Инструменты start → get_session → submit_atoms → get_atom_context →
+submit_mapping → finalize → get_result сохраняют результат в SQLite session_root.
+Поиск и чтение evidence доступны отдельно. Контекст сопоставления обязателен;
+найденный поиском ID сам по себе не разрешает его использовать в proposal.
+На страницах всегда обрабатывайте next_cursor. Лимиты по умолчанию:
+25 MiB вход, 10 000 строк, 64 атома/строку, 2 MiB frame, 512 KiB ответ,
+до 50 записей на странице. Одну слишком большую запись сервер отклоняет явно.
+
+Для mutation нужны уникальный request_id и текущая expected_revision. После
+потери ответа повторяют исходный запрос целиком; новые аргументы требуют нового ID.
+При REVISION_CONFLICT читают сессию заново. Reads не меняют журнал предложений.
+Замена атомов очищает их mapping. Вход/уточнения/профиль изменяют только через
+новую сессию, при необходимости с parent_session_id.
+
+Финализация фиксирует намерение публикации, создаёт staging под output_root,
+сверяет JSON/XLSX/Markdown и атомарно переименовывает каталог. Pending-публикация
+блокирует mutations; тот же finalize восстанавливает её после сбоя.
+Контролируемая ошибка экспорта закрывает сессию как failed без выдачи отчёта.
+Неполный анализ экспортируют лишь с явным allow_partial=true; ноль завершённых
+строк даёт FAILED. Все исходные строки сохраняются. Get_result проверяет хеши.
+
+Для backup остановите локальные MCP-процессы и скопируйте целиком session_root,
+output_root, исходный config, KB и внешний trust config. Не копируйте только
+SQLite-файл во время записи. Секреты модели находятся у клиента, не в reqmap.
+`analysis_origin` содержит неподтверждённые reported_client/reported_model,
+final revision и SHA-256 журнала предложений; это не аттестация личности модели.

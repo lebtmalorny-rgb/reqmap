@@ -1,0 +1,12 @@
+{
+  "default_mcp_settings": {
+    "use_custom_mcp": false,
+    "use_idea_mcp": false
+  },
+  "agent_servers": {
+    "OpenCode": {
+      "command": "/ABSOLUTE/PATH/TO/opencode",
+      "args": ["acp"]
+    }
+  }
+}

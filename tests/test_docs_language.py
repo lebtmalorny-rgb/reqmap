@@ -124,8 +124,8 @@ def test_required_document_is_substantive_russian_without_placeholders(
                 "Codex",
                 "OpenCode",
                 "reqmap analyze",
-                "MCP не требуется",
-                "не выполняет собственное сопоставление",
+                "reqmap_finalize",
+                "клиенты агента",
             ),
         ),
         (

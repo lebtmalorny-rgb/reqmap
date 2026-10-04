@@ -1,4 +1,4 @@
-"""Repo-scoped skill делегирует предметную работу только reqmap CLI."""
+"""Repo-scoped skill distinguishes CLI and model-free IDE workflows."""
 
 from pathlib import Path
 
@@ -27,7 +27,13 @@ def test_reqmap_skill_requires_cli_handoff_and_safe_inputs() -> None:
     assert "stdin" in lowered
     assert "--requirement" in text
     assert "абсолют" in lowered and "xlsx" in lowered
-    assert "не выполняй собственное сопоставление" in lowered
+    assert "reqmap_start_session" in text
+    assert "reqmap_get_atom_context" in text
+    assert "reqmap_submit_mapping" in text
+    assert "reqmap_finalize" in text
+    assert "reqmap_get_result" in text
+    assert "двух" in lowered
+    assert "отдельный llm" in lowered
     for artifact in (
         "result.json",
         "result.xlsx",
@@ -47,14 +53,12 @@ def test_reqmap_skill_contains_no_subject_logic_or_external_actions() -> None:
         "openstack server",
         "kolla-ansible reconfigure",
         "mcp__",
-        "tools.",
         "requirement →",
     ):
         assert forbidden not in lowered
     assert "не запускай openstack api" in lowered
     assert "kolla-ansible" in lowered
     assert "mcp" in lowered
-    assert len(text.split()) < 220
 
 
 def test_skill_preserves_explicit_deep_profile_and_partial_gaps() -> None:

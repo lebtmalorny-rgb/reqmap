@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "reqmap": {
+      "command": "/ABSOLUTE/PATH/TO/reqmap/.venv/bin/reqmap",
+      "args": ["agent", "serve", "--config", "/ABSOLUTE/PATH/TO/reqmap/config.agent.yaml"]
+    }
+  }
+}
