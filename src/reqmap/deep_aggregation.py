@@ -576,6 +576,15 @@ def _validate_evidence_closure(
     if tuple(evidence_by_id) != cited:
         raise ValueError("evidence records must equal cited evidence IDs")
     for record in run.responsibility_records:
+        # An explicitly unproven candidate remains traceable, but cannot
+        # establish support or carry executable/verification procedure links.
+        if (
+            record.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+            and not record.evidence_ids
+            and not record.procedure_step_ids
+            and "procedure_gap:responsibility_evidence" in record.diagnostics
+        ):
+            continue
         covered_refs: set[str] = set()
         entity_refs = {record.action_ref, record.effect_ref} - {None}
         for evidence_id in record.evidence_ids:

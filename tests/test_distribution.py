@@ -177,3 +177,15 @@ def test_unsafe_relative_target_is_rejected_before_virtualenv_creation(
     assert completed.returncode != 0
     assert not (escaped_parent / "venv").exists()
     assert re.search(r"[А-Яа-яЁё]", completed.stderr)
+
+
+def test_deep_example_requires_external_trust_and_no_shipped_production_snapshot():
+    import json
+    value = json.loads((ROOT / "config.deep.example.yaml").read_text())
+    assert value["analysis_profile"] == "deep"
+    assert value["knowledge_trust"]["allowed_signers_path"] == "trust/allowed_signers"
+    assert not (ROOT / value["knowledge_path"]).exists()
+    assert not list((ROOT / "tests/fixtures").rglob("*.sig"))
+    for file in (ROOT / "tests/fixtures").rglob("*"):
+        if file.is_file():
+            assert b"BEGIN OPENSSH PRIVATE KEY" not in file.read_bytes()

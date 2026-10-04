@@ -756,3 +756,38 @@ def test_duplicate_json_keys_and_symlinked_checkpoint_recompute(tmp_path: Path) 
     symlink_model = FakeModel(_completed_responses(text))
     analyze_deep(request, config, symlink_model)
     assert len(symlink_model.calls) == 2
+
+
+def test_deep_unproven_responsibility_preserves_atom_and_resumes(tmp_path: Path) -> None:
+    """An empty evidence selection is a traceable gap, never a checkpoint failure."""
+    from reqmap.models import SupportStatus
+
+    config = _signed_config(tmp_path)
+    request = _request(tmp_path)
+    model = FakeModel((
+        _decomposition(request.requirements[0].text),
+        deep_mapping_response(
+            responsibility_selection(evidence_ids=[]), procedure_template_ids=(),
+        ),
+    ))
+    first = analyze_deep(request, config, model)
+    item = first.requirements[0]
+    assert item.analysis_state is AnalysisState.COMPLETED
+    assert item.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert item.atom_results[0].atom.source_quote == request.requirements[0].text
+    record = first.responsibility_records[0]
+    assert record.evidence_ids == ()
+    assert record.procedure_step_ids == ()
+    assert "procedure_gap:responsibility_evidence" in record.diagnostics
+    assert first.procedure_graphs == ()
+    assert first.run_status == "PARTIAL"
+    from reqmap.deep_aggregation import validate_deep_graph
+    with pytest.raises(ValueError, match="not covered by cited evidence"):
+        validate_deep_graph(replace(
+            first, responsibility_records=(replace(record, diagnostics=()),),
+        ))
+    resumed_model = FakeModel()
+    second = analyze_deep(request, config, resumed_model)
+    assert second.requirements == first.requirements
+    assert second.responsibility_records == first.responsibility_records
+    assert resumed_model.calls == []

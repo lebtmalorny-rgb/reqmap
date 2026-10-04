@@ -100,3 +100,34 @@ printf '%s\n' 'Проверить синтетическую функцию уп
 Не копируйте отдельные файлы поверх работающего checkout. Разверните новую ревизию рядом, выполните `./install.sh`, smoke test и только затем переключите операторский путь. Старую ревизию сохраните до завершения проверки результатов.
 
 Дальнейший запуск описан в [RUNBOOK.md](RUNBOOK.md), а причины установки без нужного wheel — в [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## 6. Предварительные условия deep
+
+Профиль `legacy` остаётся значением по умолчанию. Для `deep` дополнительно
+нужен системный OpenSSH с `ssh-keygen -Y sign` и `ssh-keygen -Y verify`.
+В Rocky Linux 9 пакет называется `openssh-clients`; Python 3.11 и этот пакет
+готовятся в online staging либо из доверенного локального RPM-репозитория
+до автономной установки reqmap. Installer их не скачивает.
+
+В изолированную зону передаются раздельно:
+
+- проверенный source bundle и `vendor/wheels`;
+- approved snapshot schema v2 с `snapshot-manifest.json` и `snapshot-manifest.sig`;
+- доверенный `allowed_signers`, полученный по независимому доверенному каналу.
+
+Публичный ключ внутри самого snapshot не устанавливает доверие. Private signing
+key остаётся в maintenance-среде, API key — в окружении оператора. Production
+snapshot deep в архитектурную поставку не входит. Тестовые ключи создаются
+заново в временных каталогах и не передаются как доверенные рабочие ключи.
+
+После переноса проверьте snapshot:
+
+```bash
+.venv/bin/reqmap knowledge validate \
+  --path /opt/reqmap-knowledge/epoxy-2025.1-deep \
+  --allowed-signers /etc/reqmap/trust/allowed_signers
+```
+
+Тестовая Linux-лаборатория может использовать контейнер с `--network none`:
+loopback остаётся доступным fake-серверу модели, внешней сети нет. Docker нужен
+только для такой лаборатории и не является зависимостью пользователя reqmap.

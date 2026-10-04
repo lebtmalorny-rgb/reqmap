@@ -520,6 +520,8 @@ def _computed_support(
     )
     if claimed_status is SupportStatus.SUPPORTED and selected:
         raise _SelectionError("INDIRECT_SUPPORT_CLAIM: indirect/unknown evidence cannot establish supported.")
+    if not selected:
+        return SupportStatus.INSUFFICIENT_EVIDENCE, ("procedure_gap:responsibility_evidence",)
     return SupportStatus.INSUFFICIENT_EVIDENCE, ()
 
 

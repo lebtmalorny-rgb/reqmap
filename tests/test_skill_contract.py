@@ -55,3 +55,9 @@ def test_reqmap_skill_contains_no_subject_logic_or_external_actions() -> None:
     assert "kolla-ansible" in lowered
     assert "mcp" in lowered
     assert len(text.split()) < 220
+
+
+def test_skill_preserves_explicit_deep_profile_and_partial_gaps() -> None:
+    text = SKILL.read_text(encoding="utf-8")
+    for fragment in ("analysis_profile", "legacy", "deep", "allowed_signers", "procedure_gap", "rollback_unverified"):
+        assert fragment in text, fragment

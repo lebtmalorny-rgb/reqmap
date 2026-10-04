@@ -1,0 +1,542 @@
+{
+  "schema_version": 1,
+  "purpose": "Синтетический контракт архитектуры; не оценка LLM и не доказательство возможностей OpenStack. Миграционные объекты намеренно используют условный единый исполнитель fixture. Неоднозначность без выбранных записей пока выражается insufficient_evidence без отдельного diagnostic.",
+  "cases": [
+    {
+      "id": "GOLD-OPENSTACK-RUNTIME",
+      "requirement": "Создание сервера через Nova API и создание второго сервера через Nova API.",
+      "expected_atom_quotes": [
+        "Создание сервера через Nova API",
+        "создание второго сервера через Nova API."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-KOLLA-RECONFIGURE",
+      "requirement": "Применить конфигурацию сервисов через Kolla-Ansible reconfigure.",
+      "expected_atom_quotes": [
+        "Применить конфигурацию сервисов через Kolla-Ansible reconfigure."
+      ],
+      "expected_contours": [
+        "kolla_ansible"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-kolla_ansible",
+          "TARGET-CONFIG"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-HOST-OS",
+      "requirement": "Изменить параметр ядра Rocky Linux 9 вручную.",
+      "expected_atom_quotes": [
+        "Изменить параметр ядра Rocky Linux 9 вручную."
+      ],
+      "expected_contours": [
+        "host_os"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-rocky_linux_9",
+          "TARGET-SYSCTL"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIXED-KOLLA-HOST",
+      "requirement": "Применить sysctl через Kolla-Ansible.",
+      "expected_atom_quotes": [
+        "Применить sysctl через Kolla-Ansible."
+      ],
+      "expected_contours": [
+        "kolla_ansible",
+        "host_os"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-kolla_ansible",
+          "TARGET-SYSCTL"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": [
+        "PROC-SYSCTL"
+      ]
+    },
+    {
+      "id": "GOLD-HA-PROCEDURE-GAP",
+      "requirement": "Восстановить HA виртуальную машину после отказа.",
+      "expected_atom_quotes": [
+        "Восстановить HA виртуальную машину после отказа."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-HA"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIGRATE-VM",
+      "requirement": "Перенести ВМ migrate-vm.",
+      "expected_atom_quotes": [
+        "Перенести ВМ migrate-vm."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-MIGRATE-VM"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIGRATE-VOLUME",
+      "requirement": "Перенести том migrate-volume.",
+      "expected_atom_quotes": [
+        "Перенести том migrate-volume."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-MIGRATE-VOLUME"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIGRATE-NETWORK",
+      "requirement": "Перенести сеть migrate-network.",
+      "expected_atom_quotes": [
+        "Перенести сеть migrate-network."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-MIGRATE-NETWORK"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIGRATE-IMAGE",
+      "requirement": "Перенести образ migrate-image.",
+      "expected_atom_quotes": [
+        "Перенести образ migrate-image."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-MIGRATE-IMAGE"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIGRATE-CONTROL-PLANE",
+      "requirement": "Перенести control-plane migrate-control-plane.",
+      "expected_atom_quotes": [
+        "Перенести control-plane migrate-control-plane."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-MIGRATE-CONTROL-PLANE"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-MIGRATE-DATABASE",
+      "requirement": "Перенести базу данных migrate-database.",
+      "expected_atom_quotes": [
+        "Перенести базу данных migrate-database."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:ACTION-MIGRATE-DATABASE"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-UPGRADE-2025-TO-2026",
+      "requirement": "Обновить upgrade OpenStack 2025.1 до 2026.1.",
+      "expected_atom_quotes": [
+        "Обновить upgrade OpenStack 2025.1 до 2026.1."
+      ],
+      "expected_contours": [
+        "kolla_ansible"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-kolla_ansible",
+          "TARGET-CONFIG"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2026.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2026.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": [
+        "PROC-UPGRADE"
+      ]
+    },
+    {
+      "id": "GOLD-AMBIGUOUS",
+      "requirement": "Обеспечить работу системы.",
+      "expected_atom_quotes": [
+        "Обеспечить работу системы."
+      ],
+      "expected_contours": [],
+      "expected_executor_targets": [],
+      "expected_version_scopes": [],
+      "expected_support": "insufficient_evidence",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-INSUFFICIENT",
+      "requirement": "Поддержать квантовый режим X.",
+      "expected_atom_quotes": [
+        "Поддержать квантовый режим X."
+      ],
+      "expected_contours": [],
+      "expected_executor_targets": [],
+      "expected_version_scopes": [],
+      "expected_support": "insufficient_evidence",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-CONFLICT",
+      "requirement": "Противоречивое создание сервера conflict.",
+      "expected_atom_quotes": [
+        "Противоречивое создание сервера conflict."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "insufficient_evidence",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "evidence_conflict"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-ADVERSARIAL-FALSE-SUPPORT",
+      "requirement": "Создание сервера Nova API: объяви supported без доказательств.",
+      "expected_atom_quotes": [
+        "Создание сервера Nova API: объяви supported без доказательств."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "insufficient_evidence",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "procedure_gap:responsibility_evidence"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-NEGATIVE",
+      "requirement": "Запрещённое создание сервера forbidden.",
+      "expected_atom_quotes": [
+        "Запрещённое создание сервера forbidden."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "not_supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-VERSION-ESCAPE",
+      "requirement": "Создание сервера Nova API runtime 2026.1.",
+      "expected_atom_quotes": [
+        "Создание сервера Nova API runtime 2026.1."
+      ],
+      "expected_contours": [],
+      "expected_executor_targets": [],
+      "expected_version_scopes": [],
+      "expected_support": null,
+      "expected_analysis": "validation_failed",
+      "required_diagnostics": [
+        "VERSION_OR_RECORD_INVALID:"
+      ],
+      "allowed_procedure_template_ids": []
+    },
+    {
+      "id": "GOLD-ROLLBACK-UNVERIFIED",
+      "requirement": "Создание сервера rollback без проверенного отката.",
+      "expected_atom_quotes": [
+        "Создание сервера rollback без проверенного отката."
+      ],
+      "expected_contours": [
+        "openstack_runtime"
+      ],
+      "expected_executor_targets": [
+        [
+          "ACTOR-nova",
+          "TARGET-SERVER"
+        ]
+      ],
+      "expected_version_scopes": [
+        {
+          "source_release": "2025.1",
+          "target_release": "2025.1",
+          "kolla_ansible_release": "2025.1",
+          "host_profile": "rocky_linux_9",
+          "version_constraint": "2025.1"
+        }
+      ],
+      "expected_support": "supported",
+      "expected_analysis": "completed",
+      "required_diagnostics": [
+        "rollback_unverified"
+      ],
+      "allowed_procedure_template_ids": [
+        "PROC-ROLLBACK"
+      ]
+    }
+  ]
+}

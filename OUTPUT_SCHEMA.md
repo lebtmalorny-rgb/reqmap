@@ -67,3 +67,49 @@ Evidence использует polarity `positive` или `negative` и strength 
 Crosscheck повторно строит expected JSON/Markdown/XLSX из canonical объекта и сравнивает bytes, counts, IDs, statuses и `run_status`. Любая формула, symlink, повреждённый ZIP, неизвестный sheet, изменённая строка или несовпадающий hash даёт exit code 5. Такой набор нельзя частично публиковать как успешный.
 
 Проверяемые действия оператора приведены в [RUNBOOK.md](RUNBOOK.md), а предметные правила evidence — в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
+
+## Deep output schema 2.0
+
+Описание пяти листов, mappings и runtime/designtime выше относится к legacy
+schema `1.0`. Deep сохраняет те же пять файлов, но сериализует
+`DeepRunResult` с явной `schema_version="2.0"`.
+
+Верхний уровень добавляет `responsibility_records` и `procedure_graphs`.
+У требования вместо `mappings` находятся `responsibility_ids` и
+`procedure_graph_ids`; у атома — `responsibility_ids`. Каждая запись
+ответственности содержит `record_id`, `requirement_id`, `atomic_claim_id`,
+`contour`, component/executor/target/action/effect refs, `lifecycle_phase`,
+`version_scope`, `evidence_ids`, `support_status`, `related_record_ids`,
+`procedure_step_ids` и `diagnostics`.
+
+Контуры: `openstack_runtime`, `kolla_ansible`, `host_os`. Фазы: `preflight`,
+`deploy`, `runtime`, `reconfigure`, `upgrade`, `migrate`, `recover`, `verify`,
+`rollback`. Scope хранит source/target release, Kolla release, host profile и
+version constraint. Actions/effects в результате представлены ссылками на
+нормализованные записи подписанной базы, а не отдельными top-level массивами.
+
+Граф содержит `graph_id`, `requirement_id`, `template_id`, `steps` и diagnostics.
+Шаг содержит phase/contour/executor/target/action, preconditions,
+success criteria, evidence IDs, `depends_on` и `rollback_step_id`.
+Циклы, неизвестные ссылки и шаги без доказательств не допускаются;
+неподтверждённый откат выражается `rollback_unverified`.
+
+Deep XLSX содержит ровно семь листов:
+`Требования`, `Атомарные утверждения`, `Ответственность`, `Процедуры`,
+`Доказательства`, `Диагностика`, `Запуск`. `crosscheck_deep` независимо проверяет
+структуру и содержимое JSON/XLSX/Markdown, включая IDs, contours, version scopes,
+связи, diagnostics и counts. Отчёты строятся из того же канонического объекта,
+который записан в JSON; повторный model mapping при экспорте не выполняется.
+
+Deep manifest содержит `analysis_profile`, `snapshot_id`, `manifest_sha256`,
+`key_id`, `signer_identity`, `release_profile`, модель, input hash, prompts,
+seed, `top_k`, retry counts и hashes четырёх артефактов. Полные пути к snapshot,
+trust, URL и секреты в deep metadata не публикуются. `run.jsonl` проверяется
+как тот же файл с неизменённым уже записанным содержимым перед вычислением hash.
+
+`SUCCESS` означает завершённый анализ без операционных gaps, а не поддержку
+всех требований. `PARTIAL` также возможен при всех `analysis_state=completed`,
+если есть конфликт evidence, неоднозначность ответственности, пробел процедуры
+или неподтверждённый откат. Запись `insufficient_evidence` без evidence может
+сохранять кандидатные action/effect refs только с явным
+`procedure_gap:responsibility_evidence` и без ссылок на процедурные шаги.

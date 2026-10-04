@@ -100,3 +100,50 @@ sha256sum results/archive-run-001/{result.json,result.xlsx,report.md,run.jsonl,m
 При `PARTIAL` найдите записи, где `analysis_state` равен `model_failed`, `validation_failed` или `skipped`. Поле `support_status` для незавершённой записи должно быть `null`; трактовать его как `not_supported` запрещено.
 
 Если причина не очевидна, выполните ту же команду с `--debug` в изолированной консоли и следуйте [TROUBLESHOOTING.md](TROUBLESHOOTING.md). Не заменяйте локальный evidence выводом оператора и не запускайте OpenStack/Kolla-Ansible действия из описанных implementation steps.
+
+## 8. Запуск deep и совместимость
+
+Отсутствие `analysis_profile` означает `legacy`. Для deep скопируйте
+`config.deep.example.yaml` в рабочую конфигурацию и задайте реальные абсолютные
+пути к approved базе v2 и внешнему `knowledge_trust.allowed_signers_path`.
+Указанный в примере `knowledge/epoxy-2025.1-deep` заранее не создан.
+
+```bash
+.venv/bin/reqmap knowledge validate \
+  --path /opt/reqmap-knowledge/epoxy-2025.1-deep \
+  --allowed-signers /etc/reqmap/trust/allowed_signers
+.venv/bin/reqmap analyze requirements.xlsx \
+  --config /etc/reqmap/config.deep.yaml \
+  --output results/deep-run-001
+```
+
+Deep preflight проверяет подпись, hashes, статус `approved`, связи и версии
+раньше обращения к модели. При отказе выходной код равен 3; доступны только
+диагностические `run.jsonl` и `manifest.json`, если каталог безопасен.
+
+Exit codes совпадают с legacy. При `PARTIAL` смотрите не только незавершённые
+requirement IDs, но и диагностики завершённых требований:
+`evidence_conflict`, `responsibility_ambiguous`, `procedure_gap`,
+`rollback_unverified`. Подтверждение функции не означает готовность процедуры.
+`responsibility_ambiguous` распознаётся как причина PARTIAL, но самостоятельный
+классификатор неоднозначности пока не реализован: пустой выбор mapping даёт
+`insufficient_evidence`. Запись без процитированных доказательств сохраняется
+как `insufficient_evidence` с `procedure_gap:responsibility_evidence` и без
+процедурных ссылок.
+
+Resume повторяет ту же команду. Deep signature учитывает input, подписанный
+manifest, snapshot/key ID, модель, seed, `top_k`, профиль и версии prompts.
+Каждый checkpoint проверяется вместе с seal, пересчитанным retrieval, evidence
+и графом; одних совпадающих hashes недостаточно. Незавершённые записи
+пересчитываются, а изменённые параметры не переиспользуют старый checkpoint.
+
+Миграция старой базы не делает её пригодной для deep автоматически:
+
+```bash
+.venv/bin/reqmap knowledge migrate-v1 \
+  --source knowledge/epoxy-2025.1 \
+  --output results/knowledge-v2-draft
+```
+
+Команда создаёт только unsigned `draft` и список вопросов для review.
+Дальнейшая нормализация и подпись описаны в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).

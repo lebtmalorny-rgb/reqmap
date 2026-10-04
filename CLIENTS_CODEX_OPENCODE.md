@@ -152,3 +152,17 @@ Codex не должен пересказывать собственный mappin
 MCP не требуется для v1 и не является скрытым исполнителем анализа. Если позднее появится тонкий MCP adapter, он должен вызывать публичный API/CLI `reqmap` и не владеть отдельной предметной логикой.
 
 При проблемах используйте [RUNBOOK.md](RUNBOOK.md) и [TROUBLESHOOTING.md](TROUBLESHOOTING.md). Формат полей и cross-artifact contract описаны в [OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md).
+
+## 8. Выбор deep-профиля
+
+Профиль определяется рабочим config: отсутствие `analysis_profile` означает
+`legacy`, явное `analysis_profile=deep` требует approved signed snapshot v2,
+внешний `allowed_signers` и системный `ssh-keygen -Y`. Установленный repo-scoped
+skill передаёт этот config в тот же CLI, не подменяя профиль при отказе preflight.
+Production deep corpus в архитектурную поставку не входит.
+
+Для deep передайте тот же запрос с путём к рабочему deep config. При exit code 4
+агент сообщает не только незавершённые IDs, но и `procedure_gap`,
+`evidence_conflict`, `responsibility_ambiguous`, `rollback_unverified`:
+результат может быть частичным даже при завершённой обработке всех строк.
+При коде 3 показываются только реально созданные диагностические файлы.

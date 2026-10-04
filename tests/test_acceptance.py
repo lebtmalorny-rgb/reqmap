@@ -32,7 +32,8 @@ ARTIFACT_NAMES = (
 class _FakeOpenAIServer(ThreadingHTTPServer):
     model_name = "acceptance-local-model"
 
-    def __init__(self) -> None:
+    def __init__(self, response_factory=None) -> None:
+        self.response_factory = response_factory or _model_response
         super().__init__(("127.0.0.1", 0), _FakeOpenAIHandler)
         self.requests: list[tuple[str, str, object | None]] = []
         self.errors: list[str] = []
@@ -69,7 +70,7 @@ class _FakeOpenAIHandler(BaseHTTPRequestHandler):
                 self._send_json(404, {"error": "unknown endpoint"})
                 return
             prompt = _prompt_payload(body)
-            response = _model_response(prompt)
+            response = self.fake_server.response_factory(prompt)
             self._send_json(
                 200,
                 {

@@ -84,3 +84,54 @@ CLI печатает абсолютный путь и SHA-256 каждого с�
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — причины отказов и проверяемые действия.
 
 Архитектурные решения и детальный implementation plan находятся в `docs/superpowers/`. Для обычной установки и анализа эти материалы не требуются.
+
+## Расширенный профиль deep
+
+Старые конфигурации сохраняют `analysis_profile=legacy` и output schema `1.0`.
+Явный `analysis_profile=deep` включает schema `2.0`: отдельные записи
+`openstack_runtime`, `kolla_ansible`, `host_os`, ссылки между исполнителем и
+объектом изменения, графы процедур и диагностику пробелов.
+
+Для deep нужны Python 3.11+, системный `ssh-keygen` с поддержкой `-Y`,
+knowledge schema v2 со статусом `approved`, подписанный manifest и доверенный
+файл `allowed_signers` вне snapshot. Пример конфигурации —
+`config.deep.example.yaml`; указанная там production-база **не поставляется**
+этим архитектурным этапом. Подписанные тестовые snapshots создаются только
+временными fixtures. Нельзя выдавать synthetic gold set за подтверждение
+возможностей реального OpenStack или качества выбранной модели.
+
+Базовый профиль — OpenStack/Kolla-Ansible 2025.1 и Rocky Linux 9.
+Цель `2026.1` допустима только для upgrade. Анализ не открывает URL источников;
+единственная сетевая зависимость — настроенный endpoint модели.
+
+В обоих профилях сохраняются пять файлов результата. Deep XLSX содержит семь
+листов; `supported` описывает подтверждённую функцию и не отменяет
+`procedure_gap` или `rollback_unverified`. Такие пробелы делают запуск `PARTIAL`.
+Команды и интерпретация результата приведены в [RUNBOOK.md](RUNBOOK.md),
+обслуживание подписанной базы — в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
+
+## Приёмка архитектуры deep — 04.10.2026
+
+Чистый source archive установлен в Rocky Linux 9.8 (`aarch64`) с Python
+3.11.13 и OpenSSH 9.9p1. При установке и проверках использовался контейнер
+`--network none`; подготовка системных пакетов образа выполнялась заранее.
+Installer использовал 12 wheels из `vendor/wheels`. Результат полного suite:
+**928 passed**, без skips. `compileall`, `pip check`, legacy KB validation и
+проверка подписанного v2 snapshot завершились успешно.
+
+SHA-256 manifest минимального synthetic snapshot:
+`3c49180ab934f8dbb447a8a5f240bbcfc2a891327e2af8241ec23df5c52a080b`.
+Это fingerprint тестовой базы, не production snapshot. Приватный ключ
+генерировался внутри временного контейнера и в поставку не включён.
+
+Frozen gold содержит 19 сценариев: исходные 16, прямой negative evidence,
+запрещённый runtime scope 2026.1 и непроверенный rollback. Проверены буквальные
+цитаты атомов, contours, executor/target, версии, gaps, отсутствие ложного
+`supported`, согласованность артефактов, resume и отказ до model preflight при
+изменении или удалении каждого файла из подписанного manifest. Fake HTTP LLM
+разрешены только `GET /v1/models` и `POST /v1/chat/completions` на loopback.
+
+На macOS arm64 с Python 3.14.0 тот же suite дал 928 passed и три предупреждения
+stdlib о `fork()` в тестах FIFO. Эти результаты подтверждают программные
+контракты. Проверка реальной LLM и предметное наполнение OpenStack/Kolla/Rocky
+остаются отдельными этапами; HA, migration и upgrade runbooks не поставлены.

@@ -168,3 +168,18 @@ def test_markdown_local_links_resolve() -> None:
     for name in DOCS:
         for target in pattern.findall(_document(name)):
             assert (ROOT / target).is_file(), f"{name}: broken link {target}"
+
+
+@pytest.mark.parametrize("name, fragments", [
+    ("README.md", ("analysis_profile", "legacy", "deep", "production", "ssh-keygen")),
+    ("INSTALL_OFFLINE.md", ("allowed_signers", "openssh-clients", "schema v2", "-Y")),
+    ("RUNBOOK.md", ("config.deep.example.yaml", "--allowed-signers", "knowledge migrate-v1", "rollback_unverified")),
+    ("KNOWLEDGE_BASE.md", ("snapshot_status", "draft", "approved", "build_snapshot_v2.py", "sign_snapshot_v2.py", "--private-key")),
+    ("OUTPUT_SCHEMA.md", ("2.0", "responsibility_records", "procedure_graphs", "Ответственность", "Процедуры", "Диагностика")),
+    ("TROUBLESHOOTING.md", ("SNAPSHOT_", "KNOWLEDGE_SCHEMA_UNSUPPORTED", "evidence_conflict", "procedure_gap")),
+    ("CLIENTS_CODEX_OPENCODE.md", ("analysis_profile", "deep", "allowed_signers", "production")),
+])
+def test_deep_documentation_covers_public_profile(name, fragments):
+    text = _document(name)
+    for fragment in fragments:
+        assert fragment.casefold() in text.casefold(), (name, fragment)

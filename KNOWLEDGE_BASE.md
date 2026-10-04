@@ -61,3 +61,53 @@ PYTHONPATH=src .venv/bin/python tools/kb/build_snapshot.py \
 8. `build_snapshot.py`, `knowledge validate`, unit tests и негативные tests проходят на чистом checkout.
 
 Структура выходных ссылок на evidence описана в [OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md). Ошибки integrity и hash mismatch разобраны в [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
+
+## Schema v2: сопровождение deep snapshot
+
+Legacy v1 хранится отдельно. Deep schema v2 добавляет `actors.json`,
+`targets.jsonl`, `actions.jsonl`, `effects.jsonl`, `procedures.jsonl`, локальный
+`corpus/`, `snapshot-manifest.json` и detached `snapshot-manifest.sig`.
+Индекс, если поставляется, также покрывается manifest. Корпус даёт кандидатов;
+финальную поддержку устанавливают нормализованные evidence. По умолчанию
+corpus discovery отключён, production semantic index не поставляется.
+
+`metadata.json` фиксирует `knowledge_schema_version=2`, `snapshot_status`,
+`snapshot_id`, `key_id`, OpenStack/Kolla 2025.1, upgrade target 2026.1 и
+`host_profile=rocky_linux_9`. Runtime принимает только `snapshot_status=approved`.
+Нельзя просто переименовать `draft` в `approved`: сначала проверяются claims,
+locators, evidence, действия, эффекты и процедуры. Миграция v1 сама не создаёт
+новых действий или доказательств и выдаёт только unsigned draft с review gaps.
+
+После предметного review в maintenance-среде собирают manifest и подписывают
+его отдельным ключом Ed25519. В примере пути уже подготовлены оператором;
+закрытый ключ располагается вне репозитория и snapshot:
+
+```bash
+.venv/bin/python tools/kb/build_snapshot_v2.py \
+  --path /srv/reqmap-knowledge/epoxy-2025.1-deep
+.venv/bin/python tools/kb/sign_snapshot_v2.py \
+  --path /srv/reqmap-knowledge/epoxy-2025.1-deep \
+  --private-key /srv/reqmap-maintenance-keys/signing_key
+.venv/bin/reqmap knowledge validate \
+  --path /srv/reqmap-knowledge/epoxy-2025.1-deep \
+  --allowed-signers /etc/reqmap/trust/allowed_signers
+```
+
+Доверенный `allowed_signers` находится снаружи snapshot. Формат строки:
+`reqmap-snapshot ssh-ed25519 <PUBLIC_KEY_BASE64>`; namespace подписи —
+`reqmap-snapshot`. Публичный ключ сверяют независимо от передачи snapshot.
+Private key не передают runtime и не коммитят. `key_id` — метка manifest;
+криптографическое доверие устанавливается проверкой подписи по allowed_signers.
+
+Каждая запись ответственности содержит один contour. Если исполнитель
+Kolla-Ansible изменяет host OS, нужны две связанные записи: автоматизация и
+изменение подсистемы Rocky Linux 9. `executor_ref` и `target_ref` не объединяются.
+Evidence 2025.1 не доказывает поведение 2026.1; target 2026.1 разрешён только
+для upgrade action и его upgrade-шагов. Остальные стадии процедуры используют
+отдельные actions с подходящими version scopes.
+
+Текущий этап поставляет архитектуру и synthetic fixtures, а не production
+корпус. `tests/fixtures/deep_gold.json` фиксирует ожидаемые результаты;
+`tests/deep_acceptance_support.py` отдельно задаёт искусственные источники и
+ответы fake LLM. Условный исполнитель миграций в fixtures не является
+предметным сопоставлением миграций Nova/Cinder/Neutron/Glance/БД.
