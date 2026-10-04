@@ -10,7 +10,10 @@
 
 ## Быстрый старт
 
-Требуется Linux и Python 3.11 или новее. После получения полного репозитория установка выполняется без доступа к Интернету:
+Впервые работаете с программой? Начните с [пошаговой инструкции для начинающих](BEGINNER_GUIDE.md):
+Linux и macOS, открытие проекта в VS Code или PyCharm, установка, настройка модели и первый отчёт.
+
+Для Linux и macOS требуются Python 3.11 или новее и Bash. После получения полного репозитория установка выполняется без доступа к Интернету:
 
 ```bash
 chmod +x install.sh
@@ -76,6 +79,7 @@ CLI печатает абсолютный путь и SHA-256 каждого с�
 
 ## Документация
 
+- [BEGINNER_GUIDE.md](BEGINNER_GUIDE.md) — установка и запуск в VS Code или PyCharm на Linux и macOS простыми словами;
 - [INSTALL_OFFLINE.md](INSTALL_OFFLINE.md) — подготовка bundle, перенос и установка в изолированной зоне;
 - [RUNBOOK.md](RUNBOOK.md) — запуск, preflight, resume, backup и диагностика;
 - [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md) — устройство и сопровождение evidence snapshot;
