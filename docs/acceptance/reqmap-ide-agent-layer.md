@@ -13,8 +13,8 @@ Reqmap предоставляет девять MCP tools без вызова LLM
 
 | Проверка | Результат |
 | --- | --- |
-| macOS 26.6.2, arm64, Python 3.14.0: полный suite | 1040 passed, 3 существующих предупреждения fork, 69,54 s |
-| Добавленная затем проверка ссылок frozen eval | 1 passed; исправлены ошибочные IDs в тестовом наборе |
+| macOS 26.6.2, arm64, Python 3.14.0: полный suite | 1051 passed, 3 существующих предупреждения fork, 74,99 s (после исправлений ревью) |
+| Ссылки frozen eval | PASS; входят в финальный suite |
 | Offline-копия macOS с пробелами в пути | install.sh, --version, knowledge validate, agent serve --help, EOF, pip check — PASS |
 | Установленный пакет без dev PYTHONPATH | Полный scripted MCP flow из отдельной offline-копии — PASS |
 | Текст/TXT/XLSX × legacy/deep | 6 subprocess flows — PASS; запрет constructor модели и socket connect, restart, rejected mapping, повтор finalize |
@@ -57,7 +57,7 @@ PYTHON_BIN=python3.11 ./install.sh
 .venv/bin/python -m compileall -q src tools tests
 ```
 
-Python 3.11.13, Linux 6.12.54-linuxkit, aarch64: **1041 passed за 65,29 s**.
+Python 3.11.13, Linux 6.12.54-linuxkit, aarch64: **1051 passed за 68,41 s** после исправлений ревью.
 `pip check` и `compileall` завершились с кодом 0. Installed flow, process locks,
 масштабный тест и universal-wheel audit входят в этот suite; внешняя сеть отключена.
 
@@ -87,3 +87,32 @@ artifact hashes, пропущенные обязательства и false-supp
 проверяется уточняющий вопрос; для conflict/negative — сохранение отрицательных
 доказательств; для injection — отсутствие выполнения вложенных инструкций.
 Deep fixtures не являются production OpenStack corpus.
+
+## Независимое ревью и исправления
+
+Свежий reviewer проверил `b2d2e82..3e43012`, самостоятельно запустил 71 focused
+тест и нашёл два Important дефекта. Critical и Minor замечаний нет.
+Оба исправлены с наблюдаемым RED → GREEN:
+
+- При реальном завершении процесса временные файлы экспортёров оставались
+  в staging и мешали повтору finalize. Восстановление теперь удаляет только
+  обычные файлы с известными именами экспортёров; symlink, специальные и
+  неизвестные файлы не допускаются. Проверены шесть точек os._exit: JSON,
+  legacy/deep XLSX raw/verify, manifest.
+- После finalize новые отклонённые submit-запросы меняли опубликованный хеш
+  журнала. Теперь отказ сохраняется отдельным receipt без изменения событий
+  закрытой сессии. Проверены atoms/mapping с текущей и устаревшей revision,
+  повтор после restart и reuse request_id с другими аргументами.
+
+Финальные полные suite: macOS **1051 passed**, Linux installed offline
+**1051 passed**; повторное ревью не подменяет эти регрессионные проверки.
+
+Принятые границы проверки и их последствия:
+
+1. Реальные IDE остаются not run: школьные подключения требуют живой приёмки.
+2. Качество выбранной модели не подтверждено: полноту атомов и false-supported
+   ещё нужно измерить на frozen eval через настоящий клиент.
+3. Тестируется смерть процесса, а не отключение питания/отказ диска:
+   эмпирическая гарантия восстановления после аппаратного сбоя не заявляется.
+4. Масштаб измерен с atoms и незавершённым mapping: задержка и память полного
+   анализа 1950 строк пока не измерены.

@@ -2,6 +2,7 @@
 from dataclasses import replace
 import hashlib
 import os
+import re
 from pathlib import Path
 from reqmap import __version__
 from reqmap.agent_config import AgentConfig
@@ -90,10 +91,18 @@ def verify_publication(directory, intent, run=None):
         raise ReqmapError('ARTIFACTS_CHANGED','Артефакты отсутствуют или изменены; проверенный отчёт недоступен.') from exc
 
 
+# Only names produced by our atomic JSON/Markdown and XLSX writers are
+# reclaimable after process death. Unknown files and special files remain errors.
+_STAGING_TEMP = re.compile(
+    r'\.(?:result\.(?:json|xlsx)|report\.md|run\.jsonl|manifest\.json)\.[A-Za-z0-9_-]+'
+    r'|\.(?:deep-)?xlsx-(?:raw|verify)-[A-Za-z0-9_-]+\.xlsx'
+)
+
+
 def _reset_staging(staging):
     ensure_secure_directory(staging)
     for path in staging.iterdir():
-        if path.name not in ARTIFACTS or symlink_component(path) or not path.is_file():
+        if (path.name not in ARTIFACTS and _STAGING_TEMP.fullmatch(path.name) is None) or symlink_component(path) or not path.is_file():
             raise ValueError('unsafe staging content')
         path.unlink()
 

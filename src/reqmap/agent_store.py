@@ -290,10 +290,18 @@ class SessionStore:
                 if intent is not None and intent['status'] == 'pending':
                     db.execute('COMMIT')
                     return failure('PUBLICATION_PENDING','Публикация начата; повторите исходный finalize.')
+                if record.status != 'active':
+                    # The published proposal journal is sealed. Cache new refusals
+                    # separately so retries remain durable without changing its hash.
+                    error = (failure('REVISION_CONFLICT','Состояние изменилось; прочитайте текущую revision.')
+                             if command.expected_revision != record.revision else
+                             failure('SESSION_CLOSED','Сессия уже завершена.'))
+                    reply = replace(error,data=dict(session_id=record.session_id,revision=record.revision))
+                    self._save_receipt(db,record.session_id,command.request_id,digest,reply)
+                    db.execute('COMMIT')
+                    return reply
                 if command.expected_revision != record.revision:
                     decision = MutationDecision(False, failure('REVISION_CONFLICT','Состояние изменилось; прочитайте текущую revision.'),record.status)
-                elif record.status != 'active':
-                    decision = MutationDecision(False, failure('SESSION_CLOSED','Сессия уже завершена.'),record.status)
                 else:
                     try:
                         decision = mutate(record)

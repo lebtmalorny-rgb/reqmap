@@ -139,3 +139,75 @@ def test_deep_finalization_uses_procedure_and_conflict_gates(tmp_path,text,expec
         result = finalize(svc,sid,partial=True,request='partial')
     assert result.ok, result
     assert result.data['run_status'] == expected
+
+
+def _exit_during_export(config,sid,prefix):
+    import os
+    import tempfile
+    original=tempfile.mkstemp
+    def crash(*args,**kwargs):
+        fd,name=original(*args,**kwargs)
+        if Path(name).name.startswith(prefix) and Path(name).parent.name.endswith('.staging'):
+            os.close(fd)
+            os._exit(73)
+        return fd,name
+    tempfile.mkstemp=crash
+    finalize(AgentService(config),sid)
+
+
+@pytest.mark.parametrize('prefix,deep',[
+    ('.result.json.',False),('.xlsx-raw-',False),('.xlsx-verify-',False),
+    ('.deep-xlsx-raw-',True),('.deep-xlsx-verify-',True),('.manifest.json.',False),
+])
+def test_actual_process_death_with_export_tempfile_recovers(tmp_path,prefix,deep):
+    import multiprocessing
+    if deep:
+        kb,trust=gold_snapshot(tmp_path)
+        config=replace(make_agent_config(tmp_path),analysis_profile=AnalysisProfile.DEEP,
+            knowledge_path=kb,knowledge_trust=KnowledgeTrustConfig(trust))
+        svc=AgentService(config);sid=start(svc,('Создание сервера через Nova API',))
+        finished(svc,sid,'Создание сервера через Nova API')
+    else:
+        svc,sid,context=prepared(tmp_path)
+        assert submit(svc,sid,context,_mapping_response('создание виртуальной машины через Nova REST API')).ok
+    child=multiprocessing.get_context('spawn').Process(target=_exit_during_export,args=(svc.config,sid,prefix))
+    child.start();child.join(15)
+    assert not child.is_alive()
+    assert child.exitcode==73
+    intent=svc.store.publication(sid)
+    assert intent['status']=='pending'
+    staging=svc.config.output_root/intent['staging_name']
+    assert any(p.name.startswith(prefix) for p in staging.iterdir())
+    recovered=finalize(AgentService(svc.config),sid)
+    assert recovered.ok,recovered
+    assert svc.store.read(sid).revision==3
+    assert finalize(svc,sid)==recovered
+    final_dir=Path(recovered.data['artifacts']['result.json']).parent
+    assert {p.name for p in final_dir.iterdir()}==set(recovered.data['artifacts'])
+    assert len(list(svc.config.output_root.iterdir()))==1
+
+
+@pytest.mark.parametrize('revision',[2,3])
+@pytest.mark.parametrize('operation',['atoms','mapping'])
+def test_rejected_closed_proposal_receipt_does_not_change_sealed_journal(tmp_path,revision,operation):
+    from reqmap.analysis_origin import proposal_journal_sha256
+    svc,sid,ctx=prepared(tmp_path)
+    assert submit(svc,sid,ctx,_mapping_response('создание виртуальной машины через Nova REST API')).ok
+    published=finalize(svc,sid);assert published.ok
+    before=svc.store.read(sid);digest=proposal_journal_sha256(before)
+    def attempt(current,changed=False):
+        if operation=='atoms':
+            return atoms(current,sid,'создание' if changed else 'Nova REST API','closed',revision)
+        proposal={'changed':True} if changed else _mapping_response('создание виртуальной машины через Nova REST API')
+        return submit(current,sid,ctx,proposal,'closed',revision)
+    reply=attempt(svc)
+    assert not reply.ok
+    after=svc.store.read(sid)
+    assert after==before
+    assert proposal_journal_sha256(after)==digest
+    assert attempt(AgentService(svc.config))==reply
+    changed=attempt(svc,True)
+    assert changed.error.code=='REQUEST_ID_REUSED'
+    manifest=json.loads(Path(published.data['artifacts']['manifest.json']).read_text())
+    assert manifest['analysis_origin']['proposal_journal_sha256']==digest
+    assert svc.call('reqmap_get_result',dict(session_id=sid)).ok
