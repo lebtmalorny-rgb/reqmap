@@ -14,3 +14,7 @@ def make_agent_config(tmp_path: Path, profile: AnalysisProfile = AnalysisProfile
         trust = KnowledgeTrustConfig(allowed)
     return AgentConfig(profile, knowledge, trust, None, 8, tmp_path,
                        tmp_path / 'sessions', tmp_path / 'outputs', AgentLimits())
+
+
+def call_tool(service, name, **arguments):
+    return service.call(name, arguments)

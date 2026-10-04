@@ -76,3 +76,11 @@ class MutationDecision:
     accepted: bool
     reply: ToolReply
     status: Literal['active', 'finalized', 'failed']
+
+
+@dataclass(frozen=True)
+class SessionView:
+    record: SessionRecord
+    requirements: tuple['Requirement', ...]
+    atoms_by_requirement: dict[str, tuple['AtomicClaim', ...]]
+    mappings_by_atom: dict[str, 'AtomResult | DeepMappingOutcome']
