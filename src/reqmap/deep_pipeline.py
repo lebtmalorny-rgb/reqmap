@@ -204,7 +204,7 @@ def analyze_deep(
     requirement_results = tuple(results)
     records = tuple(all_records)
     graphs = tuple(all_graphs)
-    evidence = _cited_deep_evidence(records, graphs, knowledge)
+    evidence = cited_deep_evidence(records, graphs, knowledge)
     status = deep_run_status(requirement_results, preflight_ok=True)
     run = DeepRunResult(
         run_id=f"run-{signature[:16]}",
@@ -500,7 +500,7 @@ def _analyze_deep_requirement(
             (),
             (),
         )
-    evidence = _cited_deep_evidence(linked_records, procedure.graphs, knowledge)
+    evidence = cited_deep_evidence(linked_records, procedure.graphs, knowledge)
     return _RequirementBuild(result, linked_records, procedure.graphs, evidence)
 
 
@@ -538,7 +538,7 @@ def _failed_deep_requirement(
     )
 
 
-def _cited_deep_evidence(
+def cited_deep_evidence(
     records: tuple[ResponsibilityRecord, ...],
     graphs: tuple[ProcedureGraph, ...],
     knowledge: KnowledgeBaseV2,
@@ -916,7 +916,7 @@ def _validate_checkpoint_kb(
     knowledge: KnowledgeBaseV2,
     config: AppConfig,
 ) -> None:
-    if build.evidence != _cited_deep_evidence(
+    if build.evidence != cited_deep_evidence(
         build.records, build.graphs, knowledge
     ):
         raise ValueError("checkpoint evidence differs from verified knowledge")

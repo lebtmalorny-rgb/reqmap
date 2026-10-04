@@ -18,6 +18,8 @@ from reqmap.proposals import ProposalError
 
 
 TOOL_FIELDS = {
+    'reqmap_finalize': ({'session_id','request_id','expected_revision'}, {'allow_partial'}),
+    'reqmap_get_result': ({'session_id'}, {'cursor','page_size'}),
     'reqmap_start_session': ({'request_id','source'}, {'clarifications','parent_session_id','reported_client'}),
     'reqmap_get_session': ({'session_id'}, {'cursor','page_size','requirement_id'}),
     'reqmap_get_atom_context': ({'session_id','atom_id'}, set()),
@@ -75,7 +77,15 @@ class AgentService:
                 return self._get_session(arguments)
             if name in ('reqmap_get_atom_context','reqmap_search_knowledge','reqmap_get_evidence'):
                 return self._knowledge_tool(name, arguments)
+            if name == 'reqmap_get_result':
+                from reqmap.agent_finalize import get_result
+                return get_result(self.store,self.config,arguments,self._page_size(arguments))
+            if name == 'reqmap_finalize' and type(arguments.get('allow_partial',False)) is not bool:
+                raise ReqmapError('TOOL_ARGUMENTS','allow_partial должен быть bool.')
             command = MutationCommand(arguments['session_id'], arguments['request_id'], arguments['expected_revision'], name, arguments)
+            if name == 'reqmap_finalize':
+                from reqmap.agent_finalize import finalize_session
+                return finalize_session(self.store,self.config,command)
             return self.store.transact(command, lambda record:self._submit_atoms(record, arguments) if name == 'reqmap_submit_atoms' else self._submit_mapping(record, arguments))
         except ReqmapError as exc:
             return failure(exc.code, exc.message_ru, **exc.details)

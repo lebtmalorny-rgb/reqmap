@@ -113,6 +113,8 @@ class SessionStore:
                         session_id TEXT NOT NULL, sequence INTEGER NOT NULL, event_json TEXT NOT NULL,
                         previous_hash TEXT NOT NULL, event_hash TEXT NOT NULL,
                         PRIMARY KEY(session_id, sequence));
+                    CREATE TABLE IF NOT EXISTS publications (
+                        session_id TEXT PRIMARY KEY, intent_json TEXT NOT NULL, intent_hash TEXT NOT NULL);
                     CREATE TABLE IF NOT EXISTS receipts (
                         scope TEXT NOT NULL, request_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
                         reply_json TEXT NOT NULL, receipt_hash TEXT NOT NULL,
@@ -271,6 +273,10 @@ class SessionStore:
                     db.execute('COMMIT')
                     return previous
                 record = self._read(db, command.session_id)
+                intent = self._publication(db, command.session_id)
+                if intent is not None and intent['status'] == 'pending':
+                    db.execute('COMMIT')
+                    return failure('PUBLICATION_PENDING','Публикация начата; повторите исходный finalize.')
                 if command.expected_revision != record.revision:
                     decision = MutationDecision(False, failure('REVISION_CONFLICT','Состояние изменилось; прочитайте текущую revision.'),record.status)
                 elif record.status != 'active':
@@ -299,3 +305,97 @@ class SessionStore:
         previous = row[0] if row else db.execute('SELECT seed_hash FROM sessions WHERE session_id=?',(record.session_id,)).fetchone()[0]
         payload = _json(to_dict(event))
         db.execute('INSERT INTO events VALUES(?,?,?,?,?)', (record.session_id,event.sequence,payload,previous,_hash((previous+payload).encode())))
+
+    def command_receipt(self, command):
+        self._session_id(command.session_id)
+        self._request_id(command.request_id)
+        if type(command.expected_revision) is not int or command.expected_revision < 0:
+            raise ReqmapError('REVISION_INVALID','expected_revision должна быть неотрицательным целым.')
+        with self._connect() as db:
+            return self._receipt(db,command.session_id,command.request_id,_hash(canonical_json_bytes(to_dict(command))))
+
+    def _publication(self, db, session_id):
+        row = db.execute('SELECT intent_json,intent_hash FROM publications WHERE session_id=?',(session_id,)).fetchone()
+        if row is None:
+            return None
+        try:
+            if _hash(row[0].encode()) != row[1]:
+                raise ValueError()
+            intent = strict_json_object(row[0])
+            if set(intent) != {'session_id','request_id','payload_sha256','source_revision','final_revision','proposal_journal_sha256','staging_name','final_name','status','artifact_hashes'}:
+                raise ValueError()
+            self._session_id(intent['final_name'])
+            if intent['session_id'] != session_id or intent['staging_name'] != '.'+intent['final_name']+'.staging' or intent['status'] not in ('pending','committed','failed'):
+                raise ValueError()
+            return intent
+        except (ValueError,TypeError,KeyError,ReqmapError) as exc:
+            raise ReqmapError('SESSION_CORRUPT','Повреждено намерение публикации.') from exc
+
+    def publication(self, session_id):
+        self._session_id(session_id)
+        with self._connect() as db:
+            return self._publication(db,session_id)
+
+    def _save_publication(self, db, intent):
+        payload = _json(intent)
+        db.execute('INSERT OR REPLACE INTO publications VALUES(?,?,?)',(intent['session_id'],payload,_hash(payload.encode())))
+
+    def reserve_publication(self, command, journal_sha256):
+        self.command_receipt(command)  # Validate identifiers and revision shape.
+        digest = _hash(canonical_json_bytes(to_dict(command)))
+        with self.locked(command.session_id), self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            record = self._read(db,command.session_id)
+            intent = self._publication(db,command.session_id)
+            if intent is not None:
+                if intent['request_id'] != command.request_id:
+                    raise ReqmapError('PUBLICATION_PENDING','Повторите исходный finalize.')
+                if intent['payload_sha256'] != digest:
+                    raise ReqmapError('REQUEST_ID_REUSED','request_id уже использован с другими аргументами.')
+                if intent['proposal_journal_sha256'] != journal_sha256:
+                    raise ReqmapError('SESSION_CORRUPT','Журнал изменён после начала публикации.')
+            else:
+                if record.revision != command.expected_revision:
+                    raise ReqmapError('REVISION_CONFLICT','Состояние изменилось; прочитайте текущую revision.')
+                if record.status != 'active':
+                    raise ReqmapError('SESSION_CLOSED','Сессия уже завершена.')
+                name = str(uuid.uuid4())
+                intent = dict(session_id=record.session_id,request_id=command.request_id,payload_sha256=digest,
+                    source_revision=record.revision,final_revision=record.revision+1,proposal_journal_sha256=journal_sha256,
+                    staging_name='.'+name+'.staging',final_name=name,status='pending',artifact_hashes={})
+                self._save_publication(db,intent)
+            db.execute('COMMIT')
+            return intent
+
+    def record_publication_hashes(self, command, hashes):
+        with self.locked(command.session_id), self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            intent = self._publication(db,command.session_id)
+            if intent is None or intent['status'] != 'pending' or intent['payload_sha256'] != _hash(canonical_json_bytes(to_dict(command))):
+                raise ReqmapError('SESSION_CORRUPT','Нет соответствующего намерения публикации.')
+            intent['artifact_hashes'] = hashes
+            self._save_publication(db,intent)
+            db.execute('COMMIT')
+            return intent
+
+    def complete_publication(self, command, reply):
+        digest = _hash(canonical_json_bytes(to_dict(command)))
+        with self.locked(command.session_id), self._connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            previous = self._receipt(db,command.session_id,command.request_id,digest)
+            if previous is not None:
+                db.execute('COMMIT')
+                return previous
+            record = self._read(db,command.session_id)
+            intent = self._publication(db,command.session_id)
+            if intent is None or intent['status'] != 'pending' or intent['payload_sha256'] != digest or record.revision != intent['source_revision']:
+                raise ReqmapError('SESSION_CORRUPT','Намерение публикации не совпадает с сессией.')
+            revision = record.revision + int(reply.ok)
+            reply = replace(reply,data={**reply.data,'session_id':record.session_id,'revision':revision})
+            self._append(db,record,JournalEvent(len(record.events)+1,command.request_id,command.operation,command.arguments,reply.ok,reply))
+            db.execute('UPDATE sessions SET revision=?,status=? WHERE session_id=?',(revision,'finalized' if reply.ok else 'failed',record.session_id))
+            intent['status'] = 'committed' if reply.ok else 'failed'
+            self._save_publication(db,intent)
+            self._save_receipt(db,record.session_id,command.request_id,digest,reply)
+            db.execute('COMMIT')
+            return reply

@@ -124,7 +124,7 @@ def analyze(
 
     requirement_results = tuple(results)
     groups = aggregate_groups(requirement_results)
-    cited_evidence = _cited_evidence(requirement_results, knowledge)
+    cited_evidence = collect_cited_evidence(requirement_results, knowledge)
     status = run_status(requirement_results, preflight_ok=True)
     return RunResult(
         run_id=f"run-{signature[:16]}",
@@ -568,7 +568,7 @@ def _decode_step(raw: object, mapping_phase: Phase) -> ImplementationStep:
     )
 
 
-def _cited_evidence(
+def collect_cited_evidence(
     requirements: tuple[RequirementResult, ...],
     knowledge: KnowledgeBase,
 ) -> tuple[Evidence, ...]:
