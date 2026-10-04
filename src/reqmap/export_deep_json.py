@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 
 from reqmap.deep_aggregation import validate_deep_graph
+from reqmap.analysis_origin import origin_metadata
 from reqmap.deep_models import (
     DeepAtomResult,
     DeepEvidence,
@@ -83,6 +84,7 @@ def _deep_metadata_payload(run: DeepRunResult) -> dict[str, object]:
     metadata = run.metadata
     if not isinstance(metadata, Mapping):
         raise ValueError("DeepRunResult.metadata must be a mapping")
+    origin = origin_metadata(metadata)
     allow_missing_trust = run.run_status == "FAILED"
     input_sha256 = _sha256(metadata.get("input_sha256"), "input_sha256")
     snapshot_id = _trust_identifier(
@@ -100,6 +102,7 @@ def _deep_metadata_payload(run: DeepRunResult) -> dict[str, object]:
         metadata.get("signer_identity"), "signer_identity", allow_missing_trust
     )
     return {
+        **({"analysis_origin": origin} if origin is not None else {}),
         "reqmap_version": _safe_version(
             metadata.get("reqmap_version"), "reqmap_version"
         ),

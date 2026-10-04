@@ -11,6 +11,7 @@ import tempfile
 from urllib.parse import urlsplit, urlunsplit
 
 from reqmap.aggregation import aggregate_groups
+from reqmap.analysis_origin import origin_metadata
 from reqmap.models import AnalysisState, Evidence, RunResult, to_dict
 
 
@@ -105,6 +106,7 @@ def validate_run_result(run: RunResult) -> None:
 
     if not isinstance(run.metadata, MappingABC):
         raise ValueError("RunResult.metadata должен быть mapping.")
+    origin_metadata(run.metadata)
     _validate_metadata_keys(run.metadata)
     _validate_endpoint_origin(run.metadata.get("endpoint_origin"))
 

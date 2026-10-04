@@ -11,6 +11,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from reqmap import publication
 
 import reqmap.cli as cli
 import reqmap.manifest as manifest_module
@@ -164,7 +165,7 @@ def test_cli_dispatches_deep_profile_without_legacy_exporters_and_hashes_exact_b
     captured = _install_deep_pipeline(monkeypatch, deep_run())
     for name in ("write_canonical_json", "write_xlsx", "write_markdown", "crosscheck"):
         monkeypatch.setattr(
-            cli,
+            publication,
             name,
             lambda *_args, _name=name: pytest.fail(
                 f"legacy publisher {_name} received DeepRunResult"
@@ -264,7 +265,7 @@ def test_cli_deep_does_not_announce_log_substituted_during_failure_recording(
 ) -> None:
     _install_deep_pipeline(monkeypatch, deep_run())
     monkeypatch.setattr(
-        cli,
+        publication,
         "write_deep_xlsx",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("synthetic failure")),
     )
@@ -328,7 +329,7 @@ def test_cli_deep_rejects_prefix_overwrite_between_logger_writes(
         return digest
 
     monkeypatch.setattr(
-        cli,
+        publication,
         "write_deep_canonical_json",
         write_json_then_overwrite_prefix,
     )
@@ -495,7 +496,7 @@ def test_cli_deep_crosscheck_failure_returns_five_and_records_closed_log(
 ) -> None:
     _install_deep_pipeline(monkeypatch, deep_run())
     monkeypatch.setattr(
-        cli,
+        publication,
         "crosscheck_deep",
         lambda *_args: (CrosscheckIssue("DEEP_TEST", "Синтетическое расхождение."),),
         raising=False,
@@ -518,7 +519,7 @@ def test_cli_deep_export_failure_returns_five_and_manifests_only_safe_existing_f
 ) -> None:
     _install_deep_pipeline(monkeypatch, deep_run())
     monkeypatch.setattr(
-        cli,
+        publication,
         "write_deep_xlsx",
         lambda *_args: (_ for _ in ()).throw(RuntimeError("private endpoint detail")),
         raising=False,

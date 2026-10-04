@@ -107,6 +107,11 @@ def crosscheck_deep(
         _check_xlsx(run, xlsx_path, issues)
     if markdown_bytes is not None:
         _check_markdown(run, markdown_bytes, issues)
+    if "analysis_origin" in run.metadata and markdown_bytes is not None:
+        from reqmap.analysis_origin import origin_text
+        expected_origin = "Происхождение анализа (заявлено клиентом): `" + origin_text(run.metadata["analysis_origin"]) + "`"
+        if markdown_bytes.decode("utf-8", errors="replace").splitlines().count(expected_origin) != 1:
+            issues.append(CrosscheckIssue("CROSSCHECK_DEEP_ORIGIN", "Происхождение анализа Markdown не совпадает с JSON."))
     return tuple(issues)
 
 
@@ -309,7 +314,7 @@ def _expected_markdown_stream(
         _counts(run), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     table_keys = tuple(tables)
-    return (
+    tokens = (
         ("line", "# Глубокий отчёт reqmap"),
         ("line", f"<!-- reqmap-counts:{marker} -->"),
         ("line", "## Сводка"),
@@ -346,6 +351,10 @@ def _expected_markdown_stream(
         ("line", "## Ошибки обработки"),
         ("table", table_keys[15]),
     )
+
+    if "analysis_origin" in run.metadata:
+        tokens += (("line", "Происхождение анализа (заявлено клиентом): `" + _json_text(run.metadata["analysis_origin"]) + "`"),)
+    return tokens
 
 
 def _table_cells(line: str) -> tuple[str, ...]:
@@ -766,6 +775,8 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
         ("retry_counts", _json_text(metadata["retry_counts"])),
         ("groups", _json_text(groups)), ("counts", _json_text(_counts(run))),
     )
+    if "analysis_origin" in metadata:
+        run_values += (("analysis_origin", _json_text(metadata["analysis_origin"])),)
     return {
         "Требования": tuple(requirement_rows),
         "Атомарные утверждения": tuple(atom_rows),

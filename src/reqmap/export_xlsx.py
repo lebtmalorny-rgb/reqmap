@@ -422,7 +422,7 @@ def _data_rows(run: RunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
 
 def _run_rows(run: RunResult) -> tuple[tuple[str, object], ...]:
     metadata = run.metadata
-    return (
+    rows = (
         ("schema_version", run.schema_version),
         ("reqmap_version", metadata.get("reqmap_version")),
         ("knowledge_version", metadata.get("knowledge_version")),
@@ -441,6 +441,8 @@ def _run_rows(run: RunResult) -> tuple[tuple[str, object], ...]:
         ("evidence_count", len(run.evidence)),
         ("run_status", run.run_status),
     )
+
+    return rows + ((("analysis_origin", _json_text(metadata["analysis_origin"])),) if "analysis_origin" in metadata else ())
 
 
 def _append_row(sheet: Worksheet, values: tuple[object, ...]) -> None:

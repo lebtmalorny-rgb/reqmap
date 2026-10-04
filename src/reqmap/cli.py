@@ -548,96 +548,14 @@ def _read_stdin_bytes() -> bytes:
     return text.encode("utf-8")
 
 
-def _publish_artifacts(
-    run: RunResult,
-    output: Path,
-    config: AppConfig,
-) -> tuple[CrosscheckIssue, ...]:
-    paths = {name: output / name for name in _FINAL_ARTIFACTS}
-    logger = RunLogger(
-        paths["run.jsonl"],
-        redacted_values=_redacted_values(config),
-    )
-    logger.write(
-        "analysis_finished",
-        "info",
-        "Предметный анализ требований завершён.",
-        run_status=run.run_status,
-        requirements_count=len(run.requirements),
-    )
-    artifact_hashes = {
-        "result.json": write_canonical_json(run, paths["result.json"]),
-        "result.xlsx": write_xlsx(run, paths["result.xlsx"]),
-        "report.md": write_markdown(run, paths["report.md"]),
-    }
-    issues = crosscheck(
-        run,
-        paths["result.json"],
-        paths["result.xlsx"],
-        paths["report.md"],
-    )
-    if issues:
-        log_digest = logger.write(
-            "crosscheck_failed",
-            "error",
-            "Обнаружены расхождения выходных артефактов.",
-            issue_codes=[item.code for item in issues],
-        )
-    else:
-        log_digest = logger.write(
-            "artifacts_verified",
-            "info",
-            "JSON, XLSX и Markdown согласованы с canonical RunResult.",
-        )
-    artifact_hashes["run.jsonl"] = log_digest
-    write_manifest(run, artifact_hashes, paths["manifest.json"])
-    return issues
+def _publish_artifacts(run: RunResult, output: Path, config: AppConfig) -> tuple[CrosscheckIssue, ...]:
+    from reqmap.publication import publish_artifacts
+    return publish_artifacts(run, output, redacted_values=_redacted_values(config))
 
 
-def _publish_deep_artifacts(
-    run: DeepRunResult,
-    output: Path,
-    config: AppConfig,
-) -> tuple[CrosscheckIssue, ...]:
-    paths = {name: output / name for name in _FINAL_ARTIFACTS}
-    logger = RunLogger(
-        paths["run.jsonl"],
-        redacted_values=_redacted_values(config),
-    )
-    logger.write(
-        "analysis_finished",
-        "info",
-        "Глубокий предметный анализ требований завершён.",
-        run_status=run.run_status,
-        requirements_count=len(run.requirements),
-    )
-    artifact_hashes = {
-        "result.json": write_deep_canonical_json(run, paths["result.json"]),
-        "result.xlsx": write_deep_xlsx(run, paths["result.xlsx"]),
-        "report.md": write_deep_markdown(run, paths["report.md"]),
-    }
-    issues = crosscheck_deep(
-        run,
-        paths["result.json"],
-        paths["result.xlsx"],
-        paths["report.md"],
-    )
-    if issues:
-        log_digest = logger.write(
-            "crosscheck_failed",
-            "error",
-            "Обнаружены расхождения deep-артефактов.",
-            issue_codes=[item.code for item in issues],
-        )
-    else:
-        log_digest = logger.write(
-            "artifacts_verified",
-            "info",
-            "Deep JSON, XLSX и Markdown согласованы с canonical DeepRunResult.",
-        )
-    artifact_hashes["run.jsonl"] = log_digest
-    write_deep_manifest(run, artifact_hashes, paths["manifest.json"])
-    return issues
+def _publish_deep_artifacts(run: DeepRunResult, output: Path, config: AppConfig) -> tuple[CrosscheckIssue, ...]:
+    from reqmap.publication import publish_artifacts
+    return publish_artifacts(run, output, redacted_values=_redacted_values(config))
 
 
 def _record_export_failure(

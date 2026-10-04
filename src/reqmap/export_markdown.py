@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 import hashlib
 import json
 from pathlib import Path
+from reqmap.analysis_origin import origin_text
 
 from reqmap.export_json import atomic_write_bytes, validate_run_result
 from reqmap.export_xlsx import analysis_state_ru, support_status_ru
@@ -60,6 +61,7 @@ def _render_markdown(run: RunResult) -> str:
         "# Отчёт reqmap\n\n"
         f"<!-- reqmap-counts:{marker} -->\n\n"
         + "\n\n".join(sections)
+        + ("\n\nПроисхождение анализа (заявлено клиентом): `" + origin_text(run.metadata["analysis_origin"]) + "`" if "analysis_origin" in run.metadata else "")
     )
 
 

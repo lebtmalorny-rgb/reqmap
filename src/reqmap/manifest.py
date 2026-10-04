@@ -10,6 +10,7 @@ import re
 import stat
 from urllib.parse import urlsplit, urlunsplit
 
+from reqmap.analysis_origin import origin_metadata
 from reqmap.export_json import (
     atomic_write_bytes,
     canonical_json_bytes,
@@ -106,6 +107,10 @@ def write_manifest(
         ),
         "artifact_hashes": dict(sorted(safe_hashes.items())),
     }
+    origin = origin_metadata(metadata)
+    if origin is not None:
+        manifest["analysis_origin"] = origin
+        manifest.pop("endpoint_origin", None)
     atomic_write_json(path, manifest)
 
 
@@ -222,6 +227,7 @@ def _deep_manifest_payload(
         "run_id": run.run_id,
         "run_status": run.run_status,
         "reqmap_version": metadata["reqmap_version"],
+        **({"analysis_origin": metadata["analysis_origin"]} if "analysis_origin" in metadata else {}),
         "analysis_profile": metadata["analysis_profile"],
         "model": metadata["model"],
         "seed": metadata["seed"],

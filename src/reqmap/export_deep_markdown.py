@@ -6,6 +6,7 @@ from collections import Counter
 import hashlib
 import json
 from pathlib import Path
+from reqmap.analysis_origin import origin_text
 
 from reqmap.deep_models import DeepRunResult, ResponsibilityContour
 from reqmap.export_deep_json import _deep_run_payload, validate_deep_run_result
@@ -54,6 +55,7 @@ def _render_markdown(run: DeepRunResult) -> str:
         "# Глубокий отчёт reqmap\n\n"
         f"<!-- reqmap-counts:{marker} -->\n\n"
         + "\n\n".join(sections)
+        + ("\n\nПроисхождение анализа (заявлено клиентом): `" + origin_text(run.metadata["analysis_origin"]) + "`" if "analysis_origin" in run.metadata else "")
     )
 
 

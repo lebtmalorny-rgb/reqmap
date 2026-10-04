@@ -333,7 +333,8 @@ def _run_rows(payload: dict[str, object], run: DeepRunResult) -> tuple[tuple[str
         "groups": _json_text(groups),
         "counts": _json_text(canonical_counts(run)),
     }
-    return tuple((key, values[key]) for key in RUN_KEYS)
+    rows = tuple((key, values[key]) for key in RUN_KEYS)
+    return rows + ((("analysis_origin", _json_text(metadata["analysis_origin"])),) if "analysis_origin" in metadata else ())
 
 
 def _append_row(sheet, values: tuple[object, ...]) -> None:

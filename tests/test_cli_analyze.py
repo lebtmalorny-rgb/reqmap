@@ -11,6 +11,7 @@ from types import SimpleNamespace
 
 from openpyxl import Workbook
 import pytest
+from reqmap import publication
 
 import reqmap.cli as cli
 from reqmap.aggregation import aggregate_groups
@@ -404,7 +405,7 @@ def test_cli_crosscheck_failure_returns_five_with_five_artifacts(
 ) -> None:
     install_fake_pipeline(monkeypatch)
     monkeypatch.setattr(
-        cli,
+        publication,
         "crosscheck",
         lambda *args: (
             CrosscheckIssue(
