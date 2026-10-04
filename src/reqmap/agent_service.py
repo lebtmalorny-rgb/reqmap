@@ -20,6 +20,10 @@ from reqmap.proposals import ProposalError
 TOOL_FIELDS = {
     'reqmap_start_session': ({'request_id','source'}, {'clarifications','parent_session_id','reported_client'}),
     'reqmap_get_session': ({'session_id'}, {'cursor','page_size','requirement_id'}),
+    'reqmap_get_atom_context': ({'session_id','atom_id'}, set()),
+    'reqmap_search_knowledge': ({'session_id','query'}, {'cursor','page_size'}),
+    'reqmap_get_evidence': ({'session_id','evidence_id'}, {'cursor'}),
+    'reqmap_submit_mapping': ({'session_id','atom_id','context_id','proposal','request_id','expected_revision'}, {'reported_model'}),
     'reqmap_submit_atoms': ({'session_id','requirement_id','proposal','request_id','expected_revision'}, {'reported_model'}),
 }
 
@@ -69,8 +73,10 @@ class AgentService:
                 return self._start(arguments)
             if name == 'reqmap_get_session':
                 return self._get_session(arguments)
+            if name in ('reqmap_get_atom_context','reqmap_search_knowledge','reqmap_get_evidence'):
+                return self._knowledge_tool(name, arguments)
             command = MutationCommand(arguments['session_id'], arguments['request_id'], arguments['expected_revision'], name, arguments)
-            return self.store.transact(command, lambda record:self._submit_atoms(record, arguments))
+            return self.store.transact(command, lambda record:self._submit_atoms(record, arguments) if name == 'reqmap_submit_atoms' else self._submit_mapping(record, arguments))
         except ReqmapError as exc:
             return failure(exc.code, exc.message_ru, **exc.details)
 
@@ -145,3 +151,25 @@ class AgentService:
         except ProposalError as exc:
             raise ReqmapError('PROPOSAL_INVALID','Предложение атомов отклонено.', {'violations':list(exc.violations)}) from exc
         return MutationDecision(True,ToolReply(True,dict(atoms=to_dict(atoms))), 'active')
+
+    def _knowledge_tool(self, name, args):
+        from reqmap.agent_context import get_atom_context, search_knowledge, get_evidence
+        view, knowledge = self.verified_view(self.store.read(args['session_id']))
+        if name == 'reqmap_get_atom_context':
+            data = get_atom_context(view,args['atom_id'],knowledge)
+        elif name == 'reqmap_search_knowledge':
+            data = search_knowledge(view,args['query'],knowledge,args.get('cursor'),self._page_size(args))
+        else:
+            data = get_evidence(view,args['evidence_id'],knowledge,args.get('cursor'))
+        if len(canonical_json_bytes(data)) > self.config.limits.max_response_bytes:
+            raise ReqmapError('RESPONSE_TOO_LARGE','Ответ превышает лимит; содержимое не обрезано.')
+        return ToolReply(True,data)
+
+    def _submit_mapping(self, record, args):
+        from reqmap.agent_context import accept_context_mapping
+        view, knowledge = self.verified_view(record)
+        try:
+            outcome = accept_context_mapping(view,knowledge,args)
+        except ProposalError as exc:
+            raise ReqmapError('PROPOSAL_INVALID','Сопоставление отклонено.',{'violations':list(exc.violations)}) from exc
+        return MutationDecision(True,ToolReply(True,dict(result=to_dict(outcome))), 'active')

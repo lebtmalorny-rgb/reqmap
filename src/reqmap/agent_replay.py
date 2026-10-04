@@ -22,6 +22,10 @@ def replay_session(record: SessionRecord, knowledge: VerifiedKnowledge) -> Sessi
                 for atom in atoms.get(rid, ()):
                     mappings.pop(atom.atom_id, None)
                 atoms[rid] = accept_decomposition(by_id[rid], args['proposal'])
+            elif event.operation == 'reqmap_submit_mapping':
+                from reqmap.agent_context import accept_context_mapping
+                view = SessionView(record,requirements,atoms,mappings)
+                mappings[args['atom_id']] = accept_context_mapping(view,knowledge,args)
             elif event.operation != 'reqmap_finalize':
                 raise ValueError('Unknown accepted event')
     except (KeyError, TypeError, ValueError, ProposalError) as exc:
