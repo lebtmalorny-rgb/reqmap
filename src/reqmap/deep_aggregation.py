@@ -149,6 +149,12 @@ def deep_run_status(
     if completed != len(results):
         return "PARTIAL" if completed else "FAILED"
     if any(
+        atom.atom.mandatory and atom.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+        for item in results
+        for atom in item.atom_results
+    ):
+        return "PARTIAL"
+    if any(
         diagnostic.startswith(PARTIAL_DIAGNOSTIC_PREFIXES)
         for item in results
         for diagnostic in item.diagnostics
@@ -525,6 +531,10 @@ def _validate_responsibility_step_links(
     linked_steps: set[str] = set()
     contour_linked_steps: set[str] = set()
     for record in records:
+        if record.procedure_step_ids and record.support_status not in {
+            SupportStatus.SUPPORTED, SupportStatus.PARTIAL,
+        }:
+            raise ValueError("unproven responsibility cannot carry procedure links")
         if len(record.procedure_step_ids) != len(set(record.procedure_step_ids)):
             raise ValueError("responsibility procedure step links must be unique")
         for step_id in record.procedure_step_ids:

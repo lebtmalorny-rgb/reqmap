@@ -339,7 +339,13 @@ def validate_knowledge_v2(
 
     source_is_local = _validate_v2_sources(kb, issue)
     _validate_v2_references(kb, issue)
-    _validate_v2_evidence(kb, source_is_local, issue)
+    review_draft = (
+        allow_draft
+        and kb.snapshot_status == "draft"
+        and not kb.actions and not kb.effects and not kb.procedures
+        and all(item.review_state == "needs_review" for item in kb.evidence.values())
+    )
+    _validate_v2_evidence(kb, source_is_local, issue, review_draft=review_draft)
     _validate_v2_versions(kb, issue)
     _validate_v2_procedures(kb, issue)
     return tuple(
@@ -482,6 +488,8 @@ def _validate_v2_evidence(
     kb: KnowledgeBaseV2,
     source_is_local: Mapping[str, bool],
     issue: Callable[[str, str, str], None],
+    *,
+    review_draft: bool = False,
 ) -> None:
     positive_entities = (
         tuple(kb.capabilities.values()),
@@ -507,7 +515,7 @@ def _validate_v2_evidence(
                 ):
                     direct = True
                     break
-            if not direct:
+            if not direct and not review_draft:
                 issue(
                     "DIRECT_EVIDENCE_REQUIRED",
                     object_id,
@@ -538,6 +546,7 @@ def _validate_v2_evidence(
                 or source.source_type == "project_policy"
             )
             and supported & upstream_entities
+            and not review_draft
         ):
             issue(
                 "EVIDENCE_POLICY_SCOPE_INVALID",

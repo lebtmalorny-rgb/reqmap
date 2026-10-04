@@ -107,6 +107,8 @@ knowledge schema v2 со статусом `approved`, подписанный man
 В обоих профилях сохраняются пять файлов результата. Deep XLSX содержит семь
 листов; `supported` описывает подтверждённую функцию и не отменяет
 `procedure_gap` или `rollback_unverified`. Такие пробелы делают запуск `PARTIAL`.
+Недостаток evidence для обязательного атома также даёт `PARTIAL`, даже если
+обработка всех требований завершена.
 Команды и интерпретация результата приведены в [RUNBOOK.md](RUNBOOK.md),
 обслуживание подписанной базы — в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
 
@@ -116,8 +118,9 @@ knowledge schema v2 со статусом `approved`, подписанный man
 3.11.13 и OpenSSH 9.9p1. При установке и проверках использовался контейнер
 `--network none`; подготовка системных пакетов образа выполнялась заранее.
 Installer использовал 12 wheels из `vendor/wheels`. Результат полного suite:
-**928 passed**, без skips. `compileall`, `pip check`, legacy KB validation и
-проверка подписанного v2 snapshot завершились успешно.
+**933 passed**, без skips. `compileall`, `pip check`, legacy KB validation,
+миграция полной v1 базы в unsigned draft и проверка подписанного v2 snapshot
+завершились успешно.
 
 SHA-256 manifest минимального synthetic snapshot:
 `3c49180ab934f8dbb447a8a5f240bbcfc2a891327e2af8241ec23df5c52a080b`.
@@ -131,7 +134,7 @@ Frozen gold содержит 19 сценариев: исходные 16, пря�
 изменении или удалении каждого файла из подписанного manifest. Fake HTTP LLM
 разрешены только `GET /v1/models` и `POST /v1/chat/completions` на loopback.
 
-На macOS arm64 с Python 3.14.0 тот же suite дал 928 passed и три предупреждения
+На macOS arm64 с Python 3.14.0 тот же suite дал 933 passed и три предупреждения
 stdlib о `fork()` в тестах FIFO. Эти результаты подтверждают программные
 контракты. Проверка реальной LLM и предметное наполнение OpenStack/Kolla/Rocky
 остаются отдельными этапами; HA, migration и upgrade runbooks не поставлены.

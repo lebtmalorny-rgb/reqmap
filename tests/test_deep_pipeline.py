@@ -791,3 +791,30 @@ def test_deep_unproven_responsibility_preserves_atom_and_resumes(tmp_path: Path)
     assert second.requirements == first.requirements
     assert second.responsibility_records == first.responsibility_records
     assert resumed_model.calls == []
+
+
+def test_deep_empty_mapping_is_partial_without_invented_ambiguity(tmp_path: Path):
+    request = _request(tmp_path)
+    model = FakeModel((
+        _decomposition(request.requirements[0].text),
+        dict(support_status="supported", supported_aspects=[], unconfirmed_aspects=[],
+             responsibilities=[], procedure_template_ids=[]),
+    ))
+    run = analyze_deep(request, _signed_config(tmp_path), model)
+    assert run.requirements[0].analysis_state is AnalysisState.COMPLETED
+    assert run.requirements[0].support_status.value == "insufficient_evidence"
+    assert run.run_status == "PARTIAL"
+
+
+def test_deep_unproven_responsibility_cannot_acquire_selected_procedure(tmp_path: Path):
+    request = _request(tmp_path)
+    model = FakeModel((
+        _decomposition(request.requirements[0].text),
+        deep_mapping_response(responsibility_selection(evidence_ids=[])),
+    ))
+    run = analyze_deep(request, _signed_config(tmp_path), model)
+    assert run.run_status == "PARTIAL"
+    assert run.requirements[0].analysis_state is AnalysisState.COMPLETED
+    assert run.requirements[0].atom_results[0].atom.source_quote == request.requirements[0].text
+    assert run.responsibility_records[0].procedure_step_ids == ()
+    assert run.procedure_graphs == ()

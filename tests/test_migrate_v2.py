@@ -166,8 +166,11 @@ def test_migration_refuses_unsafe_destination_without_touching_user_data(
 
 
 def test_migration_cleans_owned_staging_directory_when_maintenance_validation_fails(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    def refuse(_root):
+        raise ValueError("injected structural validation failure")
+    monkeypatch.setattr(migrate_module, "load_knowledge_v2_for_maintenance", refuse)
     source = write_v1_knowledge_snapshot(
         tmp_path / "source",
         component_id="component",
@@ -230,3 +233,44 @@ def test_migration_never_recursively_cleans_a_substituted_staging_directory(
 
     assert marker is not None
     assert marker.read_text(encoding="utf-8") == "preserve"
+
+
+def test_shipped_legacy_snapshot_migrates_losslessly_but_cannot_be_approved(tmp_path):
+    from reqmap.knowledge_v2 import KnowledgeV2Error, validate_knowledge_v2
+    source = Path("knowledge/epoxy-2025.1")
+    legacy = load_knowledge(source)
+    output = tmp_path / "draft"
+    report = migrate_v1_to_v2(source, output)
+    draft = load_knowledge_v2_for_maintenance(output)
+    assert report.components == 30 and report.evidence == 37
+    assert draft.snapshot_status == "draft"
+    assert not draft.actions and not draft.effects and not draft.procedures
+    assert set(draft.evidence) == set(legacy.evidence)
+    for identifier, old in legacy.evidence.items():
+        migrated = draft.evidence[identifier]
+        assert migrated.polarity == old.polarity
+        assert migrated.strength == old.strength
+        assert migrated.locator == old.locator
+        assert migrated.review_state == "needs_review"
+    assert any(issue.code == "DIRECT_EVIDENCE_REQUIRED" for issue in validate_knowledge_v2(draft))
+    metadata_path = output / "metadata.json"
+    metadata = json.loads(metadata_path.read_text())
+    metadata["snapshot_status"] = "approved"
+    metadata_path.write_text(json.dumps(metadata))
+    with pytest.raises(KnowledgeV2Error):
+        load_knowledge_v2_for_maintenance(output)
+    assert not (output / "snapshot-manifest.sig").exists()
+
+
+def test_migration_preserves_weak_evidence_for_review_without_upgrading_strength(tmp_path):
+    source = write_v1_knowledge_snapshot(
+        tmp_path / "source", component_id="component", component_kind="openstack_service",
+        capability_id="CAP-COMPONENT", evidence_id="EV-COMPONENT", source_id="SRC-COMPONENT",
+        strength="indirect",
+    )
+    output = tmp_path / "draft"
+    migrate_v1_to_v2(source, output)
+    draft = load_knowledge_v2_for_maintenance(output)
+    assert draft.evidence["EV-COMPONENT"].strength.value == "indirect"
+    assert draft.evidence["EV-COMPONENT"].review_state == "needs_review"
+    assert draft.snapshot_status == "draft"

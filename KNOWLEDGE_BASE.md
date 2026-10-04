@@ -77,6 +77,11 @@ corpus discovery отключён, production semantic index не поставл
 Нельзя просто переименовать `draft` в `approved`: сначала проверяются claims,
 locators, evidence, действия, эффекты и процедуры. Миграция v1 сама не создаёт
 новых действий или доказательств и выдаёт только unsigned draft с review gaps.
+Maintenance-проверка такого черновика допускает неполное подтверждение
+capabilities и сохранённые policy/indirect evidence из v1, если все evidence
+имеют `review_state=needs_review`, а actions, effects и procedures пусты.
+Ссылки, hashes и версии проверяются и в этом режиме. Для `approved` эти
+послабления не действуют; runtime черновик не принимает.
 
 После предметного review в maintenance-среде собирают manifest и подписывают
 его отдельным ключом Ed25519. В примере пути уже подготовлены оператором;

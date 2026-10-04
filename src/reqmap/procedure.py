@@ -19,7 +19,7 @@ from reqmap.knowledge_v2 import (
     ProcedureTemplateRecord,
     ProcedureTemplateStepRecord,
 )
-from reqmap.models import EvidencePolarity, EvidenceStrength
+from reqmap.models import EvidencePolarity, EvidenceStrength, SupportStatus
 
 
 _EVIDENCE_REQUIRED_PHASES = frozenset(
@@ -112,7 +112,7 @@ def instantiate_procedure_graphs(
     all_diagnostics: list[str] = []
     links_by_action: dict[str, list[str]] = {}
     covered_actions: set[str] = set()
-    for graph_ordinal, template in enumerate(templates, 1):
+    for template in templates:
         unmatched_actions = sorted(
             {
                 step.action_ref
@@ -126,8 +126,20 @@ def instantiate_procedure_graphs(
                 "Template содержит step action без matching responsibility: "
                 f"{', '.join(unmatched_actions)}.",
             )
+        unproven = {
+            record.action_ref
+            for record in records
+            if record.action_ref in template.action_refs
+            and (
+                not record.evidence_ids
+                or record.support_status not in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
+            )
+        }
+        if unproven:
+            all_diagnostics.extend(f"procedure_gap:{action}" for action in sorted(unproven))
+            continue
         graph, action_links, graph_diagnostics = _instantiate_graph(
-            requirement_id, graph_ordinal, template, records, kb
+            requirement_id, len(graphs) + 1, template, records, kb
         )
         all_diagnostics.extend(graph_diagnostics)
         covered_actions.update(action_links)

@@ -127,9 +127,10 @@ requirement IDs, но и диагностики завершённых треб�
 `rollback_unverified`. Подтверждение функции не означает готовность процедуры.
 `responsibility_ambiguous` распознаётся как причина PARTIAL, но самостоятельный
 классификатор неоднозначности пока не реализован: пустой выбор mapping даёт
-`insufficient_evidence`. Запись без процитированных доказательств сохраняется
+`insufficient_evidence`; для обязательного атома этого достаточно для `PARTIAL`.
+Запись без процитированных доказательств сохраняется
 как `insufficient_evidence` с `procedure_gap:responsibility_evidence` и без
-процедурных ссылок.
+процедурных ссылок, даже если модель выбрала известный шаблон процедуры.
 
 Resume повторяет ту же команду. Deep signature учитывает input, подписанный
 manifest, snapshot/key ID, модель, seed, `top_k`, профиль и версии prompts.

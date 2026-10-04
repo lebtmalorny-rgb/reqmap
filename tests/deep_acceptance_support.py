@@ -83,7 +83,7 @@ def gold_snapshot(tmp_path):
             evidence.append(dict(id=evidence_id, claim=f"Synthetic contract: {terms}", claim_kind="capability",
                                  polarity="negative" if evidence_id == "EV-NEGATIVE" or evidence_id == "EV-CONFLICT-NEGATIVE" else "positive",
                                  strength="direct", source_id="SRC-MINIMAL", locator=f"SRC-MINIMAL:{name}",
-                                 version_constraint=scope["version_constraint"], applicable_contours=[contour] + (["host_os"] if name == "SYSCTL" else []),
+                                 version_constraint="2026.1" if evidence_id == "EV-NEGATIVE-POSITIVE" else scope["version_constraint"], applicable_contours=[contour] + (["host_os"] if name == "SYSCTL" else []),
                                  supports_entity_refs=[f"CAP-{name}", f"ACTION-{name}", f"EFFECT-{name}"],
                                  local_excerpt=f"Synthetic contract: {terms}", review_state="reviewed"))
         if name in {"SYSCTL", "UPGRADE", "ROLLBACK"}:
@@ -157,8 +157,7 @@ def scripted_response(payload):
         record["evidence_ids"] = []
     if "runtime 2026.1" in text:
         record["version_scope"]["target_release"] = "2026.1"
-    if name == "CONFLICT":
-        record["evidence_ids"].append("EV-CONFLICT-NEGATIVE")
+    # The conflict reply deliberately hides the negative position; the gate must recover it.
     response["responsibilities"] = [record]
     if name == "SYSCTL":
         host = deepcopy(record)

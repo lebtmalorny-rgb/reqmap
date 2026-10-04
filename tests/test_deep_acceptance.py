@@ -69,4 +69,3 @@ def test_every_signed_runtime_file_is_checked_before_model_access(tmp_path):
                     assert "SNAPSHOT_" in diagnostic
                 finally:
                     path.write_bytes(original)
-

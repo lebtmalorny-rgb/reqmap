@@ -144,7 +144,7 @@ def test_direct_negative_conflict_none_and_indirect_are_computed(v2_kb) -> None:
     negative_outcome = map_atom_deep(
         FakeModel([deep_mapping_response(negative)]),
         atom(),
-        deep_candidate(negative_kb, "EV-NOVA-CREATE", "EV-NOVA-NEGATIVE"),
+        deep_candidate(negative_kb, "EV-NOVA-NEGATIVE"),
         negative_kb,
     )
     assert negative_outcome.atom_result.support_status is SupportStatus.NOT_SUPPORTED
@@ -455,3 +455,15 @@ def test_prompt_payload_excludes_urls_local_excerpts_locators_and_commands(v2_kb
     assert "local_excerpt" not in serialized
     assert "locator" not in serialized
     assert "POST /v2.1/servers" not in serialized
+
+
+def test_model_cannot_hide_applicable_conflicting_candidate_evidence(v2_kb):
+    from reqmap.deep_mapping import map_atom_deep
+    kb = with_nova_evidence(v2_kb, "EV-NOVA-NEGATIVE", polarity=EvidencePolarity.NEGATIVE)
+    outcome = map_atom_deep(
+        FakeModel([deep_mapping_response()]), atom(),
+        deep_candidate(kb, "EV-NOVA-CREATE", "EV-NOVA-NEGATIVE"), kb,
+    )
+    assert outcome.atom_result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert "evidence_conflict" in outcome.atom_result.diagnostics
+    assert set(outcome.responsibility_records[0].evidence_ids) == {"EV-NOVA-CREATE", "EV-NOVA-NEGATIVE"}

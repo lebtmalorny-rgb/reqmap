@@ -152,6 +152,8 @@ def validate_responsibility_records(
     for record in records:
         try:
             candidate = _candidate_for(record, retrieval, kb)
+            _computed_support(record, candidate, kb)
+            record = replace(record, evidence_ids=_conflict_evidence_ids(record, candidate, kb))
             status, diagnostics = _computed_support(record, candidate, kb)
             normalized.append(
                 replace(
@@ -432,8 +434,42 @@ def _validated_selection(
     except ValueError as exc:
         raise _SelectionError(f"VERSION_OR_RECORD_INVALID: {exc}") from exc
     candidate = _candidate_for(selection, retrieval, kb)
+    _computed_support(selection, candidate, kb)
+    selection = replace(selection, evidence_ids=_conflict_evidence_ids(selection, candidate, kb))
     status, diagnostics = _computed_support(selection, candidate, kb)
     return selection, status, diagnostics
+
+
+def _conflict_evidence_ids(
+    record: ResponsibilityRecord | _ResponsibilitySelection,
+    candidate: DeepCandidate,
+    kb: KnowledgeBaseV2,
+) -> tuple[str, ...]:
+    """Keep both applicable positions even when the model cites only one."""
+    if not record.evidence_ids:
+        return record.evidence_ids
+    entities = {candidate.capability_ref, candidate.action_ref, candidate.effect_ref} - {None}
+    applicable = []
+    for evidence_id in candidate.evidence_ids:
+        evidence = kb.evidence[evidence_id]
+        source = kb.sources.get(evidence.source_id)
+        if (
+            evidence.strength is EvidenceStrength.DIRECT
+            and record.contour in evidence.applicable_contours
+            and entities.intersection(evidence.supports_entity_refs)
+            and evidence.version_constraint in {
+                record.version_scope.version_constraint,
+                record.version_scope.source_release,
+                record.version_scope.target_release,
+            }
+            and source is not None
+            and source.provenance == "official"
+            and source.source_type != "project_policy"
+        ):
+            applicable.append(evidence)
+    if {item.polarity for item in applicable} == {EvidencePolarity.POSITIVE, EvidencePolarity.NEGATIVE}:
+        return tuple(dict.fromkeys((*record.evidence_ids, *(item.evidence_id for item in applicable))))
+    return record.evidence_ids
 
 
 def _candidate_for(
