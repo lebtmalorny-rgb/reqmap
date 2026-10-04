@@ -10,6 +10,7 @@ from reqmap.ids import atom_id
 from reqmap.llm import JsonModel
 from reqmap.models import AnalysisState, AtomicClaim, DecompositionOutcome, Requirement
 from reqmap.prompts import DECOMPOSITION_PROMPT
+from reqmap.proposals import ProposalError
 
 
 _TOP_LEVEL_KEYS = frozenset({"atoms"})
@@ -28,40 +29,20 @@ def decompose(
     Ошибки транспорта и лимитов сознательно не перехватываются: pipeline обязан
     классифицировать их отдельно от некорректного model output.
     """
-    payload: dict[str, object] = {
-        "requirement_id": requirement.requirement_id,
-        "requirement_text": requirement.text,
-        "parent_text": parent_text,
-        "parent_text_policy": _PARENT_TEXT_POLICY,
-        "response_schema": {
-            "atoms": [
-                {
-                    "text": "non-empty non-authoritative compatibility label",
-                    "source_quote": "non-empty exact substring of requirement_text",
-                    "mandatory": "boolean",
-                }
-            ]
-        },
-    }
+    payload = prepare_decomposition(requirement, parent_text)
     violations: tuple[str, ...] = ()
 
     for _attempt in range(2):
         try:
             response = model.complete_json("decomposition", DECOMPOSITION_PROMPT, payload)
-            if type(response) is not dict:
-                violations = (
-                    "Ответ модели должен быть встроенным dict JSON object верхнего уровня.",
+            invalid_response: object = response
+            try:
+                return DecompositionOutcome(
+                    atoms=accept_decomposition(requirement, response),
+                    analysis_state=AnalysisState.COMPLETED,
                 )
-                invalid_response: object = response
-            else:
-                response_mapping = cast(Mapping[str, object], response)
-                violations = decomposition_violations(response_mapping, requirement.text)
-                invalid_response = response
-                if not violations:
-                    return DecompositionOutcome(
-                        atoms=build_atoms(requirement, response_mapping),
-                        analysis_state=AnalysisState.COMPLETED,
-                    )
+            except ProposalError as exc:
+                violations = exc.violations
         except ModelOutputError as exc:
             invalid_response = {"raw_response": exc.raw_response}
             violations = (exc.message_ru,)
@@ -149,3 +130,30 @@ def build_atoms(requirement: Requirement, response: Mapping[str, object]) -> tup
         )
         for ordinal, raw_atom in enumerate(raw_atoms, start=1)
     )
+
+
+def prepare_decomposition(requirement: Requirement, parent_text: str | None) -> dict[str, object]:
+    """Return the exact source and response contract without invoking a model."""
+    return {
+        "requirement_id": requirement.requirement_id,
+        "requirement_text": requirement.text,
+        "parent_text": parent_text,
+        "parent_text_policy": _PARENT_TEXT_POLICY,
+        "response_schema": {
+            "atoms": [
+                {
+                    "text": "non-empty non-authoritative compatibility label",
+                    "source_quote": "non-empty exact substring of requirement_text",
+                    "mandatory": "boolean",
+                }
+            ]
+        },
+    }
+
+
+def accept_decomposition(requirement: Requirement, proposal: object) -> tuple[AtomicClaim, ...]:
+    """Validate one proposal and assign canonical atoms locally."""
+    violations = decomposition_violations(proposal, requirement.text)
+    if violations:
+        raise ProposalError("shape", violations)
+    return build_atoms(requirement, proposal)

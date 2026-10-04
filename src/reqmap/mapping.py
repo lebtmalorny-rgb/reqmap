@@ -29,6 +29,7 @@ from reqmap.models import (
     to_dict,
 )
 from reqmap.prompts import MAPPING_PROMPT
+from reqmap.proposals import ProposalError
 from reqmap.retrieval import retrieve
 
 
@@ -106,32 +107,18 @@ def map_atom(
 ) -> AtomResult:
     """Map one exact atom with one semantic correction and local validation."""
     _validate_candidates(candidates, kb)
-    base_payload = _mapping_payload(atom, candidates, kb)
+    base_payload = prepare_mapping(atom, candidates, kb)
     payload = base_payload
     violations: tuple[str, ...] = ()
 
     for _attempt in range(2):
         try:
             response = model.complete_json("mapping", MAPPING_PROMPT, payload)
-            if type(response) is not dict:
-                invalid_response: object = response
-                violations = (
-                    "Ответ модели должен быть встроенным dict JSON object верхнего уровня.",
-                )
-            else:
-                raw = cast(dict[str, object], response)
-                invalid_response = response
-                violations = _response_violations(raw)
-                if not violations:
-                    candidate_violations = _candidate_reference_violations(raw, candidates, kb)
-                    if candidate_violations:
-                        violations = candidate_violations
-                    else:
-                        proposed = _build_result(atom, raw)
-                        try:
-                            return validate_atom_result(proposed, kb)
-                        except ValidationError as exc:
-                            violations = (exc.message_ru,)
+            invalid_response: object = response
+            try:
+                return accept_mapping(atom, candidates, kb, response)
+            except ProposalError as exc:
+                violations = exc.violations
         except ModelOutputError as exc:
             invalid_response = {"raw_response": exc.raw_response}
             violations = (exc.message_ru,)
@@ -1048,3 +1035,26 @@ def _enum_violation(
 
 def _fail(code: str, message_ru: str) -> None:
     raise ValidationError(code, message_ru)
+
+
+def prepare_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: KnowledgeBase) -> dict[str, object]:
+    """Prepare a bounded candidate context without a model call."""
+    _validate_candidates(candidates, kb)
+    return _mapping_payload(atom, candidates, kb)
+
+
+def accept_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: KnowledgeBase, proposal: object) -> AtomResult:
+    """Apply the same reference and evidence gate to one proposal."""
+    _validate_candidates(candidates, kb)
+    if type(proposal) is not dict:
+        raise ProposalError("shape", ("Ответ модели должен быть встроенным dict JSON object верхнего уровня.",))
+    violations = _response_violations(proposal)
+    if violations:
+        raise ProposalError("shape", violations)
+    violations = _candidate_reference_violations(proposal, candidates, kb)
+    if violations:
+        raise ProposalError("semantic", violations)
+    try:
+        return validate_atom_result(_build_result(atom, proposal), kb)
+    except ValidationError as exc:
+        raise ProposalError("semantic", (exc.message_ru,)) from exc
