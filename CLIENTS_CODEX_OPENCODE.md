@@ -6,6 +6,11 @@ Codex и OpenCode — **клиенты агента**, а provider и модел
 Рабочий сценарий: чат → предложение модели → проверка reqmap → отчёт.
 Пошаговая установка для Linux/macOS: [BEGINNER_GUIDE.md](BEGINNER_GUIDE.md).
 
+На 05.10.2026 код агентного слоя опубликован в `main`. Примеры подключения
+проверены через stdio, но сквозной диалог с настоящими клиентами IDE остаётся
+`not run`. Инструкции ниже описывают подключение; фактическая матрица проверки
+находится в [отчёте приёмки](docs/acceptance/reqmap-ide-agent-layer.md).
+
 ## Подготовка проекта
 
 Установите reqmap через `./install.sh`, затем из корня проекта:
@@ -16,6 +21,10 @@ cp config.agent.example.yaml config.agent.yaml
 .venv/bin/reqmap knowledge validate --path knowledge/epoxy-2025.1
 pwd
 ```
+
+Копируйте пример только при отсутствии своего `config.agent.yaml`.
+Для существующей установки сначала выполните
+[обновление пакета](BEGINNER_GUIDE.md#обновить-установленную-копию).
 
 В примерах [examples/ide](examples/ide) замените `/ABSOLUTE/PATH/TO/reqmap`
 на вывод `pwd`. Пути — отдельные аргументы; `~`, `$HOME` и shell expressions
@@ -32,7 +41,7 @@ pwd
 откройте панель Codex, войдите предложенным способом и выберите доступную модель.
 Добавьте блок из [codex.config.toml](examples/ide/codex.config.toml)
 в `~/.codex/config.toml` либо доверенную `.codex/config.toml` проекта.
-CLI и расширение используют общую [настройку MCP](https://developers.openai.com/codex/mcp).
+CLI и расширение используют общую [настройку MCP](https://learn.chatgpt.com/docs/extend/mcp).
 После изменения откройте новый чат. `.vscode/mcp.json` для этой инструкции не нужен.
 
 Если Codex CLI уже установлен, аналогичный блок можно зарегистрировать командой
@@ -96,7 +105,8 @@ Model Context Protocol (MCP) добавьте JSON из
 > Прочитай .agents/skills/reqmap/SKILL.md и используй режим агента через MCP.
 > Проверь требование: «Создание виртуальной машины через Nova REST API».
 > Сначала покажи атомы. Используй evidence из контекста reqmap. Заверши анализ
-> через reqmap_finalize и покажи session_id, статус и ссылки на пять файлов.
+> через reqmap_finalize, проверь reqmap_get_result и покажи session_id, статус
+> и ссылки на пять файлов.
 
 После ответа проверьте `report.md` и таблицу `result.xlsx`. По умолчанию файлы
 будут в `results/agent-reports/<UUID>/`. `result.json` содержит канонический
@@ -109,7 +119,8 @@ Model Context Protocol (MCP) добавьте JSON из
 `allow_partial=true` разрешается только осознанно. При сбое не редактируйте файлы:
 повторите исходный finalize с теми же request_id и аргументами.
 Чтобы продолжить анализ в новом чате, передайте session_id и попросите
-`reqmap_get_session`. Изменённый вход/профиль/уточнения — новая сессия.
+`reqmap_get_session`. У сессии со статусом `finalized` получите `reqmap_get_result`;
+новые предложения она не принимает. Изменённый вход/профиль/уточнения — новая сессия.
 
 ## Отдельный прежний CLI-режим
 
@@ -121,6 +132,16 @@ Model Context Protocol (MCP) добавьте JSON из
 
 Примеры проверяются запуском stdio-процесса, включая пути с пробелами. Такая
 проверка не подтверждает авторизацию клиента или работу конкретной версии IDE.
-Версии и фактические результаты приёмки фиксируются отдельно. Для `analysis_profile=deep`
+Для живой проверки запишите ОС, версии IDE и клиента, выбранные provider/model,
+видимость skill и девяти tools, точный запрос, session_id, итоговый статус и
+контрольные суммы артефактов из manifest. Чтение через `reqmap_get_result`
+должно подтвердить целостность файлов. Текстовый ответ без вызовов MCP этого
+не подтверждает.
+
+Один учебный запрос проверяет подключение. Для оценки качества модели нужен
+весь [контрольный набор](tests/fixtures/agent_eval.json): несколько обязательств,
+неоднозначность, отрицательное evidence, конфликт и инструкция внутри входа.
+Порядок фиксации результатов указан в [отчёте приёмки](docs/acceptance/reqmap-ide-agent-layer.md).
+Для `analysis_profile=deep`
 преподаватель предоставляет approved signed KBv2 и внешний trust config с `allowed_signers`;
 синтетические fixtures из tests не являются production corpus.

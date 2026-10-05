@@ -96,6 +96,7 @@ approved status, Ed25519-подпись, внешний allowed_signers, hashes 
 | Наблюдение | Проверка и действие |
 | --- | --- |
 | Сервер молчит в терминале | Это stdio: он ждёт JSON-RPC. Подключите его к чату; завершение ручного запуска — Ctrl-D |
+| Команда agent недопустима после git pull | В .venv осталась прежняя установка; повторите ./install.sh с тем же Python и проверьте .venv/bin/reqmap agent serve --help |
 | В чате нет девяти reqmap tools | Проверьте абсолютный command, args, выбранный клиент, config и новый чат; используйте examples/ide |
 | CONFIG_INVALID | Для MCP нужен config.agent.yaml без model/base_url/api_key; старый config.yaml относится к analyze |
 | Нет доступа к модели | Проверьте вход/provider клиента. Reqmap не настраивает модель и не делает fallback |
@@ -107,8 +108,13 @@ approved status, Ed25519-подпись, внешний allowed_signers, hashes 
 | ANALYSIS_INCOMPLETE | Продолжите анализ или осознанно разрешите allow_partial; gaps не скрываются |
 | PUBLICATION_PENDING | Повторите исходный finalize с прежними аргументами и request_id |
 | PUBLICATION_FAILED | Сессия закрыта как failed; исправьте причину, начните новую, не выдавайте staging за отчёт |
+| SESSION_CLOSED | Сессия завершена; для finalized получите reqmap_get_result, для нового анализа создайте новую сессию |
 | ARTIFACTS_CHANGED | Файлы отсутствуют/изменены; get_result больше не подтверждает их как отчёт |
 | RESPONSE_TOO_LARGE | Уменьшите страницу или разделите крупный вход; committed state не обрезается |
+
+После обновления исходников повторите установку: пакет в `.venv` не editable,
+поэтому одного `git pull` недостаточно. Порядок обновления и переподключения MCP —
+в [инструкции для начинающих](BEGINNER_GUIDE.md#обновить-установленную-копию).
 
 Для обращения к преподавателю передайте код ошибки, session_id, request_id и
 версию reqmap/IDE/клиента. Не прикладывайте ключи клиента. Исходные тексты и SQLite
