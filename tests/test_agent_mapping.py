@@ -20,12 +20,12 @@ def test_mapping_requires_current_context_and_keeps_last_good_result(tmp_path):
     proposal = _mapping_response('создание виртуальной машины через Nova REST API')
     result = submit(svc,sid,context,proposal)
     assert result.ok, result
-    assert result.data['result']['support_status'] == 'supported'
+    assert result.data['result']['support_status'] == 'insufficient_evidence'
     proposal['mappings'][0]['evidence_ids'] = ['foreign']
     invalid = submit(svc,sid,context,proposal,'invalid',2)
     assert invalid.error.code == 'PROPOSAL_INVALID'
     restored = type(svc)(svc.config).call('reqmap_get_session',{'session_id':sid})
-    assert restored.data['requirements'][0]['atom_results'][0]['support_status'] == 'supported'
+    assert restored.data['requirements'][0]['atom_results'][0]['support_status'] == 'insufficient_evidence'
     assert atoms(svc,sid,'Nova REST API','replace',2).ok
     stale = submit(svc,sid,context,proposal,'stale',3)
     assert stale.error.code == 'CONTEXT_MISMATCH'

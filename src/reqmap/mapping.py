@@ -18,6 +18,7 @@ from reqmap.models import (
     AtomicClaim,
     Candidate,
     Evidence,
+    EvidenceClaimScope,
     EvidencePolarity,
     EvidenceStrength,
     ImplementationSource,
@@ -53,6 +54,9 @@ _MAPPING_KEYS = frozenset(
 _STEP_KEYS = frozenset({"action_ru", "mechanism", "command", "api_operation"})
 _POSITIVE_STRENGTHS = frozenset({EvidenceStrength.DIRECT, EvidenceStrength.INDIRECT})
 _DOWNGRADE_REASON = "Статус понижен: отсутствует достаточное официальное evidence."
+_CONTEXT_ONLY_REASON = (
+    "EVIDENCE_CONTEXT_ONLY: общая справка не доказывает конкретную реализацию или ограничение."
+)
 _CANDIDATE_REASON_POLICY = (
     "reasons кандидата, включая source_hint, неавторитетны: они помогают ранжированию, "
     "но никогда не являются evidence."
@@ -229,6 +233,8 @@ def validate_atom_result(result: AtomResult, kb: KnowledgeBase) -> AtomResult:
     diagnostics = result.diagnostics
     if downgraded or unproved_aspects:
         diagnostics = tuple(dict.fromkeys((*result.diagnostics, _DOWNGRADE_REASON)))
+    if any(item.reason_ru == _CONTEXT_ONLY_REASON for item in normalized):
+        diagnostics = tuple(dict.fromkeys((*diagnostics, _CONTEXT_ONLY_REASON)))
 
     normalized_result = replace(
         result,
@@ -775,6 +781,10 @@ def _normalize_mapping_support(
     kb: KnowledgeBase,
     atom_candidates: tuple[Candidate, ...],
 ) -> Mapping:
+    if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL, SupportStatus.NOT_SUPPORTED}:
+        official = tuple(cited for cited in _cited(item, kb) if _official_owned(cited, item.component_id, kb))
+        if official and all(cited.claim_scope is EvidenceClaimScope.CONTEXT for cited in official):
+            return _downgrade_mapping(item, _CONTEXT_ONLY_REASON)
     if item.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}:
         if not (
             _has_positive_official(item, kb)
@@ -790,17 +800,18 @@ def _normalize_mapping_support(
     return item
 
 
-def _downgrade_mapping(item: Mapping) -> Mapping:
+def _downgrade_mapping(item: Mapping, reason: str = _DOWNGRADE_REASON) -> Mapping:
     return replace(
         item,
         support_status=SupportStatus.INSUFFICIENT_EVIDENCE,
-        reason_ru=_DOWNGRADE_REASON,
+        reason_ru=reason,
     )
 
 
 def _has_positive_official(item: Mapping, kb: KnowledgeBase) -> bool:
     return any(
         cited.provenance == "official"
+        and cited.claim_scope is EvidenceClaimScope.SPECIFIC
         and cited.polarity is EvidencePolarity.POSITIVE
         and cited.strength in _POSITIVE_STRENGTHS
         and cited.version_constraint == kb.release
@@ -812,6 +823,7 @@ def _has_positive_official(item: Mapping, kb: KnowledgeBase) -> bool:
 def _has_negative_official_direct(item: Mapping, kb: KnowledgeBase) -> bool:
     return any(
         cited.provenance == "official"
+        and cited.claim_scope is EvidenceClaimScope.SPECIFIC
         and cited.polarity is EvidencePolarity.NEGATIVE
         and cited.strength is EvidenceStrength.DIRECT
         and _official_owned(cited, item.component_id, kb)
@@ -822,6 +834,7 @@ def _has_negative_official_direct(item: Mapping, kb: KnowledgeBase) -> bool:
 def _has_version_conflict(item: Mapping, kb: KnowledgeBase) -> bool:
     return any(
         cited.provenance == "official"
+        and cited.claim_scope is EvidenceClaimScope.SPECIFIC
         and cited.version_constraint != kb.release
         and _official_owned(cited, item.component_id, kb)
         for cited in _cited(item, kb)
@@ -893,7 +906,10 @@ def _official_component_corpus(item: Mapping, kb: KnowledgeBase) -> tuple[str, .
     records: list[str] = []
     seen_capabilities: set[str] = set()
     for cited in _cited(item, kb):
-        if not _official_owned(cited, item.component_id, kb):
+        if (
+            not _official_owned(cited, item.component_id, kb)
+            or cited.claim_scope is not EvidenceClaimScope.SPECIFIC
+        ):
             continue
         records.extend((cited.claim_ru, cited.locator))
         if cited.capability_id in seen_capabilities:
@@ -940,6 +956,7 @@ def _atom_mapping_grounded(
         evidence_id
         for evidence_id in item.evidence_ids
         if _official_owned(kb.evidence[evidence_id], item.component_id, kb)
+        and kb.evidence[evidence_id].claim_scope is EvidenceClaimScope.SPECIFIC
     }
     return bool(owned_official_ids) and any(
         candidate.component_id == item.component_id

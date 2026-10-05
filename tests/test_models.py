@@ -299,6 +299,7 @@ def test_to_dict_recursively_serializes_ordered_model_values() -> None:
                 "source_sha256": "abc",
                 "retrieved_at": "2026-08-20T00:00:00Z",
                 "provenance": "local",
+                "claim_scope": "context",
             }
         ],
         "metadata": {"input": "input.xlsx", "phase": "runtime"},
@@ -319,7 +320,7 @@ def test_canonical_dataclasses_have_exact_field_order_and_are_frozen() -> None:
         Evidence: (
             "evidence_id", "component_id", "capability_id", "polarity", "strength", "claim_ru",
             "source_id", "locator", "version_constraint", "source_url", "local_path",
-            "source_sha256", "retrieved_at", "provenance",
+            "source_sha256", "retrieved_at", "provenance", "claim_scope",
         ),
         Candidate: ("component_id", "capability_id", "evidence_ids", "score", "reasons"),
         ImplementationStep: ("order", "phase", "action_ru", "mechanism", "command", "api_operation"),

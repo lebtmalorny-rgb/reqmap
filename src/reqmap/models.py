@@ -48,6 +48,11 @@ class EvidenceStrength(str, Enum):
     NONE = "none"
 
 
+class EvidenceClaimScope(str, Enum):
+    CONTEXT = "context"
+    SPECIFIC = "specific"
+
+
 class EvidencePolarity(str, Enum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
@@ -111,6 +116,7 @@ class Evidence:
     source_sha256: str
     retrieved_at: str
     provenance: str
+    claim_scope: EvidenceClaimScope = EvidenceClaimScope.CONTEXT
 
 
 @dataclass(frozen=True)

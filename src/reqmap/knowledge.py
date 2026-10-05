@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import Any
 
 from reqmap.errors import ReqmapError
-from reqmap.models import Evidence, EvidencePolarity, EvidenceStrength
+from reqmap.models import Evidence, EvidenceClaimScope, EvidencePolarity, EvidenceStrength
 
 
 EXPECTED_RELEASE = "2025.1"
@@ -246,6 +246,7 @@ def _load_evidence(path: Path, sources: Mapping[str, SourceRecord]) -> dict[str,
                 "source_id",
                 "locator",
                 "version_constraint",
+                "claim_scope",
             },
             f"evidence line {index}",
         )
@@ -255,6 +256,9 @@ def _load_evidence(path: Path, sources: Mapping[str, SourceRecord]) -> dict[str,
         source = sources.get(source_id)
         if source is None:
             _raise("EVIDENCE_SOURCE_UNKNOWN", evidence_id, f"Evidence ссылается на неизвестный источник: {source_id}")
+        raw_scope = record.get("claim_scope", "context")
+        if type(raw_scope) is not str or raw_scope not in {item.value for item in EvidenceClaimScope}:
+            _raise("EVIDENCE_CLAIM_SCOPE", evidence_id, "claim_scope evidence должен быть context или specific")
         try:
             polarity = EvidencePolarity(_required_string(record, "polarity", evidence_id))
             strength = EvidenceStrength(_required_string(record, "strength", evidence_id))
@@ -281,6 +285,7 @@ def _load_evidence(path: Path, sources: Mapping[str, SourceRecord]) -> dict[str,
             source_sha256=source.sha256,
             retrieved_at=source.retrieved_at,
             provenance=source.provenance,
+            claim_scope=EvidenceClaimScope(raw_scope),
         )
     return result
 
@@ -355,6 +360,8 @@ def _validate_references(kb: KnowledgeBase) -> list[KnowledgeIssue]:
             )
         if not evidence.claim_ru.strip():
             issues.append(KnowledgeIssue("EVIDENCE_CLAIM_EMPTY", evidence.evidence_id, "Evidence содержит пустое утверждение"))
+        if type(evidence.claim_scope) is not EvidenceClaimScope:
+            issues.append(KnowledgeIssue("EVIDENCE_CLAIM_SCOPE", evidence.evidence_id, "claim_scope evidence должен быть EvidenceClaimScope"))
     return issues
 
 

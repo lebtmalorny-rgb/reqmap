@@ -27,6 +27,7 @@ from reqmap.models import (
     AtomicClaim,
     Candidate,
     Evidence,
+    EvidenceClaimScope,
     EvidencePolarity,
     EvidenceStrength,
     ImplementationSource,
@@ -90,6 +91,7 @@ def evidence(
         source_sha256="a" * 64,
         retrieved_at="2026-08-20",
         provenance=provenance,
+        claim_scope=EvidenceClaimScope.SPECIFIC,
     )
 
 
@@ -1622,7 +1624,7 @@ def test_noncompleted_result_cannot_retain_confirmed_aspects(kb) -> None:
     assert error.value.code == "ANALYSIS_STATE_STATUS"
 
 
-def test_real_epoxy_snapshot_supports_broad_nova_neutron_many_to_many_scope() -> None:
+def test_real_epoxy_snapshot_keeps_broad_nova_neutron_scope_as_context() -> None:
     real_kb = load_knowledge(Path("knowledge/epoxy-2025.1"))
     model = FakeModel(
         [
@@ -1665,7 +1667,8 @@ def test_real_epoxy_snapshot_supports_broad_nova_neutron_many_to_many_scope() ->
     )
 
     assert [item.component_id for item in mapped.mappings] == ["nova", "neutron"]
-    assert mapped.support_status is SupportStatus.SUPPORTED
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert all(item.support_status is SupportStatus.INSUFFICIENT_EVIDENCE for item in mapped.mappings)
 
 
 @pytest.mark.parametrize(
@@ -1725,7 +1728,7 @@ def test_real_epoxy_negative_host_boundaries_remain_not_supported(
 
 
 def test_mapping_prompt_is_versioned_and_strictly_russian() -> None:
-    assert PROMPT_MAPPING_VERSION == "1.0"
+    assert PROMPT_MAPPING_VERSION == "1.1"
     assert "Верни только JSON" in MAPPING_PROMPT
     assert "source_hint" in MAPPING_PROMPT
     assert "не является evidence" in MAPPING_PROMPT

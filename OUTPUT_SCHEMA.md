@@ -31,6 +31,14 @@ Atomic claim содержит `atom_id`, `requirement_id`, буквальную 
 
 Evidence использует polarity `positive` или `negative` и strength `direct`, `indirect` или `none`. Технические коды не переводятся; XLSX рядом показывает русское значение.
 
+Legacy Evidence дополнен полем `claim_scope`: `context` или `specific`.
+Оно передаётся в canonical JSON schema `1.0` и evidence payload MCP.
+Строгие потребители JSON должны разрешить это новое поле. В старой записи
+KB без scope применяется `context`; такие записи не подтверждают поддержку.
+Причина `EVIDENCE_CONTEXT_ONLY` присутствует в diagnostics и обосновании
+пониженного mapping, включая Markdown и лист «Сопоставления» XLSX.
+Deep schema `2.0` использует собственную модель evidence.
+
 ## Агрегация support status
 
 Приоритет обязателен и воспроизводится из атомов:

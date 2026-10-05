@@ -189,6 +189,7 @@ def _mapping_response(source_quote: str) -> dict[str, object]:
 
 
 def _supported_nova_mapping() -> dict[str, object]:
+    # Intentional proposed overclaim: the shipped scope evidence must downgrade it.
     role = "Compute instances через REST API"
     return {
         "support_status": "supported",

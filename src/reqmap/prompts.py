@@ -1,7 +1,7 @@
 """Версионированные системные инструкции локальной модели."""
 
 PROMPT_DECOMPOSITION_VERSION = "1.0"
-PROMPT_MAPPING_VERSION = "1.0"
+PROMPT_MAPPING_VERSION = "1.1"
 PROMPT_DEEP_MAPPING_VERSION = "2.0"
 
 DECOMPOSITION_PROMPT = """Ты выполняешь только декомпозицию исходного требования. Не определяй компоненты OpenStack.
@@ -28,6 +28,9 @@ MAPPING_PROMPT = """Ты сопоставляешь одно атомарное 
 из-за отсутствия evidence. Official evidence принадлежит только своему component_id и
 capability_id; общий source не переносит его на соседний компонент. project_policy может
 быть только relational context и никогда самостоятельно не доказывает поддержку.
+Evidence с claim_scope=context является только справкой и не подтверждает реализацию
+или её отсутствие. Для подтверждённого mapping требуется официальное specific evidence;
+если его нет, сохрани обязательство и верни insufficient_evidence.
 
 Для runtime каждый runtime step использует mechanism openstack_api, command null и
 конкретный api_operation либо endpoint family, который дословно присутствует в переданном

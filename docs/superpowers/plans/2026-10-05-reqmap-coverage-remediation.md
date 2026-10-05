@@ -19,7 +19,10 @@ JSON/JSONL snapshots, read-only XLSX input.
 **Spec:** [Аудит и критерии исправления](../../acceptance/2026-10-05-requirements-coverage-audit.md).
 
 Это приоритизированный план корректирующих работ по результатам исследования.
-Работы ниже **не выполнены**. Изменение схемы связи атома с evidence требует
+Первый этап реализован согласно
+[отдельному контракту](../specs/2026-10-05-evidence-scope-containment.md).
+Результаты проверок — в [отчёте](../../acceptance/2026-10-05-evidence-scope-containment.md).
+Этапы 2–5 **не выполнены**. Изменение схемы связи атома с evidence требует
 отдельного проектирования на этапе 2; этот документ не фиксирует выдуманную
 гарантию семантической проверки произвольного русского текста.
 
@@ -53,24 +56,24 @@ JSON/JSONL snapshots, read-only XLSX input.
 **Выход:** отрицательные регрессионные сценарии и согласованный baseline
 для существующей общей базы. Это защитный этап, а не расширение покрытия.
 
-- [ ] Добавить тест `test_scope_label_cannot_prove_unrelated_obligation`:
+- [x] Добавить тест `test_scope_label_cannot_prove_unrelated_obligation`:
   каждый из 22 компонентов плюс выдуманное действие, роль/шаг/операция равны
   capability name; итог не `supported` и не `partial`.
-- [ ] Добавить `test_scope_label_cannot_prove_latency_guarantee`:
+- [x] Добавить `test_scope_label_cannot_prove_latency_guarantee`:
   обычное действие с неподтверждённым временем выполнения не получает `supported`.
-- [ ] Повторить один сценарий через submit/finalize/get_result и проверить
+- [x] Повторить один сценарий через submit/finalize/get_result и проверить
   согласованность JSON/XLSX/Markdown. До исправления наблюдать RED.
-- [ ] Определить явную машинную границу context-only scope evidence и evidence
+- [x] Определить явную машинную границу context-only scope evidence и evidence
   конкретной операции. Нельзя определять её по суффиксу ID или набору запрещённых
   слов; спецификация поля/схемы и миграция должны быть проверены до правки loader.
-- [ ] Закрыть положительное сопоставление, основанное только на общем scope.
+- [x] Закрыть положительное сопоставление, основанное только на общем scope.
   Существующее широкое evidence сохраняется для retrieval и объяснения кандидатов.
-- [ ] Разделить старый scope-only eval и будущий положительный operation-backed
+- [x] Разделить старый scope-only eval и будущий положительный operation-backed
   eval. Не исправлять тест добавлением отсутствующих слов в общий claim.
-- [ ] Запустить `tests/test_knowledge.py`, `tests/test_epoxy_snapshot.py`,
+- [x] Запустить `tests/test_knowledge.py`, `tests/test_epoxy_snapshot.py`,
   `tests/test_mapping.py`, `tests/test_agent_mapping.py`, `tests/test_acceptance.py`.
   Затем повторить воспроизведение из аудита: ложного `supported` больше нет.
-- [ ] Зафиксировать отдельный коммит с кодом, миграцией и тестами этого этапа.
+- [x] Зафиксировать отдельный коммит с кодом, миграцией и тестами этого этапа.
 
 ## Этап 2. Спроектировать связь обязательства с доказательством
 
