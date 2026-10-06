@@ -1,4 +1,5 @@
 """Reconstruct derived domain state by revalidating accepted proposals."""
+from reqmap.binding_runtime import require_session_contract
 from reqmap.agent_knowledge import VerifiedKnowledge
 from reqmap.agent_types import SessionRecord, SessionView
 from reqmap.decomposition import accept_decomposition
@@ -9,6 +10,7 @@ from reqmap.proposals import ProposalError
 def replay_session(record: SessionRecord, knowledge: VerifiedKnowledge) -> SessionView:
     if record.seed.settings.knowledge_sha256 != knowledge.knowledge_sha256:
         raise ReqmapError('KNOWLEDGE_CHANGED', 'Snapshot изменился; требуется новая сессия.')
+    require_session_contract(record.seed.settings, knowledge)
     requirements = record.seed.input_snapshot.requirements
     by_id = {r.requirement_id:r for r in requirements}
     atoms, mappings = {}, {}

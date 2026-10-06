@@ -1,0 +1,4 @@
+{"accepted":true,"error_code":null,"event":"agent_proposal","level":"info","message_ru":"Попытка предложения внешнего агента.","operation":"reqmap_submit_atoms","proposal_sha256":"679604bf863e4b998c53e3c932507d71396d04e2ccb4bc4aab8afe2797f6abc1","request_id":"atoms","sequence":1}
+{"accepted":true,"error_code":null,"event":"agent_proposal","level":"info","message_ru":"Попытка предложения внешнего агента.","operation":"reqmap_submit_mapping","proposal_sha256":"9c9db2093bbfe68a90974e2eecd6018560410496e0da95cf2cbf19748ba9b6c8","request_id":"map","sequence":2}
+{"event":"analysis_finished","level":"info","message_ru":"Предметный анализ требований завершён.","requirements_count":1,"run_status":"SUCCESS"}
+{"event":"artifacts_verified","level":"info","message_ru":"JSON, XLSX и Markdown согласованы с canonical RunResult."}

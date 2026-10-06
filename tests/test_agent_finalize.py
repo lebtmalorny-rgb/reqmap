@@ -124,7 +124,7 @@ def test_failed_crosscheck_returns_diagnostics_only_and_closes_session(tmp_path,
 
 
 @pytest.mark.parametrize('text,expected',[
-    ('Создание сервера через Nova API','SUCCESS'),
+    ('Создание сервера через Nova API','PARTIAL'),
     ('Восстановить HA виртуальную машину после отказа.','PARTIAL'),
     ('Противоречивое создание сервера conflict','PARTIAL'),
 ])
@@ -152,7 +152,7 @@ def _exit_during_export(config,sid,prefix):
             os._exit(73)
         return fd,name
     tempfile.mkstemp=crash
-    finalize(AgentService(config),sid)
+    finalize(AgentService(config),sid,partial=True)
 
 
 @pytest.mark.parametrize('prefix,deep',[
@@ -178,10 +178,10 @@ def test_actual_process_death_with_export_tempfile_recovers(tmp_path,prefix,deep
     assert intent['status']=='pending'
     staging=svc.config.output_root/intent['staging_name']
     assert any(p.name.startswith(prefix) for p in staging.iterdir())
-    recovered=finalize(AgentService(svc.config),sid)
+    recovered=finalize(AgentService(svc.config),sid,partial=True)
     assert recovered.ok,recovered
     assert svc.store.read(sid).revision==3
-    assert finalize(svc,sid)==recovered
+    assert finalize(svc,sid,partial=True)==recovered
     final_dir=Path(recovered.data['artifacts']['result.json']).parent
     assert {p.name for p in final_dir.iterdir()}==set(recovered.data['artifacts'])
     assert len(list(svc.config.output_root.iterdir()))==1

@@ -1,22 +1,16 @@
 """Версионированные системные инструкции локальной модели."""
 
-PROMPT_DECOMPOSITION_VERSION = "1.0"
+PROMPT_DECOMPOSITION_VERSION = "2.0"
 PROMPT_MAPPING_VERSION = "1.2"
 PROMPT_DEEP_MAPPING_VERSION = "2.1"
 
-DECOMPOSITION_PROMPT = """Ты выполняешь только декомпозицию исходного требования. Не определяй компоненты OpenStack.
-Каждый атом должен описывать одно проверяемое обязательство и содержать точную цитату source_quote из requirement_text.
-Не добавляй обязательства, которых нет в requirement_text. Верни только JSON object по переданной схеме.
-
-Контекст parent_text, если он передан, неавторитетный и служит только для понимания контекста.
-Нельзя создавать атомы или source_quote по parent_text: каждая source_quote должна быть точной,
-регистрозависимой подстрокой requirement_text.
-
-Схема ответа: строго JSON object с единственным ключом atoms. atoms — непустой массив.
-Каждый элемент atoms — object строго с ключами text, source_quote, mandatory; text и source_quote
-— непустые строки, mandatory — JSON boolean. Поле text — неавторитетная метка для
-совместимости схемы: downstream атом всегда получает text, в точности равный source_quote
-из текущего requirement_text."""
+DECOMPOSITION_PROMPT = """Выбери canonical atoms из полной source_binding без изменения семантики.
+Верни только JSON object с proposal_schema_version=2 и atoms по canonical_proposal.
+source_quote и source_span должны точно соответствовать обязательству backend. Смещения измеряются
+в Unicode code points, конец исключён. mandatory всегда true. Нельзя опускать условия и отрицание,
+делить обязательство или переносить source_quote из parent_text. parent_text неавторитетен и служит
+только контекстом. text является неавторитетной меткой; backend сохраняет точную исходную цитату.
+"""
 
 MAPPING_PROMPT = """Ты сопоставляешь одно атомарное требование только с переданными кандидатами OpenStack Epoxy 2025.1.
 Верни только JSON object по переданной строгой схеме. Не называй component_id или evidence_id,

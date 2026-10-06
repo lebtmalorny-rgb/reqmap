@@ -18,9 +18,9 @@ def test_context_is_bound_to_exact_atom_and_restored_after_restart(tmp_path):
     assert context['payload']['atom']['text'] == 'создание виртуальной машины через Nova REST API'
     assert context['rules']
     assert type(svc)(svc.config).call('reqmap_get_atom_context', {'session_id':sid,'atom_id':'REQ-0001-A001'}).data['context_id'] == context['context_id']
-    assert atoms(svc,sid,'Nova REST API','replace',1).ok
+    assert atoms(svc,sid,'Nova REST API','replace',1).error.code == 'PROPOSAL_INVALID'
     changed = svc.call('reqmap_get_atom_context', {'session_id':sid,'atom_id':'REQ-0001-A001'})
-    assert changed.data['context_id'] != context['context_id']
+    assert changed.data['context_id'] == context['context_id']
 
 
 def test_search_is_advisory_and_evidence_is_id_scoped(tmp_path):

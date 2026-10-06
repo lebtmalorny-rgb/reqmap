@@ -11,7 +11,9 @@ from tests.test_mapping import kb, candidate, raw_mapping, response, atom as leg
 
 def test_decomposition_keeps_exact_quote_and_rejects_foreign_text():
     req = requirement()
-    raw = {"atoms": [{"text": "invented label", "source_quote": req.text, "mandatory": True}]}
+    from reqmap.binding_source import atom_selection_proposal, bind_source
+    raw = atom_selection_proposal(bind_source(req))
+    raw["atoms"][0]["text"] = "invented label"
     assert hasattr(decomposition, "accept_decomposition")
     actual = decomposition.accept_decomposition(req, raw)
     assert actual[0].text == "Synthetic requirement"
@@ -21,14 +23,16 @@ def test_decomposition_keeps_exact_quote_and_rejects_foreign_text():
     raw["atoms"][0]["source_quote"] = "foreign quote"
     with pytest.raises(ProposalError) as failure:
         decomposition.accept_decomposition(req, raw)
-    assert failure.value.kind == "shape"
+    assert failure.value.kind == "semantic"
 
 
-def test_legacy_proposal_uses_same_gate_and_ids(kb):
+def test_legacy_proposal_uses_same_gate_and_ids(kb, tmp_path):
     assert hasattr(mapping, "accept_mapping")
     a, candidates, raw = legacy_atom(), (candidate("nova", "E-NOVA"),), response(raw_mapping())
-    result = mapping.accept_mapping(a, candidates, kb, raw)
-    assert result == mapping.map_atom(FakeModel([raw]), a, candidates, kb)
+    from tests.binding_factories import binding_case, loaded_catalog
+    a, context, raw = binding_case(kb, loaded_catalog(tmp_path, kb), raw)
+    result = mapping.accept_mapping(a, candidates, kb, raw, binding_context=context)
+    assert result == mapping.map_atom(FakeModel([raw]), a, candidates, kb, binding_context=context)
     assert result.support_status is SupportStatus.SUPPORTED
     assert result.mappings[0].mapping_id == "REQ-0001-A001-M001"
     assert mapping.prepare_mapping(a, candidates, kb)["atom"]["text"] == a.text

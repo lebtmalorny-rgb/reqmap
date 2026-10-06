@@ -55,19 +55,16 @@ class FakeModel:
         response = self._responses.popleft()
         if isinstance(response, Exception):
             raise response
+        if type(response) is dict and "support_status" in response:
+            context = payload.get("original_payload", payload)
+            response = {**response, "proposal_schema_version":2,
+                        "obligation_id":context["atom"]["obligation_id"], "predicate_ids":[]}
         return response
 
 
 def valid_decomposition(text: str) -> dict[str, object]:
-    return {
-        "atoms": [
-            {
-                "text": text,
-                "source_quote": text,
-                "mandatory": True,
-            }
-        ]
-    }
+    from reqmap.binding_source import bind_source, atom_selection_proposal
+    return atom_selection_proposal(bind_source(replace(requirement(), text=text)))
 
 
 def not_applicable_mapping() -> dict[str, object]:
@@ -137,8 +134,8 @@ def config_for(
 
 def request_for(tmp_path: Path, count: int = 1) -> AnalysisRequest:
     texts = (
-        "Провести инструктаж персонала альфа",
-        "Провести инструктаж персонала бета",
+        "Nova должна создавать ВМ через API",
+        "Nova должна обеспечивать создание ВМ через API",
     )
     requirements = tuple(
         replace(
@@ -174,10 +171,10 @@ def test_pipeline_processes_remaining_requirements_after_model_failure(
 ) -> None:
     model = FakeModel(
         (
-            valid_decomposition("Провести инструктаж персонала альфа"),
+            valid_decomposition("Nova должна создавать ВМ через API"),
             invalid_mapping(),
             invalid_mapping(),
-            valid_decomposition("Провести инструктаж персонала бета"),
+            valid_decomposition("Nova должна обеспечивать создание ВМ через API"),
             not_applicable_mapping(),
         )
     )
@@ -187,7 +184,7 @@ def test_pipeline_processes_remaining_requirements_after_model_failure(
     assert run.requirements[0].analysis_state is AnalysisState.MODEL_FAILED
     assert run.requirements[0].support_status is None
     assert run.requirements[1].analysis_state is AnalysisState.COMPLETED
-    assert run.requirements[1].support_status is SupportStatus.NOT_APPLICABLE
+    assert run.requirements[1].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert run.run_status == "PARTIAL"
     assert run.metadata["endpoint_origin"] == "http://127.0.0.1:8000"
     assert "top-secret" not in json.dumps(
@@ -215,7 +212,7 @@ def test_subject_model_error_is_redacted_before_entering_run_result(
     )
     model = FakeModel(
         (
-            valid_decomposition("Провести инструктаж персонала альфа"),
+            valid_decomposition("Nova должна создавать ВМ через API"),
             secret_error,
         )
     )
@@ -423,7 +420,7 @@ def test_completed_requirement_resumes_without_subject_model_call(
     tmp_path: Path,
 ) -> None:
     request = request_for(tmp_path)
-    source_text = "Создать виртуальную машину через API"
+    source_text = "Nova должна создавать виртуальную машину через API"
     source = replace(request.requirements[0], text=source_text)
     request = replace(request, requirements=(source,))
     first_model = FakeModel(
@@ -458,14 +455,14 @@ def test_resume_signature_changes_with_significant_parameter(tmp_path: Path) -> 
     request = request_for(tmp_path)
     first_model = FakeModel(
         (
-            valid_decomposition("Провести инструктаж персонала альфа"),
+            valid_decomposition("Nova должна создавать ВМ через API"),
             not_applicable_mapping(),
         )
     )
     analyze(request, config_for(top_k=8), first_model)
     changed_model = FakeModel(
         (
-            valid_decomposition("Провести инструктаж персонала альфа"),
+            valid_decomposition("Nova должна создавать ВМ через API"),
             not_applicable_mapping(),
         )
     )
@@ -483,7 +480,7 @@ def test_resume_rejects_forged_mapping_component_against_knowledge(
     forged_component: str,
 ) -> None:
     request = request_for(tmp_path)
-    source_text = "Создать виртуальную машину через API"
+    source_text = "Nova должна создавать виртуальную машину через API"
     request = replace(
         request,
         requirements=(replace(request.requirements[0], text=source_text),),

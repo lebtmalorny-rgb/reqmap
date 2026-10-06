@@ -38,43 +38,24 @@ def requirement_text(text: str, *, requirement_id: str = "REQ-0001") -> Requirem
 
 
 def valid_atoms(*atoms: dict[str, object]) -> dict[str, object]:
-    return {"atoms": list(atoms)}
+    offset = 0
+    selected = []
+    for atom in atoms:
+        quote = atom["source_quote"]
+        selected.append({**atom, "source_span":{"start":offset,"end":offset+len(quote)}})
+        offset += len(quote) + 2
+    return {"proposal_schema_version":2, "atoms":selected}
 
 
 def test_decompose_preserves_multiple_obligations_and_order() -> None:
-    """Слияние или перестановка атомов меняет проверяемый результат анализа."""
-    model = FakeModel(
-        [
-            valid_atoms(
-                {
-                    "text": "Создание ВМ через API",
-                    "source_quote": "создание ВМ через API",
-                    "mandatory": True,
-                },
-                {
-                    "text": "Настройка sysctl",
-                    "source_quote": "настройку sysctl",
-                    "mandatory": True,
-                },
-            )
-        ]
-    )
-
-    outcome = decompose(
-        model,
-        requirement_text("Поддержать создание ВМ через API и настройку sysctl"),
-        None,
-    )
-
+    quotes = ("Nova должна создавать ВМ через API", "Nova должна удалять ВМ через API")
+    raw = valid_atoms(*(dict(text=q, source_quote=q, mandatory=True) for q in quotes))
+    raw["atoms"].reverse()
+    model = FakeModel([raw])
+    outcome = decompose(model, requirement_text("; ".join(quotes)), None)
     assert outcome.analysis_state is AnalysisState.COMPLETED
-    assert [(atom.atom_id, atom.ordinal, atom.text) for atom in outcome.atoms] == [
-        ("REQ-0001-A001", 1, "создание ВМ через API"),
-        ("REQ-0001-A002", 2, "настройку sysctl"),
-    ]
-    assert [atom.source_quote for atom in outcome.atoms] == [
-        "создание ВМ через API",
-        "настройку sysctl",
-    ]
+    assert [(a.atom_id, a.ordinal, a.text) for a in outcome.atoms] == [
+        ("REQ-0001-A001", 1, quotes[0]), ("REQ-0001-A002", 2, quotes[1])]
     assert model.calls[0][0:2] == ("decomposition", DECOMPOSITION_PROMPT)
 
 
@@ -85,33 +66,33 @@ def test_decompose_uses_exact_quote_not_free_model_text_as_canonical_content() -
             valid_atoms(
                 {
                     "text": "Удалять все резервные копии после создания ВМ",
-                    "source_quote": "ВМ",
+                    "source_quote": "Nova должна создавать ВМ через API",
                     "mandatory": True,
                 }
             )
         ]
     )
 
-    outcome = decompose(model, requirement_text("Создание ВМ"), None)
+    outcome = decompose(model, requirement_text("Nova должна создавать ВМ через API"), None)
 
     assert outcome.analysis_state is AnalysisState.COMPLETED
-    assert outcome.atoms[0].text == "ВМ"
-    assert outcome.atoms[0].source_quote == "ВМ"
+    assert outcome.atoms[0].text == "Nova должна создавать ВМ через API"
+    assert outcome.atoms[0].source_quote == "Nova должна создавать ВМ через API"
     assert "Удалять" not in outcome.atoms[0].text
 
 
 def test_decompose_rejects_case_changed_or_invented_quote_after_one_correction() -> None:
     """Case-sensitive grounding запрещает подменять исходную формулировку."""
     invalid = valid_atoms(
-        {"text": "Создание ВМ", "source_quote": "создание ВМ", "mandatory": True}
+        {"text": "Nova должна создавать ВМ через API", "source_quote": "nova должна создавать ВМ через API", "mandatory": True}
     )
     model = FakeModel([invalid, invalid])
 
-    outcome = decompose(model, requirement_text("Создание ВМ"), None)
+    outcome = decompose(model, requirement_text("Nova должна создавать ВМ через API"), None)
 
     assert outcome.analysis_state is AnalysisState.MODEL_FAILED
     assert outcome.atoms == ()
-    assert "не найден в исходной формулировке" in outcome.diagnostics[0]
+    assert "SOURCE_SPAN_INVALID" in outcome.diagnostics[0]
     assert len(model.calls) == 2
     assert model.calls[1][2]["invalid_response"] == invalid
 
@@ -123,10 +104,10 @@ def test_decompose_never_uses_parent_text_as_authoritative_quote() -> None:
     )
     model = FakeModel([invalid, invalid])
 
-    outcome = decompose(model, requirement_text("Настроить резервное копирование"), "Шифрование данных")
+    outcome = decompose(model, requirement_text("Nova должна создавать ВМ через API"), "Шифрование данных")
 
     assert outcome.analysis_state is AnalysisState.MODEL_FAILED
-    assert "не найден в исходной формулировке" in outcome.diagnostics[0]
+    assert "SOURCE_SPAN_INVALID" in outcome.diagnostics[0]
     assert model.calls[0][2]["parent_text"] == "Шифрование данных"
     assert "неавторитет" in str(model.calls[0][2]["parent_text_policy"]).lower()
 
@@ -152,18 +133,13 @@ def test_decomposition_violations_rejects_strict_schema_type_and_empty_values(
 
 def test_decomposition_violations_rejects_unknown_top_level_and_duplicate_obligations() -> None:
     """Контракт ровно atoms и не допускает повторных одинаковых обязательств/цитат."""
-    response = {
-        "atoms": [
-            {"text": "Проверить API", "source_quote": "Проверить API", "mandatory": True},
-            {"text": "Проверить API", "source_quote": "Проверить API", "mandatory": True},
-        ],
-        "other": False,
-    }
-
-    violations = decomposition_violations(response, "Проверить API")
-
-    assert any("верхнего уровня" in violation for violation in violations)
-    assert any("повторяет" in violation for violation in violations)
+    quote = "Nova должна создавать ВМ через API"
+    response = valid_atoms(dict(text=quote, source_quote=quote, mandatory=True))
+    response["other"] = False
+    assert decomposition_violations(response, quote)
+    response.pop("other")
+    response["atoms"].append(dict(response["atoms"][0]))
+    assert any("SOURCE_SPAN_INVALID" in v for v in decomposition_violations(response, quote))
 
 
 class DivergentMapping(Mapping[str, object]):
@@ -188,20 +164,20 @@ def test_decompose_rejects_non_builtin_mapping_before_build_can_reread_it() -> N
     """Нестабильный Mapping нельзя валидировать одним способом и читать другим."""
     model = FakeModel([DivergentMapping(), DivergentMapping()])
 
-    outcome = decompose(model, requirement_text("safe"), None)
+    outcome = decompose(model, requirement_text("Nova должна создавать ВМ через API"), None)
 
     assert outcome.analysis_state is AnalysisState.MODEL_FAILED
     assert outcome.atoms == ()
-    assert "встроенным dict" in outcome.diagnostics[0]
+    assert "PROPOSAL_SCHEMA" in outcome.diagnostics[0]
 
 
 def test_decompose_correction_can_return_valid_response() -> None:
     """Одна конкретная коррекция нужна для исправления формата малой локальной моделью."""
     invalid = {"atoms": [{"text": "ВМ", "source_quote": "нет", "mandatory": True}]}
-    valid = valid_atoms({"text": "Создание ВМ", "source_quote": "Создание ВМ", "mandatory": True})
+    valid = valid_atoms({"text": "Nova должна создавать ВМ через API", "source_quote": "Nova должна создавать ВМ через API", "mandatory": True})
     model = FakeModel([invalid, valid])
 
-    outcome = decompose(model, requirement_text("Создание ВМ"), None)
+    outcome = decompose(model, requirement_text("Nova должна создавать ВМ через API"), None)
 
     assert outcome.analysis_state is AnalysisState.COMPLETED
     assert [atom.atom_id for atom in outcome.atoms] == ["REQ-0001-A001"]
@@ -217,7 +193,7 @@ def test_decompose_handles_model_output_error_once_and_fails_closed(raw_response
     error = ModelOutputError("MODEL_OUTPUT_INVALID", "Ответ модели некорректен.", raw_response)
     model = FakeModel([error, error])
 
-    outcome = decompose(model, requirement_text("Создание ВМ"), None)
+    outcome = decompose(model, requirement_text("Nova должна создавать ВМ через API"), None)
 
     assert outcome.analysis_state is AnalysisState.MODEL_FAILED
     assert outcome.atoms == ()
@@ -230,13 +206,13 @@ def test_decompose_propagates_transport_model_error() -> None:
     model = FakeModel([ModelError("MODEL_TRANSPORT_ERROR", "Нет связи")])
 
     with pytest.raises(ModelError, match="Нет связи"):
-        decompose(model, requirement_text("Создание ВМ"), None)
+        decompose(model, requirement_text("Nova должна создавать ВМ через API"), None)
 
     assert len(model.calls) == 1
 
 
 def test_decomposition_prompt_is_versioned_and_declares_parent_untrusted() -> None:
     """Версия и запрет authority родителя являются контрактом переносимых запусков."""
-    assert PROMPT_DECOMPOSITION_VERSION == "1.0"
-    assert "Не определяй компоненты OpenStack" in DECOMPOSITION_PROMPT
+    assert PROMPT_DECOMPOSITION_VERSION == "2.0"
+    assert "proposal_schema_version=2" in DECOMPOSITION_PROMPT
     assert "неавторитет" in DECOMPOSITION_PROMPT.lower()

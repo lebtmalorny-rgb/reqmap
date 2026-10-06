@@ -147,7 +147,7 @@ def test_scope_only_proposal_remains_insufficient_after_restart_and_publication(
     context = svc.call("reqmap_get_atom_context", {"session_id": sid, "atom_id": "REQ-0001-A001"})
     result = svc.call("reqmap_submit_mapping", dict(
         session_id=sid, atom_id="REQ-0001-A001", context_id=context.data["context_id"],
-        proposal=_supported_nova_mapping(), request_id="map", expected_revision=1,
+        proposal={**_supported_nova_mapping(), "proposal_schema_version":2, "obligation_id":"REQ-0001-O001", "predicate_ids":[]}, request_id="map", expected_revision=1,
     ))
     assert result.ok, result
     assert result.data["result"]["support_status"] == "insufficient_evidence"

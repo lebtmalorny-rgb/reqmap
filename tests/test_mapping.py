@@ -346,6 +346,7 @@ def response(
     unconfirmed_aspects: tuple[str, ...] = (),
 ) -> dict[str, object]:
     return {
+        "proposal_schema_version": 2, "obligation_id": "REQ-0001-O001", "predicate_ids": [],
         "support_status": status,
         "supported_aspects": list(supported_aspects),
         "unconfirmed_aspects": list(unconfirmed_aspects),

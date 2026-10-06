@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import re
+from reqmap.binding_runtime import binding_contract, require_session_contract
 from reqmap.agent_config import AgentConfig
 from reqmap.agent_input import import_agent_input
 from reqmap.agent_knowledge import load_agent_knowledge
@@ -99,6 +100,9 @@ class AgentService:
                 return get_result(self.store,self.config,arguments,self._page_size(arguments))
             if name == 'reqmap_finalize' and type(arguments.get('allow_partial',False)) is not bool:
                 raise ReqmapError('TOOL_ARGUMENTS','allow_partial должен быть bool.')
+            record = self.store.read(arguments['session_id'])
+            if record.status == 'active':
+                require_session_contract(record.seed.settings)
             command = MutationCommand(arguments['session_id'], arguments['request_id'], arguments['expected_revision'], name, arguments)
             if name == 'reqmap_finalize':
                 from reqmap.agent_finalize import finalize_session
@@ -119,12 +123,14 @@ class AgentService:
             snapshot = import_agent_input(args['source'], self.config)
             knowledge = load_agent_knowledge(self.config)
             settings = SessionSettings(self.config.analysis_profile,self.config.top_k,self.config.input_profile,
-                                       knowledge.knowledge_sha256,knowledge.snapshot_id,'1.0','1.0')
+                                       knowledge.knowledge_sha256,knowledge.snapshot_id,'2.0','2.0',
+                                       **binding_contract(self.config.analysis_profile, knowledge.binding_catalog))
             return SessionSeed(snapshot,settings,tuple(clarifications),parent,client)
         return self.store.create(args['request_id'], args, prepare)
 
     def verified_view(self, record):
         settings = record.seed.settings
+        require_session_contract(settings)
         if (settings.analysis_profile, settings.top_k, settings.input_profile) != (self.config.analysis_profile,self.config.top_k,self.config.input_profile):
             raise ReqmapError('CONFIG_CHANGED','Профиль/параметры изменены; требуется новая сессия.')
         try:

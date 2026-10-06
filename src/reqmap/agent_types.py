@@ -32,6 +32,13 @@ class SessionSettings:
     snapshot_id: str | None
     tool_contract_version: str
     workflow_version: str
+    binding_engine_version: str | None = None
+    grammar_version: str | None = None
+    grammar_sha256: str | None = None
+    binding_catalog_sha256: str | None = None
+    binding_catalog_schema_version: int | None = None
+    proposal_schema_version: int | None = None
+    result_schema_version: str | None = None
 
 
 @dataclass(frozen=True)

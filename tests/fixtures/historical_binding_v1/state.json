@@ -1,0 +1,74 @@
+{
+  "session_id": "476c5479-21be-4d84-ae86-190d3e2e533f",
+  "tables": {
+    "sessions": [
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        "{\"clarifications\":[],\"input\":{\"content\":\"WyLRgdC+0LfQtNCw0L3QuNC1INCy0LjRgNGC0YPQsNC70YzQvdC+0Lkg0LzQsNGI0LjQvdGLINGH0LXRgNC10LcgTm92YSBSRVNUIEFQSSJdCg==\",\"input_sha256\":\"4524f09e880fa8c6e3a804673d4d544b58bb46e12b8aa085733594885adeef2d\",\"source_kind\":\"texts\",\"source_name\":\"agent-texts\"},\"parent_session_id\":null,\"reported_client\":\"unknown\",\"settings\":{\"analysis_profile\":\"legacy\",\"input_profile\":null,\"knowledge_sha256\":\"2d4d1440c32e827bcd1cc1b192d5ab88c1eee1350eab93431135d2fde406b92a\",\"snapshot_id\":null,\"tool_contract_version\":\"1.0\",\"top_k\":8,\"workflow_version\":\"1.0\"}}\n",
+        "f5a75ac53ed5de2f2344baa9424f00059ec7622935f7219464c63e488e79e536",
+        3,
+        "finalized"
+      ]
+    ],
+    "events": [
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        1,
+        "{\"accepted\":true,\"arguments\":{\"expected_revision\":0,\"proposal\":{\"atoms\":[{\"mandatory\":true,\"source_quote\":\"создание виртуальной машины через Nova REST API\",\"text\":\"non-authoritative label\"}]},\"request_id\":\"atoms\",\"requirement_id\":\"REQ-0001\",\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"operation\":\"reqmap_submit_atoms\",\"reply\":{\"data\":{\"atoms\":[{\"atom_id\":\"REQ-0001-A001\",\"mandatory\":true,\"ordinal\":1,\"requirement_id\":\"REQ-0001\",\"source_quote\":\"создание виртуальной машины через Nova REST API\",\"text\":\"создание виртуальной машины через Nova REST API\"}],\"revision\":1,\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"error\":null,\"ok\":true},\"request_id\":\"atoms\",\"sequence\":1}\n",
+        "f5a75ac53ed5de2f2344baa9424f00059ec7622935f7219464c63e488e79e536",
+        "c3cb7bb5c240bfcfca046cf5bc24de3088cc6632ca31c28a64c5cb5e7f2e2cb1"
+      ],
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        2,
+        "{\"accepted\":true,\"arguments\":{\"atom_id\":\"REQ-0001-A001\",\"context_id\":\"8f02972e0cab67ce39890982e9939364f845c67ee395a0ed5431639116f47543\",\"expected_revision\":1,\"proposal\":{\"mappings\":[{\"component_id\":\"nova\",\"evidence_ids\":[\"E-NOVA-SCOPE-001\"],\"implementation_source\":\"upstream\",\"mechanism\":\"openstack_api\",\"phase\":\"runtime\",\"reason_ru\":\"Nova документирует compute instances через REST API.\",\"relation\":\"implements\",\"role_ru\":\"Compute instances через REST API\",\"steps\":[{\"action_ru\":\"Compute instances через REST API\",\"api_operation\":\"Compute instances через REST API\",\"command\":null,\"mechanism\":\"openstack_api\"}],\"support_status\":\"supported\"}],\"support_status\":\"supported\",\"supported_aspects\":[\"Compute instances через REST API\"],\"unconfirmed_aspects\":[]},\"request_id\":\"map\",\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"operation\":\"reqmap_submit_mapping\",\"reply\":{\"data\":{\"result\":{\"analysis_state\":\"completed\",\"atom\":{\"atom_id\":\"REQ-0001-A001\",\"mandatory\":true,\"ordinal\":1,\"requirement_id\":\"REQ-0001\",\"source_quote\":\"создание виртуальной машины через Nova REST API\",\"text\":\"создание виртуальной машины через Nova REST API\"},\"diagnostics\":[\"Статус понижен: отсутствует достаточное официальное evidence.\",\"EVIDENCE_CONTEXT_ONLY: общая справка не доказывает конкретную реализацию или ограничение.\"],\"mappings\":[{\"atom_id\":\"REQ-0001-A001\",\"component_id\":\"nova\",\"evidence_ids\":[\"E-NOVA-SCOPE-001\"],\"implementation_source\":\"upstream\",\"mapping_id\":\"REQ-0001-A001-M001\",\"mechanism\":\"openstack_api\",\"phase\":\"runtime\",\"reason_ru\":\"EVIDENCE_CONTEXT_ONLY: общая справка не доказывает конкретную реализацию или ограничение.\",\"relation\":\"implements\",\"role_ru\":\"Compute instances через REST API\",\"steps\":[{\"action_ru\":\"Compute instances через REST API\",\"api_operation\":\"Compute instances через REST API\",\"command\":null,\"mechanism\":\"openstack_api\",\"order\":1,\"phase\":\"runtime\"}],\"support_status\":\"insufficient_evidence\"}],\"support_status\":\"insufficient_evidence\",\"supported_aspects\":[],\"unconfirmed_aspects\":[\"Compute instances через REST API\"]},\"revision\":2,\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"error\":null,\"ok\":true},\"request_id\":\"map\",\"sequence\":2}\n",
+        "c3cb7bb5c240bfcfca046cf5bc24de3088cc6632ca31c28a64c5cb5e7f2e2cb1",
+        "ac190367b1b7c80ed9bd623ba549cbba31559c554ca99ce2cdd179df3c705ad4"
+      ],
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        3,
+        "{\"accepted\":true,\"arguments\":{\"allow_partial\":false,\"expected_revision\":2,\"request_id\":\"finish\",\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"operation\":\"reqmap_finalize\",\"reply\":{\"data\":{\"artifacts\":{\"manifest.json\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/manifest.json\",\"report.md\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/report.md\",\"result.json\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/result.json\",\"result.xlsx\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/result.xlsx\",\"run.jsonl\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/run.jsonl\"},\"requirements_count\":1,\"revision\":3,\"run_status\":\"SUCCESS\",\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\",\"status\":\"finalized\"},\"error\":null,\"ok\":true},\"request_id\":\"finish\",\"sequence\":3}\n",
+        "ac190367b1b7c80ed9bd623ba549cbba31559c554ca99ce2cdd179df3c705ad4",
+        "3c714134ed7f78166c833e8b4f1a49139b03eaa0d538d161878687efd54bce3f"
+      ]
+    ],
+    "receipts": [
+      [
+        "create",
+        "start",
+        "56e7705cde55ab5dda3a93935de89cab8d094b8d029cfeb2cf86720f81389fe5",
+        "{\"data\":{\"analysis_profile\":\"legacy\",\"requirements_count\":1,\"revision\":0,\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\",\"status\":\"active\"},\"error\":null,\"ok\":true}\n",
+        "ba48050820ae8e007e47b9113e99ad888c96494466d518f50525322a8d8c570b"
+      ],
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        "atoms",
+        "24c7c758642719bafbbc409734d2554d1dafe6eab35708b7dc8844f3de2d8f84",
+        "{\"data\":{\"atoms\":[{\"atom_id\":\"REQ-0001-A001\",\"mandatory\":true,\"ordinal\":1,\"requirement_id\":\"REQ-0001\",\"source_quote\":\"создание виртуальной машины через Nova REST API\",\"text\":\"создание виртуальной машины через Nova REST API\"}],\"revision\":1,\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"error\":null,\"ok\":true}\n",
+        "015ced01df1a40db3390e968e65ec5e1431afc50784d12dbc6815477e3105c2c"
+      ],
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        "map",
+        "4a32c1b379ce388f14c97e1f07119aaf6b358bc9a451653084606750aa043c2d",
+        "{\"data\":{\"result\":{\"analysis_state\":\"completed\",\"atom\":{\"atom_id\":\"REQ-0001-A001\",\"mandatory\":true,\"ordinal\":1,\"requirement_id\":\"REQ-0001\",\"source_quote\":\"создание виртуальной машины через Nova REST API\",\"text\":\"создание виртуальной машины через Nova REST API\"},\"diagnostics\":[\"Статус понижен: отсутствует достаточное официальное evidence.\",\"EVIDENCE_CONTEXT_ONLY: общая справка не доказывает конкретную реализацию или ограничение.\"],\"mappings\":[{\"atom_id\":\"REQ-0001-A001\",\"component_id\":\"nova\",\"evidence_ids\":[\"E-NOVA-SCOPE-001\"],\"implementation_source\":\"upstream\",\"mapping_id\":\"REQ-0001-A001-M001\",\"mechanism\":\"openstack_api\",\"phase\":\"runtime\",\"reason_ru\":\"EVIDENCE_CONTEXT_ONLY: общая справка не доказывает конкретную реализацию или ограничение.\",\"relation\":\"implements\",\"role_ru\":\"Compute instances через REST API\",\"steps\":[{\"action_ru\":\"Compute instances через REST API\",\"api_operation\":\"Compute instances через REST API\",\"command\":null,\"mechanism\":\"openstack_api\",\"order\":1,\"phase\":\"runtime\"}],\"support_status\":\"insufficient_evidence\"}],\"support_status\":\"insufficient_evidence\",\"supported_aspects\":[],\"unconfirmed_aspects\":[\"Compute instances через REST API\"]},\"revision\":2,\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\"},\"error\":null,\"ok\":true}\n",
+        "35286ae6243c07bbc8f6dfb9be5028ac01e7185a0f8a6c8ae8cbcbb806fcac35"
+      ],
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        "finish",
+        "86e72895d70d68ccc6cd4ebf6e3e253a4ad9b32661ba2742f19b50827bf0e019",
+        "{\"data\":{\"artifacts\":{\"manifest.json\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/manifest.json\",\"report.md\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/report.md\",\"result.json\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/result.json\",\"result.xlsx\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/result.xlsx\",\"run.jsonl\":\"/private/tmp/reqmap-historical-obligation-binding/outputs/65e7751f-0843-4a63-85a8-1ac44ec81265/run.jsonl\"},\"requirements_count\":1,\"revision\":3,\"run_status\":\"SUCCESS\",\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\",\"status\":\"finalized\"},\"error\":null,\"ok\":true}\n",
+        "c962cab50378748930fd586f645b8b6c926656b2a68372e1ca83be522357ee42"
+      ]
+    ],
+    "publications": [
+      [
+        "476c5479-21be-4d84-ae86-190d3e2e533f",
+        "{\"artifact_hashes\":{\"manifest.json\":\"9826b4c00f3bf08d2c7d4173cfa3c63209729c8bfec7d3e8ec0022050684371d\",\"report.md\":\"d517a282e1a9f9bf386a830ae0e49f11a6fc1373e7484472a67669ae19cbf91c\",\"result.json\":\"b2c4cc193f8c6db9828bee5f1c8e50282d4506eddc861b67c261643b45be5309\",\"result.xlsx\":\"cf4b5b9c1e1566e28844fed2ea0671495178b981079ad796f8a55010dd5896b7\",\"run.jsonl\":\"61c0cc0f643428ca715f48cd0cf98c156141444576ea7102caa1c337d165691d\"},\"final_name\":\"65e7751f-0843-4a63-85a8-1ac44ec81265\",\"final_revision\":3,\"payload_sha256\":\"86e72895d70d68ccc6cd4ebf6e3e253a4ad9b32661ba2742f19b50827bf0e019\",\"proposal_journal_sha256\":\"27c185eab974a2caa3ae36070a4abd5ea0a813d79e9efcc964848d75933ab93e\",\"request_id\":\"finish\",\"session_id\":\"476c5479-21be-4d84-ae86-190d3e2e533f\",\"source_revision\":2,\"staging_name\":\".65e7751f-0843-4a63-85a8-1ac44ec81265.staging\",\"status\":\"committed\"}\n",
+        "02c77e641f46a42d947dadd3f00d0778baca9bbd11ffb9f5ce689a982fc55c7f"
+      ]
+    ]
+  }
+}

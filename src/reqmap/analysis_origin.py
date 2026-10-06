@@ -18,9 +18,8 @@ def validate_analysis_origin(raw: object) -> dict[str, object]:
         raise ValueError('invalid origin session_id')
     if type(raw['revision']) is not int or raw['revision'] < 0:
         raise ValueError('invalid origin revision')
-    for field in ('tool_contract_version','workflow_version'):
-        if raw[field] != '1.0':
-            raise ValueError('unsupported origin version')
+    if (raw['tool_contract_version'], raw['workflow_version']) not in (('1.0','1.0'), ('2.0','2.0')):
+        raise ValueError('unsupported origin version')
     if type(raw['proposal_journal_sha256']) is not str or not re.fullmatch('[0-9a-f]{64}',raw['proposal_journal_sha256']):
         raise ValueError('invalid proposal journal hash')
     if 'reported_model' in raw:

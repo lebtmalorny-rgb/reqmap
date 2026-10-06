@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import cast
 
-from reqmap.binding_engine import apply_decision, apply_record_decision, binding_payload, binding_proposal, mapping_decision
+from reqmap.binding_engine import context_obligation, apply_decision, apply_record_decision, binding_payload, binding_proposal, mapping_decision
 from reqmap.binding_models import BindingContext
 from reqmap.deep_models import (
     DeepAtomResult,
@@ -109,6 +109,9 @@ def map_atom_deep(
 ) -> DeepMappingOutcome:
     """Select deep relations with one safe correction, then build records locally."""
     _validate_inputs(atom, retrieval, kb)
+    if binding_context is not None and context_obligation(atom, binding_context, kb).parse_state != "bound":
+        result = DeepAtomResult(atom, AnalysisState.COMPLETED, SupportStatus.INSUFFICIENT_EVIDENCE, ())
+        return DeepMappingOutcome(apply_decision(result, mapping_decision(atom, binding_context, kb, (), result.support_status, ())), (), ())
     base_payload = prepare_deep_mapping(atom, retrieval, kb, binding_context=binding_context)
     payload = base_payload
     violations: tuple[str, ...] = ()

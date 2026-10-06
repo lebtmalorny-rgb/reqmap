@@ -22,6 +22,7 @@ from reqmap.config import (
 from reqmap.deep_models import ResponsibilityContour
 from reqmap.deep_pipeline import analyze_deep, preflight_deep
 from reqmap.errors import ModelError
+from reqmap.models import SourceHint
 from reqmap.models import AnalysisRequest, AnalysisState
 from tests.deep_factories import (
     deep_mapping_response,
@@ -60,6 +61,11 @@ class FakeModel:
         response = self._responses.popleft()
         if isinstance(response, Exception):
             raise response
+        if type(response) is dict and "support_status" in response:
+            context = payload.get("original_payload", payload)
+            response = {**response, "proposal_schema_version":2,
+                        "obligation_id":context["atom"]["obligation_id"],
+                        "predicate_ids":[p["predicate_id"] for p in context.get("predicates", [])]}
         return response
 
 
@@ -102,7 +108,7 @@ def _config(
 
 
 def _request(tmp_path: Path, *texts: str) -> AnalysisRequest:
-    values = texts or ("Создание сервера через Nova API",)
+    values = texts or ("Nova должна создавать ВМ через API",)
     requirements = tuple(
         replace(
             requirement(ordinal=index, requirement_id=f"REQ-{index:04d}"),
@@ -121,11 +127,8 @@ def _request(tmp_path: Path, *texts: str) -> AnalysisRequest:
 
 
 def _decomposition(text: str) -> dict[str, object]:
-    return {
-        "atoms": [
-            {"text": text, "source_quote": text, "mandatory": True},
-        ]
-    }
+    from reqmap.binding_source import bind_source, atom_selection_proposal
+    return atom_selection_proposal(bind_source(replace(requirement(), text=text)))
 
 
 def _completed_responses(text: str) -> tuple[dict[str, object], ...]:
@@ -134,7 +137,13 @@ def _completed_responses(text: str) -> tuple[dict[str, object], ...]:
 
 def _signed_config(tmp_path: Path, **changes: object) -> AppConfig:
     root, allowed_signers = signed_v2_snapshot(tmp_path)
-    return _config(root, allowed_signers, **changes)
+    from reqmap.knowledge_v2 import load_knowledge_v2
+    from tests.binding_factories import write_catalog, sign_catalog
+    config = _config(root, allowed_signers, **changes)
+    knowledge = load_knowledge_v2(root, allowed_signers)
+    catalog = write_catalog(tmp_path / "bindings", knowledge)
+    sign_catalog(catalog, allowed_signers.parent / "signing_key")
+    return replace(config, binding_catalog_path=catalog)
 
 
 def _checkpoint(request: AnalysisRequest, requirement_id: str) -> Path:
@@ -368,7 +377,7 @@ def test_deep_pipeline_processes_mixed_contours_without_source_reads(
             else _ORIGINAL_READ_TEXT(path, *args, **kwargs)
         ),
     )
-    text = "Применить sysctl через Kolla-Ansible"
+    text = "Nova должна создавать ВМ через API"
     response = deep_mapping_response(
         _mixed_selection("host_os", "rocky_linux_9", [2]),
         _mixed_selection("kolla_ansible", "kolla_ansible", [1]),
@@ -376,10 +385,11 @@ def test_deep_pipeline_processes_mixed_contours_without_source_reads(
     )
 
     run = analyze_deep(
-        _request(tmp_path, text), config, FakeModel((_decomposition(text), response))
+        replace(_request(tmp_path, text), requirements=(replace(_request(tmp_path, text).requirements[0],
+            source_hints=(SourceHint("sysctl", "test"),)),)), config, FakeModel((_decomposition(text), response))
     )
 
-    assert run.run_status == "SUCCESS"
+    assert run.run_status == "PARTIAL"
     assert tuple(item.contour for item in run.responsibility_records) == (
         ResponsibilityContour.KOLLA_ANSIBLE,
         ResponsibilityContour.HOST_OS,
@@ -404,8 +414,8 @@ def test_deep_pipeline_isolates_failed_requirement_and_keeps_sibling(
     tmp_path: Path,
 ) -> None:
     config = _signed_config(tmp_path)
-    first = "Создание сервера через Nova API альфа"
-    second = "Создание сервера через Nova API бета"
+    first = "Nova должна создавать виртуальную машину через API"
+    second = "Nova должна обеспечивать создание ВМ через API"
     invalid = {"unexpected": True}
     model = FakeModel(
         (
@@ -474,7 +484,7 @@ def test_deep_preflight_failure_writes_only_safe_diagnostic_pair(tmp_path: Path)
 
 def test_deep_resume_uses_exact_schema2_closure_and_secure_modes(tmp_path: Path) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     first = analyze_deep(request, config, FakeModel(_completed_responses(text)))
 
@@ -521,7 +531,7 @@ def test_deep_resume_signature_invalidates_significant_config(
     tmp_path: Path, change: dict[str, object]
 ) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     changed = _config(
@@ -560,7 +570,7 @@ def test_deep_resume_strictly_rejects_malformed_or_dangling_closure(
     tmp_path: Path, mutator
 ) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     checkpoint = _checkpoint(request, "REQ-0001")
@@ -591,7 +601,7 @@ def test_deep_resume_recomputes_forged_checkpoint_subject_fields(
     tmp_path: Path, field: str, forged_value: object
 ) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     checkpoint = _checkpoint(request, "REQ-0001")
@@ -619,7 +629,7 @@ def test_deep_resume_recomputes_forged_checkpoint_subject_fields(
     resumed_atom = resumed.requirements[0].atom_results[0]
     assert resumed_atom.atom.text == text
     assert resumed_atom.atom.mandatory is True
-    assert resumed_atom.supported_aspects == ("Создание виртуальной машины",)
+    assert resumed_atom.supported_aspects == (text,)
 
 
 @pytest.mark.parametrize(
@@ -630,7 +640,7 @@ def test_deep_resume_recomputes_when_checkpoint_integrity_seal_is_unsafe(
     tmp_path: Path, seal_state: str
 ) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     seal = _checkpoint_seal(request, "REQ-0001")
@@ -667,7 +677,7 @@ def test_deep_resume_rejects_fifo_without_blocking(
     tmp_path: Path, artifact: str
 ) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     checkpoint = _checkpoint(request, "REQ-0001")
@@ -706,8 +716,8 @@ def test_valid_second_requirement_resumes_with_source_prefix_placeholders(
     tmp_path: Path,
 ) -> None:
     config = _signed_config(tmp_path)
-    first = "Создание сервера через Nova API альфа"
-    second = "Создание сервера через Nova API бета"
+    first = "Nova должна создавать виртуальную машину через API"
+    second = "Nova должна обеспечивать создание ВМ через API"
     request = _request(tmp_path, first, second)
     analyze_deep(
         request,
@@ -732,7 +742,7 @@ def test_valid_second_requirement_resumes_with_source_prefix_placeholders(
 
 def test_duplicate_json_keys_and_symlinked_checkpoint_recompute(tmp_path: Path) -> None:
     config = _signed_config(tmp_path)
-    text = "Создание сервера через Nova API"
+    text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
     analyze_deep(request, config, FakeModel(_completed_responses(text)))
     checkpoint = _checkpoint(request, "REQ-0001")

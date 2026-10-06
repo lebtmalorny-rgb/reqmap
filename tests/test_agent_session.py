@@ -19,7 +19,7 @@ def start(svc, texts=('Первое', 'Второе')):
 
 def atoms(svc, sid, text='Первое', request='atoms', revision=0, requirement_id='REQ-0001'):
     return svc.call('reqmap_submit_atoms', dict(session_id=sid, requirement_id=requirement_id, request_id=request, expected_revision=revision,
-        proposal={'atoms':[dict(text='non-authoritative label',source_quote=text,mandatory=True)]}))
+        proposal={'proposal_schema_version':2,'atoms':[dict(text='non-authoritative label',source_quote=text,mandatory=True,source_span={'start':0,'end':len(text)})]}))
 
 
 def test_session_restores_source_atoms_and_decomposition_context(tmp_path):
@@ -44,7 +44,7 @@ def test_rejected_replacement_preserves_last_accepted_atoms(tmp_path):
     invalid = atoms(svc,sid,'foreign','bad',1)
     assert invalid.error.code == 'PROPOSAL_INVALID'
     assert invalid.data['revision'] == 1
-    accepted = atoms(svc,sid,'Пер','new',1)
+    accepted = atoms(svc,sid,'Первое','new',1)
     assert accepted.data['revision'] == 2
     unknown = atoms(svc,sid,'Второе','unknown',2,'REQ-9999')
     assert unknown.error.code == 'REQUIREMENT_NOT_FOUND'

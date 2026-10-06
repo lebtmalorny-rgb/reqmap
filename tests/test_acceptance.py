@@ -192,6 +192,7 @@ def _supported_nova_mapping() -> dict[str, object]:
     # Intentional proposed overclaim: the shipped scope evidence must downgrade it.
     role = "Compute instances через REST API"
     return {
+        "proposal_schema_version":2, "obligation_id":"REQ-0001-O001", "predicate_ids":[],
         "support_status": "supported",
         "supported_aspects": [role],
         "unconfirmed_aspects": [],

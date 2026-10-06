@@ -142,12 +142,9 @@ def binding_proposal(atom, proposal, context):
     """Strip only validated v2 selection fields before the prior evidence parser."""
     if type(proposal) is not dict:
         raise ProposalError("shape", ("Ответ должен быть JSON object.",))
-    # Temporary v1 compatibility during coordinated runtime migration (Task 4).
-    if not _SELECTION_KEYS.intersection(proposal) and context is None:
-        return proposal, ()
     if (type(proposal.get("proposal_schema_version")) is not int
             or proposal.get("proposal_schema_version") != 2
-            or proposal.get("obligation_id") != atom.obligation_id
+            or proposal.get("obligation_id") != (atom.obligation_id or f"{atom.requirement_id}-O{atom.ordinal:03d}")
             or type(proposal.get("predicate_ids")) is not list
             or any(type(p) is not str or not p.strip() for p in proposal.get("predicate_ids", []))
             or len(set(proposal.get("predicate_ids", []))) != len(proposal.get("predicate_ids", []))):

@@ -497,6 +497,7 @@ def deep_mapping_response(
     procedure_template_ids: tuple[str, ...] = ("PROC-NOVA-CREATE",),
 ) -> dict[str, object]:
     return {
+        "proposal_schema_version": 2, "obligation_id": "REQ-0001-O001", "predicate_ids": [],
         "support_status": support_status,
         "supported_aspects": ["Создание виртуальной машины"],
         "unconfirmed_aspects": [],

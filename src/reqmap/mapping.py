@@ -8,7 +8,7 @@ import re
 import unicodedata
 from typing import cast
 
-from reqmap.binding_engine import apply_decision, apply_record_decision, binding_payload, binding_proposal, mapping_decision
+from reqmap.binding_engine import context_obligation, apply_decision, apply_record_decision, binding_payload, binding_proposal, mapping_decision
 from reqmap.binding_models import BindingContext
 from reqmap.errors import ModelOutputError, ValidationError
 from reqmap.ids import mapping_id
@@ -114,6 +114,9 @@ def map_atom(
 ) -> AtomResult:
     """Map one exact atom with one semantic correction and local validation."""
     _validate_candidates(candidates, kb)
+    if binding_context is not None and context_obligation(atom, binding_context, kb).parse_state != "bound":
+        result = AtomResult(atom, AnalysisState.COMPLETED, SupportStatus.INSUFFICIENT_EVIDENCE, ())
+        return apply_decision(result, mapping_decision(atom, binding_context, kb, (), result.support_status, ()))
     base_payload = prepare_mapping(atom, candidates, kb, binding_context=binding_context)
     payload = base_payload
     violations: tuple[str, ...] = ()

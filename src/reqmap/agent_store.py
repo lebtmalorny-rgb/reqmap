@@ -69,7 +69,7 @@ def _seed(raw: str) -> SessionSeed:
     settings['analysis_profile'] = AnalysisProfile(settings['analysis_profile'])
     settings['input_profile'] = parse_input_profile(settings['input_profile']) if settings['input_profile'] is not None else None
     settings = SessionSettings(**settings)
-    if (settings.tool_contract_version, settings.workflow_version) != ('1.0', '1.0'):
+    if (settings.tool_contract_version, settings.workflow_version) not in (('1.0', '1.0'), ('2.0', '2.0')):
         raise ValueError('unsupported session workflow')
     value = obj['input']
     if set(value) != {'source_kind','source_name','input_sha256','content'}:

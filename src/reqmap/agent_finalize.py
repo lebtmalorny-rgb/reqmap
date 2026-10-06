@@ -115,6 +115,8 @@ def finalize_session(store: SessionStore, config: AgentConfig, command: Mutation
             return previous
         record = store.read(command.session_id)
         pending = store.publication(command.session_id)
+        if record.status == 'finalized':
+            return failure('SESSION_CLOSED','Сессия завершена; готовый отчёт неизменяем.')
         if pending is not None:
             if pending['request_id'] != command.request_id:
                 return failure('PUBLICATION_PENDING','Повторите исходный finalize.')
@@ -173,6 +175,8 @@ def get_result(store, config, args, page_size):
         intent = store.publication(record.session_id)
         data = dict(session_id=record.session_id,revision=record.revision,status=record.status)
         if intent is None or intent['status'] != 'committed':
+            from reqmap.binding_runtime import require_session_contract
+            require_session_contract(record.seed.settings)
             data['publication_status'] = intent['status'] if intent else 'not_started'
             return ToolReply(True,data)
         directory = config.output_root/intent['final_name']
@@ -183,7 +187,7 @@ def get_result(store, config, args, page_size):
         if offset > len(rows):
             raise ReqmapError('CURSOR_INVALID','Cursor вне диапазона.')
         page = rows[offset:offset+page_size]
-        data.update(run_status=manifest['run_status'],requirements_count=len(rows),requirements=page,
+        data.update(historical=payload['schema_version'] in ('1.0','2.0'),schema_version=payload['schema_version'],run_status=manifest['run_status'],requirements_count=len(rows),requirements=page,
             artifacts={name:str(directory/name) for name in ARTIFACTS},
             next_cursor=page_cursor(record.session_id,record.revision,'result',offset+len(page)) if offset+len(page)<len(rows) else None)
         return ToolReply(True,data)

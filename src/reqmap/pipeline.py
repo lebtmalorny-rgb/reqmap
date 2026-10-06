@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
+from reqmap.binding_runtime import binding_contract, load_configured_catalog, requirement_context, validate_persisted_binding, catalog_output_diagnostics
+from reqmap.binding_codec import decode_binding_decision
 from reqmap.aggregation import aggregate_groups, aggregate_requirement
 from reqmap.config import AppConfig, ModelConfig
 from reqmap.decomposition import decompose
@@ -75,7 +77,8 @@ def analyze(
         run = failed_preflight_run(request, preflight_result)
         return _finish_failed_preflight(run, request, config)
 
-    signature = _run_signature(request, config, knowledge.snapshot_sha256)
+    catalog = load_configured_catalog(config, knowledge)
+    signature = _run_signature(request, config, knowledge.snapshot_sha256, catalog=catalog)
     work_dir = request.output_dir / ".work"
     signature_dir = work_dir / signature
     try:
@@ -102,6 +105,7 @@ def analyze(
                 signature,
                 requirement,
                 knowledge,
+                catalog=catalog,
             )
             if resumed is not None:
                 results.append(resumed)
@@ -112,6 +116,7 @@ def analyze(
                 config,
                 model,
                 knowledge,
+                catalog=catalog,
             )
             _write_checkpoint(checkpoint_path, signature, result)
         except (OSError, ValueError) as exc:
@@ -133,7 +138,8 @@ def analyze(
         requirements=requirement_results,
         groups=groups,
         evidence=cited_evidence,
-        metadata=_metadata(request, config, knowledge.snapshot_sha256, signature),
+        metadata={**_metadata(request, config, knowledge.snapshot_sha256, signature),
+                  "binding_contract": binding_contract(config.analysis_profile, catalog)},
         diagnostics=tuple(
             dict.fromkeys(
                 diagnostic
@@ -205,6 +211,8 @@ def _perform_preflight(
     diagnostics = list(_config_diagnostics(config))
     if request is not None:
         diagnostics.extend(validate_analysis_request(request))
+        if not diagnostics:
+            diagnostics.extend(catalog_output_diagnostics(config, request.output_dir))
     if diagnostics:
         return PreflightResult(False, tuple(diagnostics), None), None
 
@@ -215,6 +223,7 @@ def _perform_preflight(
 
     try:
         knowledge = load_knowledge(config.knowledge_path)
+        load_configured_catalog(config, knowledge)
     except ReqmapError as exc:
         return PreflightResult(
             False,
@@ -274,6 +283,7 @@ def _analyze_requirement(
     config: AppConfig,
     model: JsonModel,
     knowledge: KnowledgeBase,
+    *, catalog=None,
 ) -> RequirementResult:
     try:
         decomposition = decompose(model, requirement, parent_text)
@@ -306,7 +316,7 @@ def _analyze_requirement(
                 requirement.source_hints,
                 config.top_k,
             )
-            result = map_atom(model, claim, candidates, knowledge)
+            result = map_atom(model, claim, candidates, knowledge, binding_context=requirement_context(requirement, catalog))
         except ModelError as exc:
             result = AtomResult(
                 atom=claim,
@@ -354,8 +364,11 @@ def _run_signature(
     request: AnalysisRequest,
     config: AppConfig,
     knowledge_sha256: str,
+    *, catalog=None,
 ) -> str:
     payload = {
+        "binding_contract": binding_contract(config.analysis_profile, catalog),
+        "requirements": to_dict(request.requirements),
         "input_sha256": request.input_sha256,
         "knowledge_sha256": knowledge_sha256,
         "model": config.model.model,
@@ -419,6 +432,7 @@ def _load_checkpoint(
     signature: str,
     requirement: Requirement,
     knowledge: KnowledgeBase,
+    *, catalog=None,
 ) -> RequirementResult | None:
     if path.is_symlink():
         raise ValueError("checkpoint не может быть symlink")
@@ -436,12 +450,15 @@ def _load_checkpoint(
             return None
         if result.analysis_state is not AnalysisState.COMPLETED:
             return None
-        validated_atoms = tuple(
-            validate_atom_result(item, knowledge)
-            for item in result.atom_results
-        )
-        if validated_atoms != result.atom_results:
+        context = requirement_context(requirement, catalog)
+        from reqmap.binding_source import canonical_atoms
+        if tuple(item.atom for item in result.atom_results) != canonical_atoms(context.source_binding):
             return None
+        for item in result.atom_results:
+            evidence_input = replace(item, supported_aspects=tuple(r.role_ru for r in item.mappings
+                if r.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}))
+            validated = validate_atom_result(evidence_input, knowledge)
+            validate_persisted_binding(item, context, knowledge, item.mappings, validated.support_status)
         if aggregate_requirement(
             result.requirement,
             result.atom_results,
@@ -522,6 +539,7 @@ def _decode_atom_result(raw: object) -> AtomResult:
         supported_aspects=_strings(item.get("supported_aspects", [])),
         unconfirmed_aspects=_strings(item.get("unconfirmed_aspects", [])),
         diagnostics=_strings(item.get("diagnostics", [])),
+        binding_decision=decode_binding_decision(item.get("binding_decision")),
     )
 
 

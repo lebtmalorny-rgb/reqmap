@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from reqmap.binding_runtime import binding_contract, load_configured_catalog, requirement_context, validate_persisted_binding, catalog_output_diagnostics
+from reqmap.binding_codec import decode_binding_decision
 from dataclasses import dataclass, replace
 import hashlib
 import json
@@ -137,7 +139,8 @@ def analyze_deep(
         run = _failed_preflight_run(request, config, preflight_result, knowledge)
         return _finish_failed_preflight(run, request)
 
-    signature = _deep_run_signature(request, config, knowledge)
+    catalog = load_configured_catalog(config, knowledge)
+    signature = _deep_run_signature(request, config, knowledge, catalog=catalog)
     work_dir = request.output_dir / ".work"
     signature_dir = work_dir / signature
     try:
@@ -169,6 +172,7 @@ def analyze_deep(
             requirement,
             knowledge,
             config,
+            catalog=catalog,
         )
         if resumed is None:
             build = _analyze_deep_requirement(
@@ -178,6 +182,7 @@ def analyze_deep(
                 counted_model,
                 knowledge,
                 expected_initials,
+                catalog=catalog,
             )
             if build.result.analysis_state is AnalysisState.COMPLETED:
                 try:
@@ -215,13 +220,13 @@ def analyze_deep(
         responsibility_records=records,
         procedure_graphs=graphs,
         evidence=evidence,
-        metadata=_deep_metadata(
+        metadata={**_deep_metadata(
             request,
             config,
             knowledge,
             records,
             _retry_counts(counted_model, expected_initials),
-        ),
+        ), "binding_contract": binding_contract(config.analysis_profile, catalog)},
         diagnostics=_ordered_unique(
             message
             for result in requirement_results
@@ -243,6 +248,8 @@ def _perform_deep_preflight(
 
     if request is not None:
         diagnostics = validate_analysis_request(request)
+        if not diagnostics:
+            diagnostics = catalog_output_diagnostics(config, request.output_dir)
         if not diagnostics:
             diagnostics = _deep_request_diagnostics(request)
         if diagnostics:
@@ -268,6 +275,7 @@ def _perform_deep_preflight(
             config.knowledge_path,
             trust.allowed_signers_path,
         )
+        load_configured_catalog(config, knowledge)
     except ReqmapError as exc:
         return PreflightResult(
             False,
@@ -399,6 +407,7 @@ def _analyze_deep_requirement(
     model: _CountingModel,
     knowledge: KnowledgeBaseV2,
     expected_initials: dict[str, int],
+    *, catalog=None,
 ) -> _RequirementBuild:
     expected_initials["decomposition"] += 1
     try:
@@ -448,7 +457,7 @@ def _analyze_deep_requirement(
                 config.top_k,
             )
             expected_initials["deep_mapping"] += 1
-            outcome = map_atom_deep(model, atom, retrieval, knowledge)
+            outcome = map_atom_deep(model, atom, retrieval, knowledge, binding_context=requirement_context(requirement, catalog))
         except ModelError as exc:
             outcome = _failed_mapping_outcome(
                 atom,
@@ -750,10 +759,13 @@ def _deep_run_signature(
     request: AnalysisRequest,
     config: AppConfig,
     knowledge: KnowledgeBaseV2,
+    *, catalog=None,
 ) -> str:
     trust = knowledge.trust
     assert trust is not None
     payload = {
+        "binding_contract": binding_contract(config.analysis_profile, catalog),
+        "requirements": to_dict(request.requirements),
         "input_sha256": request.input_sha256,
         "manifest_sha256": trust.manifest_sha256,
         "snapshot_id": trust.snapshot_id,
@@ -800,6 +812,7 @@ def _load_deep_checkpoint(
     requirement: Requirement,
     knowledge: KnowledgeBaseV2,
     config: AppConfig,
+    *, catalog=None,
 ) -> _RequirementBuild | None:
     seal_path = _checkpoint_seal_path(path)
     if path.is_symlink():
@@ -862,7 +875,7 @@ def _load_deep_checkpoint(
         if result.analysis_state is not AnalysisState.COMPLETED:
             return None
         validate_deep_graph(_checkpoint_validation_run(build, request))
-        _validate_checkpoint_kb(build, knowledge, config)
+        _validate_checkpoint_kb(build, knowledge, config, catalog=catalog)
     except (
         KeyError,
         OSError,
@@ -915,6 +928,7 @@ def _validate_checkpoint_kb(
     build: _RequirementBuild,
     knowledge: KnowledgeBaseV2,
     config: AppConfig,
+    *, catalog=None,
 ) -> None:
     if build.evidence != cited_deep_evidence(
         build.records, build.graphs, knowledge
@@ -957,13 +971,20 @@ def _validate_checkpoint_kb(
             records_by_id[record_id]
             for record_id in atom_result.responsibility_ids
         )
-        if (
-            validate_responsibility_records(atom_records, retrieval, knowledge)
-            != atom_records
-        ):
-            raise ValueError(
-                "checkpoint responsibility differs from verified knowledge"
-            )
+        context = requirement_context(build.result.requirement, catalog)
+        from reqmap.binding_source import canonical_atoms
+        from reqmap.binding_engine import mapping_decision, apply_record_decision
+        if tuple(item.atom for item in build.result.atom_results) != canonical_atoms(context.source_binding):
+            raise ValueError("SOURCE_COVERAGE_GAP")
+        normalized = validate_responsibility_records(atom_records, retrieval, knowledge)
+        decision = atom_result.binding_decision
+        if decision is None:
+            raise ValueError("SESSION_CONTRACT_MISMATCH")
+        gated = tuple(apply_record_decision(r, mapping_decision(atom_result.atom, context, knowledge,
+                      decision.predicate_ids, r.support_status, (r,))) for r in normalized)
+        if tuple(r.support_status for r in gated) != tuple(r.support_status for r in atom_records):
+            raise ValueError("checkpoint responsibility differs from binding gate")
+        validate_persisted_binding(atom_result, context, knowledge, atom_records, atom_result.support_status)
         outcomes.append(DeepMappingOutcome(atom_result, atom_records, ()))
     template_ids = tuple(graph.template_id for graph in build.graphs)
     procedure = instantiate_procedure_graphs(
@@ -1081,6 +1102,7 @@ def _decode_deep_atom_result(raw: object) -> DeepAtomResult:
             "supported_aspects",
             "unconfirmed_aspects",
             "diagnostics",
+            "binding_decision",
         },
     )
     return DeepAtomResult(
@@ -1091,6 +1113,7 @@ def _decode_deep_atom_result(raw: object) -> DeepAtomResult:
         supported_aspects=_strings(item["supported_aspects"]),
         unconfirmed_aspects=_strings(item["unconfirmed_aspects"]),
         diagnostics=_strings(item["diagnostics"]),
+        binding_decision=decode_binding_decision(item["binding_decision"]),
     )
 
 

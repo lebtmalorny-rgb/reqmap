@@ -12,6 +12,7 @@ from tests.deep_acceptance_support import gold_snapshot, scripted_response
 
 
 def submit(svc,sid,context,proposal,request='map',revision=1):
+    proposal = {**proposal, 'proposal_schema_version':2, 'obligation_id':context['payload']['atom']['obligation_id'], 'predicate_ids':[]}
     return svc.call('reqmap_submit_mapping',dict(session_id=sid,atom_id='REQ-0001-A001',context_id=context['context_id'],proposal=proposal,request_id=request,expected_revision=revision))
 
 
@@ -26,9 +27,9 @@ def test_mapping_requires_current_context_and_keeps_last_good_result(tmp_path):
     assert invalid.error.code == 'PROPOSAL_INVALID'
     restored = type(svc)(svc.config).call('reqmap_get_session',{'session_id':sid})
     assert restored.data['requirements'][0]['atom_results'][0]['support_status'] == 'insufficient_evidence'
-    assert atoms(svc,sid,'Nova REST API','replace',2).ok
+    assert atoms(svc,sid,'создание виртуальной машины через Nova REST API','replace',2).ok
     stale = submit(svc,sid,context,proposal,'stale',3)
-    assert stale.error.code == 'CONTEXT_MISMATCH'
+    assert stale.error.code == 'PROPOSAL_INVALID'
     assert svc.call('reqmap_get_session',{'session_id':sid}).data['requirements'][0]['atom_results'] == []
 
 
