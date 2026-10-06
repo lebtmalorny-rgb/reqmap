@@ -15,7 +15,7 @@ from reqmap.crosscheck import CrosscheckIssue
 from reqmap.deep_models import DeepRunResult, ResponsibilityContour
 from reqmap.export_deep_json import _deep_run_payload, validate_deep_run_result
 from reqmap.export_json import canonical_json_bytes, symlink_component
-from reqmap.models import AnalysisState, SupportStatus
+from reqmap.models import AnalysisState, SupportStatus, to_dict
 
 
 _MARKER_PATTERN = re.compile(r"^<!-- reqmap-counts:(\{[^\r\n]*\}) -->$", re.MULTILINE)
@@ -25,19 +25,19 @@ _EXPECTED_SHEET_HEADERS = {
         "Requirement ID", "Source ID", "Ordinal", "Файл", "Лист", "Строка",
         "Текст требования", "Parent ID", "Group IDs", "Source fields",
         "Source hints", "Состояние: код", "Поддержка: код", "Atom IDs",
-        "Responsibility IDs", "Procedure graph IDs", "Диагностика",
+        "Responsibility IDs", "Procedure graph IDs", "Диагностика", "Source binding",
     ),
     "Атомарные утверждения": (
         "Atom ID", "Requirement ID", "Ordinal", "Формулировка атома",
         "Исходная цитата", "Обязательный", "Состояние: код",
         "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
-        "Неподтверждённые аспекты", "Диагностика",
+        "Неподтверждённые аспекты", "Диагностика", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
     ),
     "Ответственность": (
         "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",
         "Executor ref", "Target contour", "Target ref", "Action ref", "Effect ref",
         "Lifecycle phase", "Version scope", "Evidence IDs", "Поддержка: код",
-        "Related record IDs", "Procedure step IDs", "Диагностика",
+        "Related record IDs", "Procedure step IDs", "Диагностика", "Obligation ID", "Predicate IDs (atom)", "Uncovered spans (atom)",
     ),
     "Процедуры": (
         "Graph ID", "Requirement ID", "Template ID", "Graph diagnostics", "Step ID",
@@ -351,6 +351,19 @@ def _expected_markdown_stream(
         ("line", "## Ошибки обработки"),
         ("table", table_keys[15]),
     )
+
+    binding_tokens = []
+    bound_rows = [row for row in run.requirements if row.source_binding is not None]
+    if bound_rows:
+        binding_tokens.extend((("line", "## Связь исходного обязательства с доказательством"),
+            ("line", "Смещения `[start,end)` измеряются в Unicode code points. Непокрытая цитата сохраняется полностью.")))
+        for row in bound_rows:
+            binding_tokens.append(("line", "### " + row.requirement.requirement_id))
+            values = [row.source_binding, *(a.binding_decision for a in row.atom_results if a.binding_decision is not None)]
+            for value in values:
+                binding_tokens.extend((("line", "```json"),
+                    ("line", canonical_json_bytes(to_dict(value)).decode().strip()), ("line", "```")))
+        tokens = (*tokens[:2], *binding_tokens, *tokens[2:])
 
     if "analysis_origin" in run.metadata:
         tokens += (("line", "Происхождение анализа (заявлено клиентом): `" + _json_text(run.metadata["analysis_origin"]) + "`"),)
@@ -728,7 +741,7 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
             item["analysis_state"], item["support_status"],
             _json_text([atom["atom"]["atom_id"] for atom in atom_results]),
             _json_text(item["responsibility_ids"]), _json_text(item["procedure_graph_ids"]),
-            _json_text(item["diagnostics"]),
+            _json_text(item["diagnostics"]), _json_text(item["source_binding"]),
         ))
         for atom_result in atom_results:
             atom = atom_result["atom"]
@@ -739,7 +752,15 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
                 _json_text(atom_result["supported_aspects"]),
                 _json_text(atom_result["unconfirmed_aspects"]),
                 _json_text(atom_result["diagnostics"]),
+                atom["obligation_id"], _json_text(atom["source_spans"]), atom["source_sha256"],
+                _json_text(atom_result["binding_decision"]),
             ))
+    decisions = {a["atom"]["atom_id"]: a["binding_decision"] for r in requirements for a in r["atom_results"]}
+    def binding_cells(atom_id):
+        d = decisions[atom_id]
+        return (None if d is None else d["obligation_id"],
+                _json_text([] if d is None else d["predicate_ids"]),
+                _json_text([] if d is None else d["uncovered"]))
     responsibility_rows = tuple((
         item["record_id"], item["requirement_id"], item["atomic_claim_id"], item["contour"],
         item["component_ref"], item["executor_ref"], item["target_contour"], item["target_ref"],
@@ -747,6 +768,7 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
         _json_text(item["version_scope"]), _json_text(item["evidence_ids"]),
         item["support_status"], _json_text(item["related_record_ids"]),
         _json_text(item["procedure_step_ids"]), _json_text(item["diagnostics"]),
+        *binding_cells(item["atomic_claim_id"]),
     ) for item in records)
     procedure_rows = tuple((
         graph["graph_id"], graph["requirement_id"], graph["template_id"],
@@ -775,6 +797,8 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
         ("retry_counts", _json_text(metadata["retry_counts"])),
         ("groups", _json_text(groups)), ("counts", _json_text(_counts(run))),
     )
+    if "binding_contract" in metadata:
+        run_values += (("binding_contract", _json_text(metadata["binding_contract"])),)
     if "analysis_origin" in metadata:
         run_values += (("analysis_origin", _json_text(metadata["analysis_origin"])),)
     return {

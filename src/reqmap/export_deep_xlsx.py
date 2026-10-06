@@ -29,19 +29,19 @@ SHEET_HEADERS = {
         "Requirement ID", "Source ID", "Ordinal", "Файл", "Лист", "Строка",
         "Текст требования", "Parent ID", "Group IDs", "Source fields",
         "Source hints", "Состояние: код", "Поддержка: код", "Atom IDs",
-        "Responsibility IDs", "Procedure graph IDs", "Диагностика",
+        "Responsibility IDs", "Procedure graph IDs", "Диагностика", "Source binding",
     ),
     "Атомарные утверждения": (
         "Atom ID", "Requirement ID", "Ordinal", "Формулировка атома",
         "Исходная цитата", "Обязательный", "Состояние: код",
         "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
-        "Неподтверждённые аспекты", "Диагностика",
+        "Неподтверждённые аспекты", "Диагностика", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
     ),
     "Ответственность": (
         "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",
         "Executor ref", "Target contour", "Target ref", "Action ref", "Effect ref",
         "Lifecycle phase", "Version scope", "Evidence IDs", "Поддержка: код",
-        "Related record IDs", "Procedure step IDs", "Диагностика",
+        "Related record IDs", "Procedure step IDs", "Диагностика", "Obligation ID", "Predicate IDs (atom)", "Uncovered spans (atom)",
     ),
     "Процедуры": (
         "Graph ID", "Requirement ID", "Template ID", "Graph diagnostics", "Step ID",
@@ -186,6 +186,7 @@ def _data_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
     assert isinstance(responsibilities, list)
     assert isinstance(graphs, list)
     assert isinstance(evidence, list)
+    decisions = {a["atom"]["atom_id"]: a["binding_decision"] for r in requirements for a in r["atom_results"]}
     return {
         "Требования": tuple(_requirement_row(item) for item in requirements),
         "Атомарные утверждения": tuple(
@@ -193,7 +194,7 @@ def _data_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
             for item in requirements
             for atom in item["atom_results"]
         ),
-        "Ответственность": tuple(_responsibility_row(item) for item in responsibilities),
+        "Ответственность": tuple(_responsibility_row(item, decisions[item["atomic_claim_id"]]) for item in responsibilities),
         "Процедуры": tuple(
             _procedure_row(graph, step)
             for graph in graphs
@@ -220,7 +221,7 @@ def _requirement_row(item: dict[str, object]) -> tuple[object, ...]:
         item["analysis_state"], item["support_status"],
         _json_text([atom["atom"]["atom_id"] for atom in atom_results]),
         _json_text(item["responsibility_ids"]), _json_text(item["procedure_graph_ids"]),
-        _json_text(item["diagnostics"]),
+        _json_text(item["diagnostics"]), _json_text(item["source_binding"]),
     )
 
 
@@ -233,10 +234,11 @@ def _atom_row(item: dict[str, object]) -> tuple[object, ...]:
         item["support_status"], _json_text(item["responsibility_ids"]),
         _json_text(item["supported_aspects"]), _json_text(item["unconfirmed_aspects"]),
         _json_text(item["diagnostics"]),
+        atom["obligation_id"], _json_text(atom["source_spans"]), atom["source_sha256"], _json_text(item["binding_decision"]),
     )
 
 
-def _responsibility_row(item: dict[str, object]) -> tuple[object, ...]:
+def _responsibility_row(item: dict[str, object], decision=None) -> tuple[object, ...]:
     return (
         item["record_id"], item["requirement_id"], item["atomic_claim_id"],
         item["contour"], item["component_ref"], item["executor_ref"],
@@ -245,6 +247,9 @@ def _responsibility_row(item: dict[str, object]) -> tuple[object, ...]:
         _json_text(item["evidence_ids"]), item["support_status"],
         _json_text(item["related_record_ids"]), _json_text(item["procedure_step_ids"]),
         _json_text(item["diagnostics"]),
+        None if decision is None else decision["obligation_id"],
+        _json_text([] if decision is None else decision["predicate_ids"]),
+        _json_text([] if decision is None else decision["uncovered"]),
     )
 
 
@@ -334,6 +339,7 @@ def _run_rows(payload: dict[str, object], run: DeepRunResult) -> tuple[tuple[str
         "counts": _json_text(canonical_counts(run)),
     }
     rows = tuple((key, values[key]) for key in RUN_KEYS)
+    rows += ((("binding_contract", _json_text(metadata["binding_contract"])),) if "binding_contract" in metadata else ())
     return rows + ((("analysis_origin", _json_text(metadata["analysis_origin"])),) if "analysis_origin" in metadata else ())
 
 

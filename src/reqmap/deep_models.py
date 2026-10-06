@@ -216,6 +216,7 @@ class DeepRequirementResult:
     responsibility_ids: tuple[str, ...]
     procedure_graph_ids: tuple[str, ...]
     diagnostics: tuple[str, ...] = ()
+    source_binding: "SourceBinding | None" = None
 
     def __post_init__(self) -> None:
         if type(self.requirement) is not Requirement:
@@ -261,8 +262,8 @@ class DeepRunResult:
 
     def __post_init__(self) -> None:
         _safe_identifier(self.run_id, "run_id")
-        if self.schema_version != "2.0":
-            raise ValueError("schema_version must be 2.0")
+        if self.schema_version not in {"2.0", "2.1"}:
+            raise ValueError("schema_version must be 2.0 or 2.1")
         _required_text(self.run_status, "run_status")
         _tuple_of(self.requirements, DeepRequirementResult, "requirements")
         _tuple_of(self.groups, DeepGroupResult, "groups")

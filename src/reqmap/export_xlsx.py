@@ -59,7 +59,7 @@ SHEET_HEADERS = {
         "Состояние обработки: русский",
         "Поддержка: код",
         "Поддержка: русский",
-        "Компоненты",
+        "Компоненты", "Source binding",
     ),
     "Атомарные утверждения": (
         "Atom ID",
@@ -72,7 +72,7 @@ SHEET_HEADERS = {
         "Поддержка: код",
         "Поддержка: русский",
         "Подтверждённые аспекты",
-        "Неподтверждённые аспекты",
+        "Неподтверждённые аспекты", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
     ),
     "Сопоставления": (
         "Mapping ID",
@@ -90,7 +90,7 @@ SHEET_HEADERS = {
         "Evidence IDs",
         "Поддержка: код",
         "Поддержка: русский",
-        "Обоснование",
+        "Обоснование", "Obligation ID", "Predicate IDs (atom)", "Uncovered spans (atom)",
     ),
     "Доказательства": (
         "Evidence ID",
@@ -318,6 +318,7 @@ def _requirement_row(result: RequirementResult) -> tuple[object, ...]:
         _status_code(result.support_status),
         _status_ru(result.support_status),
         _json_text(component_ids),
+        _json_text(result.source_binding),
     )
 
 
@@ -340,6 +341,7 @@ def _group_row(group: GroupResult) -> tuple[object, ...]:
         _status_code(group.support_status),
         _status_ru(group.support_status),
         _json_text(group.component_ids),
+        None,
     )
 
 
@@ -356,10 +358,12 @@ def _atom_row(atom_result: AtomResult) -> tuple[object, ...]:
         _status_ru(atom_result.support_status),
         _json_text(atom_result.supported_aspects),
         _json_text(atom_result.unconfirmed_aspects),
+        atom_result.atom.obligation_id, _json_text(atom_result.atom.source_spans),
+        atom_result.atom.source_sha256, _json_text(atom_result.binding_decision),
     )
 
 
-def _mapping_row(item: Mapping) -> tuple[object, ...]:
+def _mapping_row(item: Mapping, decision=None) -> tuple[object, ...]:
     return (
         item.mapping_id,
         item.atom_id,
@@ -377,6 +381,9 @@ def _mapping_row(item: Mapping) -> tuple[object, ...]:
         item.support_status.value,
         support_status_ru(item.support_status),
         item.reason_ru,
+        None if decision is None else decision.obligation_id,
+        _json_text(() if decision is None else decision.predicate_ids),
+        _json_text(() if decision is None else decision.uncovered),
     )
 
 
@@ -411,9 +418,10 @@ def _data_rows(run: RunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
             for atom_result in result.atom_results
         ),
         "Сопоставления": tuple(
-            _mapping_row(item)
+            _mapping_row(item, atom.binding_decision)
             for result in run.requirements
-            for item in result.mappings
+            for atom in result.atom_results
+            for item in atom.mappings
         ),
         "Доказательства": tuple(_evidence_row(item) for item in run.evidence),
         "Запуск": _run_rows(run),
@@ -442,6 +450,7 @@ def _run_rows(run: RunResult) -> tuple[tuple[str, object], ...]:
         ("run_status", run.run_status),
     )
 
+    rows += ((("binding_contract", _json_text(metadata["binding_contract"])),) if "binding_contract" in metadata else ())
     return rows + ((("analysis_origin", _json_text(metadata["analysis_origin"])),) if "analysis_origin" in metadata else ())
 
 

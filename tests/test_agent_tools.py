@@ -30,12 +30,13 @@ def test_oversized_mutation_reply_does_not_commit(tmp_path):
 def test_pagination_shrinks_to_wire_limit_without_losing_rows(tmp_path):
     from reqmap.agent_tools import call_tool
     svc = service(tmp_path); sid = start(svc,tuple('Текст '+str(i)+' я'*100 for i in range(10)))
-    limited = AgentService(replace(svc.config,limits=replace(svc.config.limits,max_response_bytes=8000)))
+    limited = AgentService(replace(svc.config,limits=replace(svc.config.limits,max_response_bytes=16000)))
     ids=[]; cursor=None
     while True:
         reply = call_tool(limited,'reqmap_get_session',dict(session_id=sid,cursor=cursor,page_size=10))
-        assert len(json.dumps(reply,ensure_ascii=False).encode()) < 8000
+        assert len(json.dumps(reply,ensure_ascii=False).encode()) < 16000
         data = reply['structuredContent']['data']; assert reply['structuredContent']['ok']
+        assert len(data['requirements']) < 10  # full binding context requires a smaller page
         ids.extend(r['requirement']['requirement_id'] for r in data['requirements'])
         cursor=data['next_cursor']
         if cursor is None: break

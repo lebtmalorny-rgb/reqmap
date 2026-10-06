@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from reqmap.deep_mapping import DeepMappingOutcome
+from reqmap.binding_source import bind_source
 from reqmap.deep_models import (
     DeepAtomResult,
     DeepGroupResult,
@@ -94,6 +95,7 @@ def aggregate_deep_requirement(
             tuple(record.record_id for record in records),
             tuple(graph.graph_id for graph in graphs),
             diagnostics,
+            source_binding=bind_source(requirement) if any(a.atom.obligation_id for a in atom_results) else None,
         ),
         records,
     )

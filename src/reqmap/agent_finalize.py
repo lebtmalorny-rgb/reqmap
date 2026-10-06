@@ -4,6 +4,7 @@ import hashlib
 import os
 import re
 from pathlib import Path
+from reqmap.binding_runtime import binding_contract, requirement_context
 from reqmap import __version__
 from reqmap.agent_config import AgentConfig
 from reqmap.agent_input import read_regular_bytes
@@ -40,8 +41,8 @@ def build_agent_run(view: SessionView, knowledge: VerifiedKnowledge) -> RunResul
     for req in view.requirements:
         atoms = view.atoms_by_requirement.get(req.requirement_id, ())
         if not atoms:
-            rows.append(DeepRequirementResult(req,AnalysisState.SKIPPED,None,(),(),(),_SKIPPED) if deep else
-                        RequirementResult(req,AnalysisState.SKIPPED,None,(),(),_SKIPPED))
+            rows.append(DeepRequirementResult(req,AnalysisState.SKIPPED,None,(),(),(),_SKIPPED,source_binding=requirement_context(req,knowledge.binding_catalog).source_binding) if deep else
+                        RequirementResult(req,AnalysisState.SKIPPED,None,(),(),_SKIPPED,source_binding=requirement_context(req,knowledge.binding_catalog).source_binding))
             continue
         if deep:
             outcomes = tuple(view.mappings_by_atom.get(a.atom_id,DeepMappingOutcome(DeepAtomResult(a,AnalysisState.SKIPPED,None,(),diagnostics=_SKIPPED),(),())) for a in atoms)
@@ -57,18 +58,19 @@ def build_agent_run(view: SessionView, knowledge: VerifiedKnowledge) -> RunResul
     metadata = dict(reqmap_version=__version__, model='external-agent',seed=None,top_k=record.seed.settings.top_k,
         input_sha256=record.seed.input_snapshot.input_sha256,
         analysis_origin=build_analysis_origin(record,record.revision+int(record.status == 'active')),
-        prompt_versions=dict(decomposition=PROMPT_DECOMPOSITION_VERSION))
+        prompt_versions=dict(decomposition=PROMPT_DECOMPOSITION_VERSION),
+        binding_contract=binding_contract(record.seed.settings.analysis_profile,knowledge.binding_catalog))
     diagnostics = tuple(dict.fromkeys(d for row in rows for d in row.diagnostics))
     run_id = 'run-'+record.session_id
     if not deep:
         metadata.update(knowledge_sha256=knowledge.knowledge_sha256)
         metadata['prompt_versions']['mapping'] = PROMPT_MAPPING_VERSION
-        return RunResult(run_id,'1.0',run_status(rows,preflight_ok=True),rows,aggregate_groups(rows),collect_cited_evidence(rows,kb),metadata,diagnostics)
+        return RunResult(run_id,'1.1',run_status(rows,preflight_ok=True),rows,aggregate_groups(rows),collect_cited_evidence(rows,kb),metadata,diagnostics)
     metadata.update(analysis_profile='deep',snapshot_id=kb.snapshot_id,manifest_sha256=kb.trust.manifest_sha256,
         key_id=kb.trust.key_id,signer_identity=kb.trust.signer_identity,retry_counts=dict(decomposition=0,deep_mapping=0),
         release_profile=dict(source_release=kb.base_release,target_release='2026.1' if any(r.lifecycle_phase is LifecyclePhase.UPGRADE and r.version_scope.target_release == '2026.1' for r in records) else '2025.1',kolla_ansible_release=kb.kolla_ansible_release,host_profile=kb.host_profile))
     metadata['prompt_versions']['deep_mapping'] = PROMPT_DEEP_MAPPING_VERSION
-    return DeepRunResult(run_id,'2.0',deep_run_status(rows,True),rows,aggregate_deep_groups(rows,records),records,graphs,cited_deep_evidence(records,graphs,kb),metadata,diagnostics)
+    return DeepRunResult(run_id,'2.1',deep_run_status(rows,True),rows,aggregate_deep_groups(rows,records),records,graphs,cited_deep_evidence(records,graphs,kb),metadata,diagnostics)
 
 
 def _hashes(directory):

@@ -32,12 +32,12 @@ Atomic claim содержит `atom_id`, `requirement_id`, буквальную 
 Evidence использует polarity `positive` или `negative` и strength `direct`, `indirect` или `none`. Технические коды не переводятся; XLSX рядом показывает русское значение.
 
 Legacy Evidence дополнен полем `claim_scope`: `context` или `specific`.
-Оно передаётся в canonical JSON schema `1.0` и evidence payload MCP.
+Оно передаётся в canonical JSON schema `1.1` и evidence payload MCP.
 Строгие потребители JSON должны разрешить это новое поле. В старой записи
 KB без scope применяется `context`; такие записи не подтверждают поддержку.
 Причина `EVIDENCE_CONTEXT_ONLY` присутствует в diagnostics и обосновании
 пониженного mapping, включая Markdown и лист «Сопоставления» XLSX.
-Deep schema `2.0` использует собственную модель evidence.
+Deep schema `2.1` использует собственную модель evidence.
 
 ## Агрегация support status
 
@@ -76,11 +76,11 @@ Crosscheck повторно строит expected JSON/Markdown/XLSX из canoni
 
 Проверяемые действия оператора приведены в [RUNBOOK.md](RUNBOOK.md), а предметные правила evidence — в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
 
-## Deep output schema 2.0
+## Deep output schema 2.1
 
 Описание пяти листов, mappings и runtime/designtime выше относится к legacy
-schema `1.0`. Deep сохраняет те же пять файлов, но сериализует
-`DeepRunResult` с явной `schema_version="2.0"`.
+schema `1.1`. Deep сохраняет те же пять файлов, но сериализует
+`DeepRunResult` с явной `schema_version="2.1"`.
 
 Верхний уровень добавляет `responsibility_records` и `procedure_graphs`.
 У требования вместо `mappings` находятся `responsibility_ids` и
@@ -127,13 +127,12 @@ trust, URL и секреты в deep metadata не публикуются. `run.
 
 ## Происхождение анализа в режиме агента
 
-Агентный режим добавляет optional `metadata.analysis_origin` в схемы 1.0/2.0;
-для отчёта агентного режима это поле обязательно. Существующий `analyze` без
-этого поля сохраняет прежний формат. Строгим сторонним потребителям необходимо
+Агентный режим добавляет optional `metadata.analysis_origin` в текущие схемы 1.1/2.1;
+для отчёта агентного режима это поле обязательно. `analyze` не добавляет `analysis_origin`, но использует те же новые binding-поля. Строгим сторонним потребителям необходимо
 разрешить новое поле перед чтением таких отчётов.
 
 `analysis_origin` содержит `mode=external_agent`, UUID `session_id`, целую
-`revision`, `tool_contract_version=1.0`, `workflow_version=1.0`, SHA-256
+`revision`, `tool_contract_version=2.0`, `workflow_version=2.0`, SHA-256
 `proposal_journal_sha256`, `reported_client` (`codex`, `opencode`, `unknown`) и
 `identity_verified=false`. `reported_model` optional: это безопасная строка,
 заявленная клиентом, а не проверенное backend имя модели. Она присутствует в
@@ -149,3 +148,55 @@ Codex, ни OpenCode не являются именем языковой мод�
 Те же сведения присутствуют в manifest, metadata-строке XLSX и блоке
 происхождения Markdown. Crosscheck проверяет их согласованность. Изменение
 поля в одном из отчётов делает комплект несогласованным.
+
+
+## Source binding: результат 1.1 / 2.1
+
+Новые запуски всегда сохраняют `source_binding` в результате каждой строки,
+включая незавершённые строки. JSON 1.0/2.0 из старых finalized-сессий доступен
+только как исторический комплект, без пересчёта или перезаписи.
+
+| Объект | Поля и смысл |
+| --- | --- |
+| `SourceSpan` | `start`, `end`, `quote`: полуинтервал `[start,end)` в Unicode code points, не байты и не UTF-16; `text[start:end] == quote` |
+| `SourceBinding` | `requirement_id`, `coordinate`, полный `source_text`, SHA-256 UTF-8 `source_sha256`, упорядоченные `fragments`, `obligations`, `unresolved_fragments`, `grammar_version`, `grammar_sha256`, `contract_version=1.0` |
+| Fragment | `span`, `kind` (`obligation`, `syntax`, `unresolved`), nullable `rule_id`; последовательность восстанавливает всю строку |
+| Obligation | `obligation_id`, `requirement_id`, `source_spans`, точная `source_quote`, `parse_state` (`bound`, `unresolved`, `ambiguous`), nullable `rule_id`, `mandatory`, `actor`, `action`, `object`, `direction`, `interface`, `contour`, `lifecycle_phase`, `release_scope`, `constraints` |
+| Constraint | `name`, `operator`, `value`, nullable `unit`, `source_spans`; исходное условие сохраняется даже при отсутствии доказательства |
+| Atomic claim | К прежним полям добавлены `obligation_id`, `source_spans`, `source_sha256`; backend определяет текст, порядок и `mandatory=true` |
+| `BindingDecision` | В `atom_results[].binding_decision`: `obligation_id`, `source_sha256`, `support_status`, `predicate_ids`, `evidence_ids`, `diagnostics`, `uncovered`, nullable `catalog_sha256`, `engine_version` |
+| Binding diagnostic | `code`, `message_ru`, `requirement_id`, `obligation_id`, `field`, `source_spans`, `evidence_ids` |
+
+`binding_decision` обязателен для завершённого атома, а у незавершённого равен
+`null`. `uncovered` сохраняет полную цитату непокрытого обязательства. При
+доказанном положительном или отрицательном результате он пуст. Backend строит
+`supported_aspects` из исходных обязательств; свободный текст модели не
+создаёт подтверждённые аспекты. Прежний evidence validator остаётся верхней
+границей статуса. Один предикат должен покрыть всё обязательство; объединение
+частичных предикатов в новую гарантию запрещено. `not_applicable` не принимается
+как доказанный результат без отдельного правила применимости.
+
+Примеры кодов: `SOURCE_COVERAGE_GAP`, `SOURCE_MANDATORY`, `SOURCE_UNPARSED`,
+`SOURCE_AMBIGUOUS`, `BINDING_CATALOG_MISSING`, `EVIDENCE_CONTEXT_ONLY`.
+Точные причины несовпадений и source spans находятся в `BindingDecision`.
+
+`metadata.binding_contract`, manifest и событие `analysis_finished` в журнале
+содержат одинаковые `binding_engine_version`, `grammar_version`,
+`grammar_sha256`, `binding_catalog_sha256`, `binding_catalog_schema_version`,
+`proposal_schema_version=2`, `result_schema_version`. Два catalog-поля равны
+`null`, если каталог не настроен. Hash грамматики покрывает исполняемый файл
+правил, catalog hash — байты проверенного `binding-manifest.json`.
+
+Состав XLSX сохраняется: пять листов legacy, семь deep. В конце листа
+`Требования` добавлен `Source binding`; в конце `Атомарные утверждения` —
+`Obligation ID`, `Source spans`, `Source SHA-256`, `Binding decision`.
+В `Сопоставления` / `Ответственность` добавлены `Obligation ID`,
+`Predicate IDs (atom)`, `Uncovered spans (atom)`: последние два поля относятся
+ко всему атому. Структуры записаны canonical JSON, без обрезания. Слишком
+большая ячейка или ответ MCP вызывает явную ошибку экспорта/лимита, а не потерю
+части текста. Лист `Запуск` включает `binding_contract`.
+
+Markdown содержит полный `SourceBinding` и решения атомов в JSON-блоках.
+Crosscheck сравнивает эти данные с canonical result; изменение одного gap
+делает комплект несогласованным, даже если числа строк и статусы прежние.
+Экспорт не обращается к модели и не выбирает новые доказательства.

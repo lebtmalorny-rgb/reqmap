@@ -445,7 +445,7 @@ def test_completed_requirement_resumes_without_subject_model_call(
     assert len(checkpoints) == 1
     checkpoint = checkpoints[0]
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "1.0"
+    assert payload["schema_version"] == "1.1"
     assert payload["run_signature"] == checkpoint.parent.name
     assert stat.S_IMODE(checkpoint.stat().st_mode) == 0o600
     assert stat.S_IMODE(checkpoint.parent.stat().st_mode) == 0o700

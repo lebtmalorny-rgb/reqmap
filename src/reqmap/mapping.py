@@ -1080,9 +1080,12 @@ def accept_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: Kno
         raise ProposalError("semantic", violations)
     try:
         result = validate_atom_result(_build_result(atom, proposal), kb)
-        decision = mapping_decision(atom, binding_context, kb, predicate_ids, result.support_status, result.mappings)
         records = tuple(apply_record_decision(r, mapping_decision(
             atom, binding_context, kb, predicate_ids, r.support_status, (r,))) for r in result.mappings)
+        prior = result.support_status
+        if _canonical_status(records) is SupportStatus.INSUFFICIENT_EVIDENCE:
+            prior = SupportStatus.INSUFFICIENT_EVIDENCE
+        decision = mapping_decision(atom, binding_context, kb, predicate_ids, prior, result.mappings)
         return replace(apply_decision(result, decision), mappings=records)
     except ValidationError as exc:
         raise ProposalError("semantic", (exc.message_ru,)) from exc

@@ -703,11 +703,13 @@ def accept_deep_mapping(atom: AtomicClaim, retrieval: DeepRetrievalResult, kb: K
         raise ProposalError("shape", violations)
     try:
         outcome = _build_outcome(atom, proposal, retrieval, kb)
-        decision = mapping_decision(atom, binding_context, kb, predicate_ids,
-                                    outcome.atom_result.support_status, outcome.responsibility_records)
         records = tuple(apply_record_decision(r, mapping_decision(
             atom, binding_context, kb, predicate_ids, r.support_status, (r,)))
             for r in outcome.responsibility_records)
+        prior = outcome.atom_result.support_status
+        if _aggregate_status(tuple(r.support_status for r in records)) is SupportStatus.INSUFFICIENT_EVIDENCE:
+            prior = SupportStatus.INSUFFICIENT_EVIDENCE
+        decision = mapping_decision(atom, binding_context, kb, predicate_ids, prior, outcome.responsibility_records)
         return replace(outcome, atom_result=apply_decision(outcome.atom_result, decision), responsibility_records=records)
     except _SelectionError as exc:
         raise ProposalError("semantic", (str(exc),)) from exc

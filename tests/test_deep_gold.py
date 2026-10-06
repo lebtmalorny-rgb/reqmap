@@ -54,8 +54,9 @@ def test_gold_set_has_zero_false_supported(deep_gold_results) -> None:
     assert false_supported == []
 
 
-def test_every_gold_case_matches_frozen_semantics(deep_gold_results) -> None:
-    cases, result, _output, _requests = deep_gold_results
+def test_every_gold_case_matches_frozen_evidence_stage_semantics(tmp_path) -> None:
+    from tests.deep_acceptance_support import evidence_stage_gold
+    cases, result = evidence_stage_gold(tmp_path)
     records = result["responsibility_records"]
     for case, item in zip(cases, result["requirements"], strict=True):
         selected = [record for record in records if record["requirement_id"] == item["requirement"]["requirement_id"]]
@@ -70,3 +71,17 @@ def test_every_gold_case_matches_frozen_semantics(deep_gold_results) -> None:
             assert any(prefix in diagnostic for diagnostic in item["diagnostics"]), (case["id"], item["diagnostics"])
         graphs = [graph for graph in result["procedure_graphs"] if graph["requirement_id"] == item["requirement"]["requirement_id"]]
         assert {graph["template_id"] for graph in graphs} == set(case["allowed_procedure_template_ids"]), case["id"]
+
+
+def test_current_runtime_preserves_whole_unknown_gold_rows(deep_gold_results):
+    cases, result, _output, requests = deep_gold_results
+    assert len(result["requirements"]) == len(cases)
+    assert all(method == "GET" for method, _path, _body in requests)
+    for case, row in zip(cases, result["requirements"], strict=True):
+        assert row["analysis_state"] == "completed"
+        assert row["support_status"] == "insufficient_evidence"
+        assert row["source_binding"]["source_text"] == case["requirement"]
+        assert len(row["atom_results"]) == 1
+        atom = row["atom_results"][0]
+        assert atom["atom"]["source_quote"] == case["requirement"]
+        assert {d["code"] for d in atom["binding_decision"]["diagnostics"]} >= {"SOURCE_UNPARSED", "BINDING_CATALOG_MISSING"}

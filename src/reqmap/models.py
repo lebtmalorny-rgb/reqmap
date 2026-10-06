@@ -184,6 +184,7 @@ class RequirementResult:
     atom_results: tuple[AtomResult, ...]
     mappings: tuple[Mapping, ...]
     diagnostics: tuple[str, ...] = ()
+    source_binding: "SourceBinding | None" = None
 
 
 @dataclass(frozen=True)

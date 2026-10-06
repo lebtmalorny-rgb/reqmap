@@ -33,10 +33,12 @@ def _markdown_bytes(run: DeepRunResult) -> bytes:
 
 
 def _render_markdown(run: DeepRunResult) -> str:
+    from reqmap.binding_export import binding_markdown
     marker = json.dumps(
         canonical_counts(run), ensure_ascii=False, sort_keys=True, separators=(",", ":")
     )
     sections = (
+        binding_markdown(run),
         _summary(run),
         _requirements_groups(run),
         _atoms(run),

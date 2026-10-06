@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from reqmap.binding_runtime import binding_contract, load_configured_catalog, requirement_context, validate_persisted_binding, catalog_output_diagnostics
-from reqmap.binding_codec import decode_binding_decision
+from reqmap.binding_codec import decode_binding_decision, decode_source_binding
 from dataclasses import dataclass, replace
 import hashlib
 import json
@@ -78,7 +78,7 @@ from reqmap.prompts import (
 )
 
 
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSION = "2.1"
 _SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NO_PREFLIGHT_OUTPUT_CODES = frozenset(
@@ -544,6 +544,7 @@ def _failed_deep_requirement(
         responsibility_ids=(),
         procedure_graph_ids=(),
         diagnostics=(diagnostic,),
+        source_binding=requirement_context(requirement, None).source_binding,
     )
 
 
@@ -621,6 +622,7 @@ def _deep_metadata(
         else "2025.1"
     )
     return {
+        "binding_contract": binding_contract(AnalysisProfile.DEEP),
         "reqmap_version": __version__,
         "analysis_profile": "deep",
         "model": model_name,
@@ -1024,6 +1026,7 @@ def _decode_deep_requirement_result(raw: object) -> DeepRequirementResult:
             "responsibility_ids",
             "procedure_graph_ids",
             "diagnostics",
+            "source_binding",
         },
     )
     return DeepRequirementResult(
@@ -1037,6 +1040,7 @@ def _decode_deep_requirement_result(raw: object) -> DeepRequirementResult:
         responsibility_ids=_strings(item["responsibility_ids"]),
         procedure_graph_ids=_strings(item["procedure_graph_ids"]),
         diagnostics=_strings(item["diagnostics"]),
+        source_binding=decode_source_binding(item.get("source_binding"), _decode_requirement(item["requirement"])),
     )
 
 

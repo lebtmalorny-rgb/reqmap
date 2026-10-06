@@ -246,6 +246,7 @@ def test_to_dict_recursively_serializes_ordered_model_values() -> None:
                         "supported_aspects": [],
                         "unconfirmed_aspects": [],
                         "diagnostics": [],
+                        "binding_decision": None,
                     }
                 ],
                 "mappings": [
@@ -274,6 +275,7 @@ def test_to_dict_recursively_serializes_ordered_model_values() -> None:
                     }
                 ],
                 "diagnostics": [],
+                "source_binding": None,
             }
         ],
         "groups": [
@@ -335,10 +337,10 @@ def test_canonical_dataclasses_have_exact_field_order_and_are_frozen() -> None:
         DecompositionOutcome: ("atoms", "analysis_state", "diagnostics"),
         AtomResult: (
             "atom", "analysis_state", "support_status", "mappings", "supported_aspects",
-            "unconfirmed_aspects", "diagnostics",
+            "unconfirmed_aspects", "diagnostics", "binding_decision",
         ),
         RequirementResult: (
-            "requirement", "analysis_state", "support_status", "atom_results", "mappings", "diagnostics",
+            "requirement", "analysis_state", "support_status", "atom_results", "mappings", "diagnostics", "source_binding",
         ),
         GroupResult: (
             "group_id", "source_requirement_ids", "support_status", "component_ids", "mapping_ids",

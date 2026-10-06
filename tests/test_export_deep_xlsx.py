@@ -16,19 +16,21 @@ EXPECTED_HEADERS = {
         "Requirement ID", "Source ID", "Ordinal", "Файл", "Лист", "Строка",
         "Текст требования", "Parent ID", "Group IDs", "Source fields",
         "Source hints", "Состояние: код", "Поддержка: код", "Atom IDs",
-        "Responsibility IDs", "Procedure graph IDs", "Диагностика",
+        "Responsibility IDs", "Procedure graph IDs", "Диагностика", "Source binding",
     ),
     "Атомарные утверждения": (
         "Atom ID", "Requirement ID", "Ordinal", "Формулировка атома",
         "Исходная цитата", "Обязательный", "Состояние: код",
         "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
         "Неподтверждённые аспекты", "Диагностика",
+        "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
     ),
     "Ответственность": (
         "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",
         "Executor ref", "Target contour", "Target ref", "Action ref", "Effect ref",
         "Lifecycle phase", "Version scope", "Evidence IDs", "Поддержка: код",
         "Related record IDs", "Procedure step IDs", "Диагностика",
+        "Obligation ID", "Predicate IDs (atom)", "Uncovered spans (atom)",
     ),
     "Процедуры": (
         "Graph ID", "Requirement ID", "Template ID", "Graph diagnostics", "Step ID",

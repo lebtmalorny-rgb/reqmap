@@ -42,6 +42,7 @@ def _markdown_bytes(run: RunResult) -> bytes:
 
 
 def _render_markdown(run: RunResult) -> str:
+    from reqmap.binding_export import binding_markdown
     counts = _canonical_counts(run)
     marker = json.dumps(
         counts,
@@ -50,6 +51,7 @@ def _render_markdown(run: RunResult) -> str:
         separators=(",", ":"),
     )
     sections = (
+        binding_markdown(run),
         _render_summary(run),
         _render_components(run),
         _render_phases(run),

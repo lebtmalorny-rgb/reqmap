@@ -22,6 +22,7 @@ from reqmap.deep_models import (
     VersionScope,
 )
 from reqmap.export_json import atomic_write_bytes, canonical_json_bytes
+from reqmap.models import to_dict
 from reqmap.models import (
     AnalysisState,
     AtomicClaim,
@@ -60,6 +61,8 @@ def write_deep_canonical_json(run: DeepRunResult, path: Path) -> str:
 def validate_deep_run_result(run: DeepRunResult) -> None:
     """Revalidate graph closure and safe run metadata before publication."""
     validate_deep_graph(run)
+    from reqmap.binding_export import validate_binding_run
+    validate_binding_run(run)
     _deep_metadata_payload(run)
 
 
@@ -101,7 +104,9 @@ def _deep_metadata_payload(run: DeepRunResult) -> dict[str, object]:
     signer_identity = _trust_identifier(
         metadata.get("signer_identity"), "signer_identity", allow_missing_trust
     )
+    from reqmap.binding_export import contract_payload
     return {
+        **({"binding_contract": contract_payload(metadata["binding_contract"])} if "binding_contract" in metadata else {}),
         **({"analysis_origin": origin} if origin is not None else {}),
         "reqmap_version": _safe_version(
             metadata.get("reqmap_version"), "reqmap_version"
@@ -150,6 +155,7 @@ def _is_failed_preflight_shape(run: DeepRunResult) -> bool:
 
 def _requirement_result(value: DeepRequirementResult) -> dict[str, object]:
     return {
+        "source_binding": to_dict(value.source_binding),
         "requirement": _requirement(value.requirement),
         "analysis_state": value.analysis_state.value,
         "support_status": (
@@ -190,6 +196,7 @@ def _source_hint(value: SourceHint) -> dict[str, object]:
 
 def _atom_result(value: DeepAtomResult) -> dict[str, object]:
     return {
+        "binding_decision": to_dict(value.binding_decision),
         "atom": _atom(value.atom),
         "analysis_state": value.analysis_state.value,
         "support_status": (
@@ -204,6 +211,7 @@ def _atom_result(value: DeepAtomResult) -> dict[str, object]:
 
 def _atom(value: AtomicClaim) -> dict[str, object]:
     return {
+        "obligation_id": value.obligation_id, "source_spans": to_dict(value.source_spans), "source_sha256": value.source_sha256,
         "atom_id": value.atom_id,
         "requirement_id": value.requirement_id,
         "text": value.text,

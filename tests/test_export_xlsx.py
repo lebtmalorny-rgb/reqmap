@@ -108,6 +108,7 @@ def test_xlsx_contains_five_normalized_sheets_and_many_to_many_rows(
         "Поддержка: код",
         "Поддержка: русский",
         "Обоснование",
+        "Obligation ID", "Predicate IDs (atom)", "Uncovered spans (atom)",
     )
     assert SHEET_HEADERS["Доказательства"] == (
         "Evidence ID",

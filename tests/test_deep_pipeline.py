@@ -466,6 +466,7 @@ def test_deep_preflight_failure_writes_only_safe_diagnostic_pair(tmp_path: Path)
         "run.jsonl",
     ]
     assert set(run.metadata) == {
+        "binding_contract",
         "reqmap_version",
         "analysis_profile",
         "model",
@@ -504,7 +505,7 @@ def test_deep_resume_uses_exact_schema2_closure_and_secure_modes(tmp_path: Path)
         "procedure_graphs",
         "evidence",
     }
-    assert payload["schema_version"] == "2.0"
+    assert payload["schema_version"] == "2.1"
     assert payload["run_signature"] == checkpoint.parent.name
     assert len(payload["responsibility_records"]) == 1
     assert len(payload["procedure_graphs"]) == 1
@@ -750,8 +751,8 @@ def test_duplicate_json_keys_and_symlinked_checkpoint_recompute(tmp_path: Path) 
     _write_checkpoint_bytes(
         checkpoint,
         source.replace(
-            '"schema_version":"2.0"',
-            '"schema_version":"2.0","schema_version":"2.0"',
+            '"schema_version":"2.1"',
+            '"schema_version":"2.1","schema_version":"2.1"',
         ).encode(),
         update_seal=True,
     )

@@ -106,6 +106,8 @@ def validate_run_result(run: RunResult) -> None:
 
     if not isinstance(run.metadata, MappingABC):
         raise ValueError("RunResult.metadata должен быть mapping.")
+    from reqmap.binding_export import validate_binding_run
+    validate_binding_run(run)
     origin_metadata(run.metadata)
     _validate_metadata_keys(run.metadata)
     _validate_endpoint_origin(run.metadata.get("endpoint_origin"))

@@ -68,7 +68,7 @@ def scripted_agent_flow(command: list[str], config_path: Path, source: dict[str,
         for row in page['data']['requirements']:
             req=row['requirement'];rid=req['requirement_id'];text=req['text']
             reply=client.call('reqmap_submit_atoms',session_id=sid,requirement_id=rid,
-                proposal=dict(atoms=[dict(text=text,source_quote=text,mandatory=True)]),request_id='atoms-'+rid,expected_revision=revision)
+                proposal=row["decomposition_context"]["canonical_proposal"],request_id='atoms-'+rid,expected_revision=revision)
             assert reply['ok'],reply
             revision=reply['data']['revision']
             client.close();client=StdioClient(command,config_path)
@@ -80,6 +80,7 @@ def scripted_agent_flow(command: list[str], config_path: Path, source: dict[str,
             assert not bad['ok'] and bad['error']['code']=='PROPOSAL_INVALID',bad
             assert bad['data']['revision']==revision
             proposal=scripted_response(ctx['data']['payload']) if profile is AnalysisProfile.DEEP else _mapping_response(text)
+            proposal.update(proposal_schema_version=2, obligation_id=ctx['data']['payload']['atom']['obligation_id'], predicate_ids=[])
             mapped=client.call('reqmap_submit_mapping',session_id=sid,atom_id=atom,context_id=ctx['data']['context_id'],proposal=proposal,
                 request_id='map-'+rid,expected_revision=revision)
             assert mapped['ok'],mapped

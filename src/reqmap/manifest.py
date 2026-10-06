@@ -107,6 +107,9 @@ def write_manifest(
         ),
         "artifact_hashes": dict(sorted(safe_hashes.items())),
     }
+    if "binding_contract" in metadata:
+        from reqmap.binding_export import contract_payload
+        manifest["binding_contract"] = contract_payload(metadata["binding_contract"])
     origin = origin_metadata(metadata)
     if origin is not None:
         manifest["analysis_origin"] = origin
@@ -235,6 +238,7 @@ def _deep_manifest_payload(
         "input_sha256": metadata["input_sha256"],
         "snapshot_id": metadata["snapshot_id"],
         "knowledge_trust": metadata["knowledge_trust"],
+        **({"binding_contract": metadata["binding_contract"]} if "binding_contract" in metadata else {}),
         "prompt_versions": metadata["prompt_versions"],
         "release_profile": metadata["release_profile"],
         "retry_counts": metadata["retry_counts"],

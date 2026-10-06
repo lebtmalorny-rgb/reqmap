@@ -10,9 +10,9 @@ from typing import cast
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 from reqmap.binding_runtime import binding_contract, load_configured_catalog, requirement_context, validate_persisted_binding, catalog_output_diagnostics
-from reqmap.binding_codec import decode_binding_decision
+from reqmap.binding_codec import decode_binding_decision, decode_source_binding
 from reqmap.aggregation import aggregate_groups, aggregate_requirement
-from reqmap.config import AppConfig, ModelConfig
+from reqmap.config import AppConfig, ModelConfig, AnalysisProfile
 from reqmap.decomposition import decompose
 from reqmap.errors import ModelError, ReqmapError
 from reqmap.knowledge import KnowledgeBase, load_knowledge
@@ -57,7 +57,7 @@ from reqmap.output_safety import (
 from reqmap.retrieval import retrieve
 
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.1"
 
 
 def preflight(config: AppConfig, model: JsonModel) -> PreflightResult:
@@ -178,6 +178,7 @@ def failed_preflight_run(
         groups=aggregate_groups(requirements),
         evidence=(),
         metadata={
+            "binding_contract": binding_contract(AnalysisProfile.LEGACY),
             "input_sha256": request.input_sha256,
             "knowledge_sha256": result.knowledge_sha256,
             "preflight_ok": False,
@@ -357,6 +358,7 @@ def _failed_requirement(
         atom_results=(),
         mappings=(),
         diagnostics=(diagnostic,),
+        source_binding=requirement_context(requirement, None).source_binding,
     )
 
 
@@ -490,6 +492,7 @@ def _decode_requirement_result(raw: object) -> RequirementResult:
         atom_results=atom_results,
         mappings=mappings,
         diagnostics=_strings(item.get("diagnostics", [])),
+        source_binding=decode_source_binding(item.get("source_binding"), _decode_requirement(item["requirement"])),
     )
 
 

@@ -21,7 +21,8 @@ def publish_artifacts(run: RunResult | DeepRunResult, output: Path, *, redacted_
     paths = {name:output/name for name in ARTIFACTS}
     logger = RunLogger(paths['run.jsonl'],redacted_values=redacted_values)
     logger.write('analysis_finished','info','Глубокий предметный анализ требований завершён.' if deep else 'Предметный анализ требований завершён.',
-                 run_status=run.run_status,requirements_count=len(run.requirements))
+                 run_status=run.run_status,requirements_count=len(run.requirements),
+                 **({"binding_contract":run.metadata["binding_contract"]} if "binding_contract" in run.metadata else {}))
     writers = (write_deep_canonical_json,write_deep_xlsx,write_deep_markdown) if deep else (write_canonical_json,write_xlsx,write_markdown)
     hashes = {name:writer(run,paths[name]) for name,writer in zip(ARTIFACTS[:3],writers)}
     issues = (crosscheck_deep if deep else crosscheck)(run,paths['result.json'],paths['result.xlsx'],paths['report.md'])

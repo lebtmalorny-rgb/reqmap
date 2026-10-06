@@ -87,7 +87,7 @@ def test_no_context_or_catalog_blocks_public_python_calls(setup_binding, context
 
 def test_claimed_not_applicable_cannot_hide_obligation(setup_binding):
     knowledge, catalog, proposal = setup_binding
-    empty = {k: [] for k in proposal if k != "support_status"}
+    empty = {k: [] for k in proposal if k in {"supported_aspects", "unconfirmed_aspects", "mappings", "responsibilities", "procedure_template_ids"}}
     empty["support_status"] = "not_applicable"
     result, _ = submit(setup_binding, "Nova должна создавать ВМ через API", proposal_changes=empty)
     assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
@@ -135,3 +135,25 @@ def test_prepared_binding_context_exposes_only_selection_metadata(setup_binding)
     assert payload["predicates"][0]["predicate_id"] == "P-NOVA-CREATE"
     for predicate in payload["predicates"]:
         assert not {"locators", "source_ids", "source_sha256s", "reviewed_by", "reviewed_at"}.intersection(predicate)
+
+
+def test_unbound_additional_records_do_not_leave_supported_atom(tmp_path):
+    from reqmap.deep_mapping import accept_deep_mapping
+    from reqmap.deep_models import DeepRetrievalResult
+    from tests.deep_factories import mixed_kolla_host_kb, responsibility_selection
+    from tests.test_deep_mapping import _mixed_selection
+    knowledge, signers, key = deep_knowledge(tmp_path)
+    root = write_catalog(tmp_path/"bindings", knowledge)
+    sign_catalog(root, key)
+    catalog = load_binding_catalog(root, knowledge, signers)
+    knowledge, other = mixed_kolla_host_kb(knowledge)
+    candidates = DeepRetrievalResult((*deep_candidate(knowledge).normalized_candidates, *other.normalized_candidates), ())
+    binding = bind_source(replace(requirement(), text="Nova должна создавать ВМ через API"))
+    atom = canonical_atoms(binding)[0]
+    raw = deep_mapping_response(responsibility_selection(),
+        _mixed_selection("kolla_ansible", "kolla_ansible", [3]),
+        _mixed_selection("host_os", "rocky_linux_9", [2]))
+    raw.update(proposal_schema_version=2, obligation_id=atom.obligation_id, predicate_ids=["P-NOVA-CREATE"])
+    outcome = accept_deep_mapping(atom, candidates, knowledge, raw, binding_context=BindingContext(binding, catalog))
+    assert any(r.support_status is SupportStatus.INSUFFICIENT_EVIDENCE for r in outcome.responsibility_records)
+    assert outcome.atom_result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE

@@ -49,3 +49,15 @@ def decode_binding_decision(raw):
         _array(raw["evidence_ids"], _text), _array(raw["diagnostics"], _diagnostic),
         _array(raw["uncovered"], _span), None if raw["catalog_sha256"] is None else _hash(raw["catalog_sha256"]),
         _text(raw["engine_version"]))
+
+
+def decode_source_binding(raw, requirement):
+    if raw is None:
+        return None
+    from reqmap.binding_source import bind_source
+    from reqmap.models import to_dict
+    from reqmap.export_json import canonical_json_bytes
+    binding = bind_source(requirement)
+    if canonical_json_bytes(raw) != canonical_json_bytes(to_dict(binding)):
+        raise ValueError("SOURCE_BINDING_CHANGED")
+    return binding

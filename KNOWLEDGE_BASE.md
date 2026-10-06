@@ -136,3 +136,60 @@ Evidence 2025.1 не доказывает поведение 2026.1; target 2026
 `tests/deep_acceptance_support.py` отдельно задаёт искусственные источники и
 ответы fake LLM. Условный исполнитель миграций в fixtures не является
 предметным сопоставлением миграций Nova/Cinder/Neutron/Glance/БД.
+
+
+## Каталог связи с исходными обязательствами
+
+`binding_catalog_path` — optional путь в CLI/agent config, относительный к
+каталогу config или абсолютный. Это отдельная ручная проверенная разметка,
+а не новая KB schema. Без неё поиск работает, но `supported` / `not_supported`
+не выводятся из одной тематической близости. Повреждённый настроенный каталог
+прерывает preflight с конкретным `BINDING_*` кодом.
+
+Каталог содержит `binding-manifest.json` и `predicates.jsonl`. Manifest —
+строгий JSON object с полями `binding_schema_version=1`, `catalog_id`,
+`knowledge_sha256`, `release_scope` и `files`. `files` описывает только
+`predicates.jsonl` с `path`, `size`, `sha256`. Digest KB —
+`metadata.snapshot_sha256` для legacy или digest проверенного signed snapshot
+manifest для deep; `release_scope` должен совпадать с релизом KB.
+
+Каждая строка predicates — object со всеми полями `EvidencePredicate`:
+
+- `predicate_id`; непустые параллельные массивы `evidence_ids`, `source_ids`,
+  `locators`, `source_sha256s` в одном порядке;
+- `component_ref`, `capability_ref`, nullable `action_ref`, `effect_ref`,
+  `target_ref` (три последних обязательны для deep и равны null для legacy);
+- `actor`, `action`, `object`, `direction` (`capability` / `prohibition`),
+  `interface` (`api`, `gui`, `cli`, `config`), `contour`, `lifecycle_phase`,
+  `release_scope`, `polarity`;
+- `assumptions`, `constraints`: массивы `{name, operator, value, unit}`;
+  operator `eq` / `within`, value — строка, unit nullable;
+- `review_state=reviewed`, `reviewed_by`, `reviewed_at` (ISO date),
+  `annotation_version`.
+
+Рецензент сопоставляет действие, объект, отрицание и каждое условие с конкретным
+официальным источником. Поля нельзя выводить из похожего имени capability или
+автоматически назначать всем claims проекта. Loader проверяет refs, version,
+polarity, hash/locator источника и точную deep action/effect/target relation.
+Требуется `direct` evidence; legacy — `claim_scope=specific`, deep — reviewed
+claim из официального источника, не project policy. `context` и `indirect`
+остаются полезны при поиске, но не подтверждают predicate этого этапа.
+
+Один predicate покрывает всё обязательство. Набор constraints и assumptions
+сравнивается точно: отдельные claims «create через API» и «delete через GUI»
+не дают «create через GUI». Неподтверждённое время или отказ узла не превращается
+в отрицательное доказательство. Новые формы/условия требуют отдельной версии
+правил и тестов, а не расширения модели по свободному тексту.
+
+Для legacy действует прежняя maintenance trust boundary. Для deep дополнительно
+нужен `binding-manifest.sig`, Ed25519 и внешний `allowed_signers` из
+`knowledge_trust`; SSH namespace **`reqmap-obligation-binding`**, signer identity
+`reqmap-snapshot`. Подпись KB в namespace `reqmap-snapshot` не заменяет эту
+подпись. Ключи и доверие из tests не устанавливаются в production. Symlink,
+path traversal, duplicate JSON keys, лишние поля и изменившиеся файлы отвергаются.
+
+В репозитории пока есть только synthetic binding fixtures. Исторический набор
+`deep_gold.json` сохраняет ожидания нижнего evidence/procedure validator;
+сквозной runtime дополнительно проверяет полную исходную строку и закономерно
+возвращает недостаточность для фраз вне конечной грамматики. Эти две проверки
+не являются измерением качества живой LLM или покрытием реальных требований.

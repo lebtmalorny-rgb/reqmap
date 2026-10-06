@@ -26,7 +26,8 @@ JSON/JSONL snapshots, read-only XLSX input.
 [проект контракта](../specs/2026-10-05-obligation-binding-design.md),
 [прототип и результаты](../../acceptance/2026-10-05-obligation-binding-probe.md),
 [план внедрения](2026-10-05-obligation-binding-implementation.md).
-Внедрение этого контракта **не выполнено**, проект ожидает согласования.
+Контракт согласован и внедрён в legacy/deep, CLI/MCP и отчёты 1.1/2.1.
+Проверки и границы: [приёмка runtime](../../acceptance/2026-10-05-obligation-binding-runtime.md).
 Этапы 3–5 **не выполнены**. Конечная грамматика прототипа не является
 универсальной семантической проверкой произвольного русского текста.
 

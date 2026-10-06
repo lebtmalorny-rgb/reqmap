@@ -1,5 +1,6 @@
 """Детерминированная агрегация атомов, требований и групп."""
 
+from reqmap.binding_source import bind_source
 from reqmap.ids import atom_id, mapping_id
 from reqmap.models import (
     AnalysisState,
@@ -75,6 +76,7 @@ def aggregate_requirement(
         atom_results=atoms,
         mappings=mappings,
         diagnostics=diagnostics,
+        source_binding=bind_source(requirement) if any(a.atom.obligation_id for a in atoms) else None,
     )
 
 

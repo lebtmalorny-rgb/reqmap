@@ -1,6 +1,7 @@
 # Связь исходного обязательства с доказательством
 
-Статус: **проект второго этапа; внедрение в runtime не выполнено**.
+Статус: **контракт согласован, реализован в runtime второго этапа**.
+Проверка и ограничения: [приёмка](../../acceptance/2026-10-05-obligation-binding-runtime.md).
 Основание: [общий план](../plans/2026-10-05-reqmap-coverage-remediation.md),
 [первый этап](../../acceptance/2026-10-05-evidence-scope-containment.md) и
 [исследовательская проверка](../../acceptance/2026-10-05-obligation-binding-probe.md).

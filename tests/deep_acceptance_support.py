@@ -124,12 +124,14 @@ def _selection(name):
 def scripted_response(payload):
     if "original_payload" in payload:
         return scripted_response(payload["original_payload"])
+    if "canonical_proposal" in payload:
+        return payload["canonical_proposal"]
     if "requirement_text" in payload:
         text = payload["requirement_text"]
         quotes = text.split(" и ") if text.startswith("Создание сервера через Nova API и ") else [text]
         return {"atoms": [dict(text=quote, source_quote=quote, mandatory=True) for quote in quotes]}
     text = payload["atom"]["source_quote"]
-    response = dict(support_status="supported", supported_aspects=[text], unconfirmed_aspects=[], responsibilities=[], procedure_template_ids=[])
+    response = dict(proposal_schema_version=2, obligation_id=payload["atom"].get("obligation_id", "REQ-0001-O001"), predicate_ids=[], support_status="supported", supported_aspects=[text], unconfirmed_aspects=[], responsibilities=[], procedure_template_ids=[])
     if text in {"Обеспечить работу системы.", "Поддержать квантовый режим X."}:
         return {**response, "support_status": "insufficient_evidence", "supported_aspects": [], "unconfirmed_aspects": [text]}
     if "migrate-" in text:
@@ -250,3 +252,44 @@ def assert_artifacts(output, result):
         assert item["requirement"]["requirement_id"] in report
         for diagnostic in item["diagnostics"]:
             assert diagnostic in report
+
+
+def evidence_stage_gold(tmp_path):
+    """Frozen pre-binding gold checks the evidence/procedure stage in isolation.
+
+    No public acceptor is patched or bypassed in runtime tests. This lower-stage
+    control deliberately makes no claim about complete source obligations.
+    """
+    from reqmap.knowledge_v2 import load_knowledge_v2
+    from reqmap.deep_mapping import _build_outcome, _shape_violations, _SelectionError, _failed
+    from reqmap.deep_retrieval import retrieve_deep
+    from reqmap.deep_aggregation import aggregate_deep_requirement
+    from reqmap.procedure import instantiate_procedure_graphs
+    from reqmap.models import AtomicClaim, Requirement, SourceCoordinate, AnalysisState, to_dict
+    cases = json.loads((ROOT / "tests/fixtures/deep_gold.json").read_text())["cases"]
+    root, signers = gold_snapshot(tmp_path)
+    kb = load_knowledge_v2(root, signers)
+    requirements, records, graphs = [], [], []
+    for ordinal, case in enumerate(cases, 1):
+        rid = f"REQ-{ordinal:04d}"
+        req = Requirement(rid, None, case["requirement"], ordinal, SourceCoordinate("synthetic", None, ordinal))
+        proposal = scripted_response({"requirement_text": req.text})
+        outcomes = []
+        for index, selected in enumerate(proposal["atoms"], 1):
+            atom = AtomicClaim(f"{rid}-A{index:03d}", rid, selected["text"], selected["source_quote"], True, index)
+            retrieval = retrieve_deep(kb, atom.text, (), 50)
+            raw = scripted_response({"atom": to_dict(atom)})
+            for key in ("proposal_schema_version", "obligation_id", "predicate_ids"):
+                raw.pop(key)
+            assert not _shape_violations(raw)
+            try:
+                outcome = _build_outcome(atom, raw, retrieval, kb)
+            except _SelectionError as exc:
+                outcome = _failed(atom, AnalysisState.VALIDATION_FAILED, (str(exc),))
+            outcomes.append(outcome)
+        selected_records = tuple(r for o in outcomes for r in o.responsibility_records)
+        template_ids = tuple(sorted({p for o in outcomes for p in o.procedure_template_ids}))
+        procedures = instantiate_procedure_graphs(rid, template_ids, selected_records, kb)
+        row, linked = aggregate_deep_requirement(req, tuple(outcomes), procedures)
+        requirements.append(to_dict(row)); records.extend(to_dict(linked)); graphs.extend(to_dict(procedures.graphs))
+    return cases, dict(requirements=requirements, responsibility_records=records, procedure_graphs=graphs)
