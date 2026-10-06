@@ -35,3 +35,16 @@ def parse_analysis_profile(raw: object) -> AnalysisProfile:
 
 def parse_knowledge_trust(raw: object, base: Path) -> KnowledgeTrustConfig:
     return _build_knowledge_trust(raw, base)
+
+
+def parse_binding_catalog_path(raw: object, base: Path) -> Path | None:
+    import os
+    from reqmap.output_safety import symlink_component
+    if raw is None:
+        return None
+    if type(raw) is not str or not raw.strip() or ".." in Path(raw).parts:
+        raise ConfigError("CONFIG_INVALID", "Некорректный binding_catalog_path.")
+    path = Path(os.path.abspath(base / raw))
+    if symlink_component(path):
+        raise ConfigError("CONFIG_INVALID", "binding_catalog_path содержит symlink.")
+    return path

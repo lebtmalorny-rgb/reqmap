@@ -29,11 +29,12 @@ class AgentConfig:
     session_root: Path
     output_root: Path
     limits: AgentLimits
+    binding_catalog_path: Path | None = None
 
 
 def load_agent_config(path: Path) -> AgentConfig:
     raw = read_config_object(path)
-    allowed = {'analysis_profile', 'knowledge_path', 'knowledge_trust', 'input_profile', 'top_k', 'input_root', 'session_root', 'output_root', 'limits'}
+    allowed = {'analysis_profile', 'knowledge_path', 'knowledge_trust', 'input_profile', 'top_k', 'input_root', 'session_root', 'output_root', 'limits', 'binding_catalog_path'}
     if set(raw) - allowed:
         raise ConfigError('CONFIG_INVALID', 'Неизвестные поля конфигурации агента.')
     base = path.absolute().parent
@@ -57,9 +58,11 @@ def load_agent_config(path: Path) -> AgentConfig:
     if type(top_k) is not int or not 1 <= top_k <= 50:
         raise ConfigError('CONFIG_INVALID', 'top_k должен быть целым от 1 до 50.')
     writes = (paths['session_root'], paths['output_root'])
-    protected = (paths['knowledge_path'],) + ((trust.allowed_signers_path.absolute(),) if trust else ())
+    from reqmap.config_common import parse_binding_catalog_path
+    binding_path = parse_binding_catalog_path(raw.get('binding_catalog_path'), base)
+    protected = (paths['knowledge_path'],) + ((trust.allowed_signers_path.absolute(),) if trust else ()) + ((binding_path,) if binding_path else ())
     if any(a.is_relative_to(b) or b.is_relative_to(a) for a in writes for b in protected) or writes[0].is_relative_to(writes[1]) or writes[1].is_relative_to(writes[0]):
         raise ConfigError('CONFIG_INVALID', 'Каталоги записи должны быть раздельными и не пересекаться с KB/trust.')
     return AgentConfig(profile, paths['knowledge_path'], trust,
                        parse_input_profile(raw['input_profile']) if raw.get('input_profile') is not None else None,
-                       top_k, paths['input_root'], *writes, AgentLimits(**limits))
+                       top_k, paths['input_root'], *writes, AgentLimits(**limits), binding_path)
