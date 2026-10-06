@@ -1,8 +1,8 @@
 """Версионированные системные инструкции локальной модели."""
 
 PROMPT_DECOMPOSITION_VERSION = "1.0"
-PROMPT_MAPPING_VERSION = "1.1"
-PROMPT_DEEP_MAPPING_VERSION = "2.0"
+PROMPT_MAPPING_VERSION = "1.2"
+PROMPT_DEEP_MAPPING_VERSION = "2.1"
 
 DECOMPOSITION_PROMPT = """Ты выполняешь только декомпозицию исходного требования. Не определяй компоненты OpenStack.
 Каждый атом должен описывать одно проверяемое обязательство и содержать точную цитату source_quote из requirement_text.
@@ -63,3 +63,15 @@ support_status является неавторитетным предложен�
 project_policy не подтверждает upstream support. Indirect/unknown evidence нельзя выдавать за supported.
 Ответ содержит только support_status, supported_aspects, unconfirmed_aspects, responsibilities и
 procedure_template_ids; related_indexes являются 1-based ссылками внутри responsibilities."""
+
+
+_BINDING_INSTRUCTION = """
+Если payload содержит source_binding, используй proposal_schema_version=2, точный obligation_id
+и predicate_ids только из переданного каталога predicates. Не изменяй исходные source spans,
+семантические поля и обязательность. Один predicate должен покрыть действие, объект, направление,
+интерфейс и все условия целого обязательства. Нельзя объединять разные predicates в новую гарантию.
+Без подходящего предиката предложи insufficient_evidence. supported_aspects в результате вычисляет
+backend из исходных обязательств; свободный текст и заявленный статус не подтверждают поддержку.
+"""
+MAPPING_PROMPT += _BINDING_INSTRUCTION
+DEEP_MAPPING_PROMPT += _BINDING_INSTRUCTION

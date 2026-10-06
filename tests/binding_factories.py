@@ -56,3 +56,16 @@ def deep_knowledge(tmp_path):
 def loaded_catalog(tmp_path, kb):
     from reqmap.binding_catalog import load_binding_catalog
     return load_binding_catalog(write_catalog(tmp_path / "bindings", kb), kb, None)
+
+
+def binding_case(kb, catalog, proposal, text="Nova должна создавать ВМ через API"):
+    from dataclasses import replace
+    from reqmap.binding_models import BindingContext
+    from reqmap.binding_source import bind_source, canonical_atoms
+    from tests.factories import requirement
+    binding = bind_source(replace(requirement(), text=text))
+    atom = canonical_atoms(binding)[0]
+    return atom, BindingContext(binding, catalog), {
+        **proposal, "proposal_schema_version": 2, "obligation_id": atom.obligation_id,
+        "predicate_ids": list(catalog.predicates),
+    }

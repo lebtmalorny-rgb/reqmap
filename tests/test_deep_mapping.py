@@ -39,11 +39,17 @@ def v2_kb(tmp_path):
     return immutable_v2_kb(tmp_path)
 
 
-def test_direct_positive_selection_builds_canonical_supported_record(v2_kb) -> None:
+def test_direct_positive_selection_builds_canonical_supported_record(tmp_path) -> None:
     from reqmap.deep_mapping import map_atom_deep
 
+    from tests.binding_factories import binding_case, deep_knowledge, write_catalog, sign_catalog
+    from reqmap.binding_catalog import load_binding_catalog
+    v2_kb, signers, key = deep_knowledge(tmp_path)
+    path = write_catalog(tmp_path / "bindings", v2_kb)
+    sign_catalog(path, key)
+    bound_atom, context, proposal = binding_case(v2_kb, load_binding_catalog(path, v2_kb, signers), deep_mapping_response())
     outcome = map_atom_deep(
-        FakeModel([deep_mapping_response()]), atom(), deep_candidate(v2_kb), v2_kb
+        FakeModel([proposal]), bound_atom, deep_candidate(v2_kb), v2_kb, binding_context=context
     )
 
     assert outcome.atom_result.analysis_state is AnalysisState.COMPLETED
@@ -147,7 +153,12 @@ def test_direct_negative_conflict_none_and_indirect_are_computed(v2_kb) -> None:
         deep_candidate(negative_kb, "EV-NOVA-NEGATIVE"),
         negative_kb,
     )
-    assert negative_outcome.atom_result.support_status is SupportStatus.NOT_SUPPORTED
+    assert negative_outcome.atom_result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    from reqmap.deep_mapping import validate_responsibility_records
+    assert validate_responsibility_records(
+        negative_outcome.responsibility_records,
+        deep_candidate(negative_kb, "EV-NOVA-NEGATIVE"), negative_kb,
+    )[0].support_status is SupportStatus.NOT_SUPPORTED
 
     conflict = responsibility_selection(
         evidence_ids=["EV-NOVA-CREATE", "EV-NOVA-NEGATIVE"],
@@ -449,8 +460,8 @@ def test_prompt_payload_excludes_urls_local_excerpts_locators_and_commands(v2_kb
     model = FakeModel([deep_mapping_response()])
     map_atom_deep(model, atom(), deep_candidate(v2_kb), v2_kb)
     serialized = str(model.calls[0][2])
-    assert PROMPT_DEEP_MAPPING_VERSION == "2.0"
-    assert PROMPT_MAPPING_VERSION == "1.1"
+    assert PROMPT_DEEP_MAPPING_VERSION == "2.1"
+    assert PROMPT_MAPPING_VERSION == "1.2"
     assert "https://" not in serialized
     assert "local_excerpt" not in serialized
     assert "locator" not in serialized

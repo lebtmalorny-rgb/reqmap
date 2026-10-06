@@ -42,6 +42,7 @@ from reqmap.prompts import MAPPING_PROMPT, PROMPT_MAPPING_VERSION
 
 class FakeModel:
     def __init__(self, responses: list[object]) -> None:
+        self.proposals = tuple(responses)
         self._responses: deque[object] = deque(responses)
         self.calls: list[tuple[str, str, dict[str, object]]] = []
 
@@ -680,6 +681,13 @@ def test_kolla_candidate_may_carry_host_policy_only_as_relational_context(kb) ->
         relational_kb,
     )
 
+    # The old evidence validator still checks these host/delivery relations.
+    # They cannot prove a source obligation without a reviewed binding catalog.
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert "BINDING_CATALOG_MISSING" in {d.code for d in mapped.binding_decision.diagnostics}
+    from reqmap.mapping import _build_result
+    mapped = validate_atom_result(_build_result(mapped.atom, model.proposals[-1]), relational_kb)
+
     assert mapped.support_status is SupportStatus.SUPPORTED
     assert mapped.mappings[0].evidence_ids == ("E-KOLLA", "E-HOST-POLICY")
 
@@ -833,7 +841,7 @@ def test_runtime_role_semantics_must_be_grounded_by_owned_official_evidence(kb) 
     assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.supported_aspects == ()
-    assert mapped.unconfirmed_aspects == (role,)
+    assert mapped.unconfirmed_aspects == (mapped.atom.source_quote,)
     assert len(model.calls) == 1
 
 
@@ -874,12 +882,13 @@ def test_boilerplate_only_role_and_action_do_not_ground_mapping(kb) -> None:
     assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
 
 
-def test_specific_synthetic_runtime_operation_is_supported_when_phrase_is_owned(kb) -> None:
-    model = FakeModel([response(raw_mapping())])
-
-    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
-
+def test_specific_synthetic_runtime_operation_is_supported_when_phrase_is_owned(kb, tmp_path) -> None:
+    from tests.binding_factories import binding_case, loaded_catalog
+    bound_atom, context, proposal = binding_case(kb, loaded_catalog(tmp_path, kb), response(raw_mapping()))
+    model = FakeModel([proposal])
+    mapped = map_atom(model, bound_atom, (candidate("nova", "E-NOVA"),), kb, binding_context=context)
     assert mapped.support_status is SupportStatus.SUPPORTED
+    assert mapped.supported_aspects == (bound_atom.source_quote,)
 
 
 @pytest.mark.parametrize(
@@ -1110,6 +1119,13 @@ def test_standalone_kolla_mapping_is_valid_for_non_host_designtime_change(kb) ->
         kb,
     )
 
+    # The old evidence validator still checks these host/delivery relations.
+    # They cannot prove a source obligation without a reviewed binding catalog.
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert "BINDING_CATALOG_MISSING" in {d.code for d in mapped.binding_decision.diagnostics}
+    from reqmap.mapping import _build_result
+    mapped = validate_atom_result(_build_result(mapped.atom, model.proposals[-1]), kb)
+
     assert mapped.analysis_state is AnalysisState.COMPLETED
     assert mapped.support_status is SupportStatus.SUPPORTED
 
@@ -1203,6 +1219,13 @@ def test_valid_host_mapping_has_kolla_and_subsystem_with_reconfigure(kb) -> None
         kb,
     )
 
+    # The old evidence validator still checks these host/delivery relations.
+    # They cannot prove a source obligation without a reviewed binding catalog.
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert "BINDING_CATALOG_MISSING" in {d.code for d in mapped.binding_decision.diagnostics}
+    from reqmap.mapping import _build_result
+    mapped = validate_atom_result(_build_result(mapped.atom, model.proposals[-1]), kb)
+
     assert mapped.analysis_state is AnalysisState.COMPLETED
     assert [item.component_id for item in mapped.mappings] == [
         "host_os_kernel_sysctl",
@@ -1284,6 +1307,13 @@ def test_real_host_subsystem_grounding_is_separate_from_kolla_delivery(
         real_kb,
     )
 
+    # The old evidence validator still checks these host/delivery relations.
+    # They cannot prove a source obligation without a reviewed binding catalog.
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert "BINDING_CATALOG_MISSING" in {d.code for d in mapped.binding_decision.diagnostics}
+    from reqmap.mapping import _build_result
+    mapped = validate_atom_result(_build_result(mapped.atom, model.proposals[-1]), real_kb)
+
     assert mapped.analysis_state is AnalysisState.COMPLETED
     assert mapped.support_status is SupportStatus.SUPPORTED
     assert [item.support_status for item in mapped.mappings] == [
@@ -1312,7 +1342,7 @@ def test_positive_supported_without_evidence_downgrades_deterministically(kb) ->
 
     assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.mappings[0].evidence_ids == ()
-    assert mapped.diagnostics == ("Статус понижен: отсутствует достаточное официальное evidence.",)
+    assert "Статус понижен: отсутствует достаточное официальное evidence." in mapped.diagnostics
 
 
 def test_unproved_confirmed_aspect_is_moved_to_unconfirmed_without_model_correction(kb) -> None:
@@ -1441,7 +1471,7 @@ def test_partial_requires_both_aspect_lists(kb) -> None:
     assert "partial" in mapped.diagnostics[0]
 
 
-def test_partial_with_positive_official_evidence_preserves_aspects(kb) -> None:
+def test_partial_with_positive_official_evidence_preserves_aspects(kb, tmp_path) -> None:
     model = FakeModel(
         [
             response(
@@ -1453,11 +1483,14 @@ def test_partial_with_positive_official_evidence_preserves_aspects(kb) -> None:
         ]
     )
 
-    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+    from tests.binding_factories import binding_case, loaded_catalog
+    bound_atom, context, proposal = binding_case(kb, loaded_catalog(tmp_path, kb), model.proposals[0])
+    model = FakeModel([proposal])
+    mapped = map_atom(model, bound_atom, (candidate("nova", "E-NOVA"),), kb, binding_context=context)
 
     assert mapped.support_status is SupportStatus.PARTIAL
-    assert mapped.supported_aspects == ("Nova server API",)
-    assert mapped.unconfirmed_aspects == ("Расширенное планирование",)
+    assert mapped.supported_aspects == (bound_atom.source_quote,)
+    assert mapped.unconfirmed_aspects == (bound_atom.source_quote,)
 
 
 def test_partial_unlinked_supported_aspect_downgrades_instead_of_any_mapping_proving_it(kb) -> None:
@@ -1477,10 +1510,10 @@ def test_partial_unlinked_supported_aspect_downgrades_instead_of_any_mapping_pro
     assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.supported_aspects == ()
-    assert mapped.unconfirmed_aspects == ("Другой аспект", "Несвязанное обещание")
+    assert mapped.unconfirmed_aspects == (mapped.atom.source_quote,)
 
 
-def test_partial_moves_only_unlinked_aspects_and_keeps_exact_role_link(kb) -> None:
+def test_partial_moves_only_unlinked_aspects_and_keeps_exact_role_link(kb, tmp_path) -> None:
     role = "Nova server API"
     model = FakeModel(
         [
@@ -1493,11 +1526,14 @@ def test_partial_moves_only_unlinked_aspects_and_keeps_exact_role_link(kb) -> No
         ]
     )
 
-    mapped = map_atom(model, atom(), (candidate("nova", "E-NOVA"),), kb)
+    from tests.binding_factories import binding_case, loaded_catalog
+    bound_atom, context, proposal = binding_case(kb, loaded_catalog(tmp_path, kb), model.proposals[0])
+    model = FakeModel([proposal])
+    mapped = map_atom(model, bound_atom, (candidate("nova", "E-NOVA"),), kb, binding_context=context)
 
     assert mapped.support_status is SupportStatus.PARTIAL
-    assert mapped.supported_aspects == (role,)
-    assert mapped.unconfirmed_aspects == ("Не подтверждено", "Чужой аспект")
+    assert mapped.supported_aspects == (bound_atom.source_quote,)
+    assert mapped.unconfirmed_aspects == (bound_atom.source_quote,)
 
 
 def test_supported_status_downgrades_when_its_only_promised_aspect_is_unproved(kb) -> None:
@@ -1511,7 +1547,7 @@ def test_supported_status_downgrades_when_its_only_promised_aspect_is_unproved(k
     assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.mappings[0].support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.supported_aspects == ()
-    assert mapped.unconfirmed_aspects == (promised,)
+    assert mapped.unconfirmed_aspects == (mapped.atom.source_quote,)
     assert len(model.calls) == 1
 
 
@@ -1530,13 +1566,13 @@ def test_no_mappings_cannot_claim_support_or_non_support(kb, status) -> None:
     assert mapped.analysis_state is AnalysisState.MODEL_FAILED
 
 
-def test_not_applicable_has_no_mappings_or_aspects(kb) -> None:
+def test_not_applicable_without_scope_rule_remains_insufficient(kb) -> None:
     model = FakeModel([response(status="not_applicable")])
 
     mapped = map_atom(model, atom("Внешнее организационное требование"), (), kb)
 
     assert mapped.analysis_state is AnalysisState.COMPLETED
-    assert mapped.support_status is SupportStatus.NOT_APPLICABLE
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.mappings == ()
 
 
@@ -1726,12 +1762,19 @@ def test_real_epoxy_negative_host_boundaries_remain_not_supported(
         real_kb,
     )
 
+    # The old evidence validator still checks these host/delivery relations.
+    # They cannot prove a source obligation without a reviewed binding catalog.
+    assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert "BINDING_CATALOG_MISSING" in {d.code for d in mapped.binding_decision.diagnostics}
+    from reqmap.mapping import _build_result
+    mapped = validate_atom_result(_build_result(mapped.atom, model.proposals[-1]), real_kb)
+
     assert mapped.support_status is SupportStatus.NOT_SUPPORTED
     assert mapped.mappings[0].support_status is SupportStatus.NOT_SUPPORTED
 
 
 def test_mapping_prompt_is_versioned_and_strictly_russian() -> None:
-    assert PROMPT_MAPPING_VERSION == "1.1"
+    assert PROMPT_MAPPING_VERSION == "1.2"
     assert "Верни только JSON" in MAPPING_PROMPT
     assert "source_hint" in MAPPING_PROMPT
     assert "не является evidence" in MAPPING_PROMPT

@@ -8,6 +8,8 @@ import re
 import unicodedata
 from typing import cast
 
+from reqmap.binding_engine import apply_decision, apply_record_decision, binding_payload, binding_proposal, mapping_decision
+from reqmap.binding_models import BindingContext
 from reqmap.errors import ModelOutputError, ValidationError
 from reqmap.ids import mapping_id
 from reqmap.knowledge import KnowledgeBase
@@ -108,10 +110,11 @@ def map_atom(
     atom: AtomicClaim,
     candidates: tuple[Candidate, ...],
     kb: KnowledgeBase,
+    *, binding_context: BindingContext | None = None,
 ) -> AtomResult:
     """Map one exact atom with one semantic correction and local validation."""
     _validate_candidates(candidates, kb)
-    base_payload = prepare_mapping(atom, candidates, kb)
+    base_payload = prepare_mapping(atom, candidates, kb, binding_context=binding_context)
     payload = base_payload
     violations: tuple[str, ...] = ()
 
@@ -120,7 +123,7 @@ def map_atom(
             response = model.complete_json("mapping", MAPPING_PROMPT, payload)
             invalid_response: object = response
             try:
-                return accept_mapping(atom, candidates, kb, response)
+                return accept_mapping(atom, candidates, kb, response, binding_context=binding_context)
             except ProposalError as exc:
                 violations = exc.violations
         except ModelOutputError as exc:
@@ -1054,17 +1057,18 @@ def _fail(code: str, message_ru: str) -> None:
     raise ValidationError(code, message_ru)
 
 
-def prepare_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: KnowledgeBase) -> dict[str, object]:
+def prepare_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: KnowledgeBase, *, binding_context: BindingContext | None = None) -> dict[str, object]:
     """Prepare a bounded candidate context without a model call."""
     _validate_candidates(candidates, kb)
-    return _mapping_payload(atom, candidates, kb)
+    return binding_payload(atom, binding_context, kb, _mapping_payload(atom, candidates, kb))
 
 
-def accept_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: KnowledgeBase, proposal: object) -> AtomResult:
+def accept_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: KnowledgeBase, proposal: object, *, binding_context: BindingContext | None = None) -> AtomResult:
     """Apply the same reference and evidence gate to one proposal."""
     _validate_candidates(candidates, kb)
     if type(proposal) is not dict:
         raise ProposalError("shape", ("Ответ модели должен быть встроенным dict JSON object верхнего уровня.",))
+    proposal, predicate_ids = binding_proposal(atom, proposal, binding_context)
     violations = _response_violations(proposal)
     if violations:
         raise ProposalError("shape", violations)
@@ -1072,6 +1076,10 @@ def accept_mapping(atom: AtomicClaim, candidates: tuple[Candidate, ...], kb: Kno
     if violations:
         raise ProposalError("semantic", violations)
     try:
-        return validate_atom_result(_build_result(atom, proposal), kb)
+        result = validate_atom_result(_build_result(atom, proposal), kb)
+        decision = mapping_decision(atom, binding_context, kb, predicate_ids, result.support_status, result.mappings)
+        records = tuple(apply_record_decision(r, mapping_decision(
+            atom, binding_context, kb, predicate_ids, r.support_status, (r,))) for r in result.mappings)
+        return replace(apply_decision(result, decision), mappings=records)
     except ValidationError as exc:
         raise ProposalError("semantic", (exc.message_ru,)) from exc

@@ -173,6 +173,7 @@ class AtomResult:
     supported_aspects: tuple[str, ...] = ()
     unconfirmed_aspects: tuple[str, ...] = ()
     diagnostics: tuple[str, ...] = ()
+    binding_decision: "BindingDecision | None" = None
 
 
 @dataclass(frozen=True)

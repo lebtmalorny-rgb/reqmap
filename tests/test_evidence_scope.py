@@ -101,9 +101,10 @@ def test_scope_label_cannot_prove_latency_guarantee():
     assert result.supported_aspects == ()
 
 
-def test_specific_operation_still_supports_its_mapping(kb):
-    text = "Создать виртуальную машину через Nova API"
-    result = accept_mapping(atom(text), retrieve(kb, text, (), 8), kb, response(raw_mapping()))
+def test_specific_operation_still_supports_its_mapping(kb, tmp_path):
+    from tests.binding_factories import binding_case, loaded_catalog
+    atom, context, proposal = binding_case(kb, loaded_catalog(tmp_path, kb), response(raw_mapping()))
+    result = accept_mapping(atom, retrieve(kb, atom.text, (), 8), kb, proposal, binding_context=context)
     assert result.support_status is SupportStatus.SUPPORTED
 
 

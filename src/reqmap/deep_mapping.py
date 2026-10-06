@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import cast
 
+from reqmap.binding_engine import apply_decision, apply_record_decision, binding_payload, binding_proposal, mapping_decision
+from reqmap.binding_models import BindingContext
 from reqmap.deep_models import (
     DeepAtomResult,
     DeepCandidate,
@@ -103,10 +105,11 @@ def map_atom_deep(
     atom: AtomicClaim,
     retrieval: DeepRetrievalResult,
     kb: KnowledgeBaseV2,
+    *, binding_context: BindingContext | None = None,
 ) -> DeepMappingOutcome:
     """Select deep relations with one safe correction, then build records locally."""
     _validate_inputs(atom, retrieval, kb)
-    base_payload = prepare_deep_mapping(atom, retrieval, kb)
+    base_payload = prepare_deep_mapping(atom, retrieval, kb, binding_context=binding_context)
     payload = base_payload
     violations: tuple[str, ...] = ()
     semantic_failure = False
@@ -116,7 +119,7 @@ def map_atom_deep(
             response = model.complete_json("deep_mapping", DEEP_MAPPING_PROMPT, payload)
             invalid_response = response
             try:
-                return accept_deep_mapping(atom, retrieval, kb, response)
+                return accept_deep_mapping(atom, retrieval, kb, response, binding_context=binding_context)
             except ProposalError as exc:
                 violations = exc.violations
                 semantic_failure = exc.kind == "semantic"
@@ -680,21 +683,28 @@ def _failed(atom: AtomicClaim, state: AnalysisState, violations: tuple[str, ...]
     )
 
 
-def prepare_deep_mapping(atom: AtomicClaim, retrieval: DeepRetrievalResult, kb: KnowledgeBaseV2) -> dict[str, object]:
+def prepare_deep_mapping(atom: AtomicClaim, retrieval: DeepRetrievalResult, kb: KnowledgeBaseV2, *, binding_context: BindingContext | None = None) -> dict[str, object]:
     """Prepare the validated deep candidate context without invoking a model."""
     _validate_inputs(atom, retrieval, kb)
-    return _payload(atom, retrieval, kb)
+    return binding_payload(atom, binding_context, kb, _payload(atom, retrieval, kb))
 
 
-def accept_deep_mapping(atom: AtomicClaim, retrieval: DeepRetrievalResult, kb: KnowledgeBaseV2, proposal: object) -> DeepMappingOutcome:
+def accept_deep_mapping(atom: AtomicClaim, retrieval: DeepRetrievalResult, kb: KnowledgeBaseV2, proposal: object, *, binding_context: BindingContext | None = None) -> DeepMappingOutcome:
     """Compute canonical responsibilities from one untrusted proposal."""
     _validate_inputs(atom, retrieval, kb)
     if type(proposal) is not dict:
         raise ProposalError("shape", ("Ответ модели должен быть встроенным dict JSON object.",))
+    proposal, predicate_ids = binding_proposal(atom, proposal, binding_context)
     violations = _shape_violations(proposal)
     if violations:
         raise ProposalError("shape", violations)
     try:
-        return _build_outcome(atom, proposal, retrieval, kb)
+        outcome = _build_outcome(atom, proposal, retrieval, kb)
+        decision = mapping_decision(atom, binding_context, kb, predicate_ids,
+                                    outcome.atom_result.support_status, outcome.responsibility_records)
+        records = tuple(apply_record_decision(r, mapping_decision(
+            atom, binding_context, kb, predicate_ids, r.support_status, (r,)))
+            for r in outcome.responsibility_records)
+        return replace(outcome, atom_result=apply_decision(outcome.atom_result, decision), responsibility_records=records)
     except _SelectionError as exc:
         raise ProposalError("semantic", (str(exc),)) from exc

@@ -194,6 +194,7 @@ class DeepAtomResult:
     supported_aspects: tuple[str, ...] = ()
     unconfirmed_aspects: tuple[str, ...] = ()
     diagnostics: tuple[str, ...] = ()
+    binding_decision: "BindingDecision | None" = None
 
     def __post_init__(self) -> None:
         if type(self.atom) is not AtomicClaim:
