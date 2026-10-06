@@ -510,15 +510,8 @@ def _decode_requirement(raw: object) -> Requirement:
 
 def _decode_atom_result(raw: object) -> AtomResult:
     item = _object(raw)
-    claim = _object(item["atom"])
-    atom = AtomicClaim(
-        atom_id=_string(claim["atom_id"]),
-        requirement_id=_string(claim["requirement_id"]),
-        text=_string(claim["text"]),
-        source_quote=_string(claim["source_quote"]),
-        mandatory=_boolean(claim["mandatory"]),
-        ordinal=_integer(claim["ordinal"]),
-    )
+    from reqmap.binding_source import decode_atomic_claim
+    atom = decode_atomic_claim(item["atom"])
     return AtomResult(
         atom=atom,
         analysis_state=AnalysisState(_string(item["analysis_state"])),

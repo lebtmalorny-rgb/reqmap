@@ -486,6 +486,9 @@ def test_mapping_prompt_contains_only_selected_full_evidence_and_marks_hint_untr
         "source_quote": "Создать виртуальную машину через API",
         "mandatory": True,
         "ordinal": 1,
+        "obligation_id": None,
+        "source_spans": [],
+        "source_sha256": None,
     }
     assert [item["evidence_id"] for item in payload["evidence"]] == ["E-NOVA"]  # type: ignore[index]
     assert "source_hint" in str(payload["candidates"])

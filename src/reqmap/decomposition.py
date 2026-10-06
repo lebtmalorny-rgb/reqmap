@@ -153,6 +153,9 @@ def prepare_decomposition(requirement: Requirement, parent_text: str | None) -> 
 
 def accept_decomposition(requirement: Requirement, proposal: object) -> tuple[AtomicClaim, ...]:
     """Validate one proposal and assign canonical atoms locally."""
+    if type(proposal) is dict and "proposal_schema_version" in proposal:
+        from reqmap.binding_source import bind_source, validate_atom_selection
+        return validate_atom_selection(bind_source(requirement), proposal)
     violations = decomposition_violations(proposal, requirement.text)
     if violations:
         raise ProposalError("shape", violations)

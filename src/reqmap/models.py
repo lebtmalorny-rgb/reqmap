@@ -98,6 +98,9 @@ class AtomicClaim:
     source_quote: str
     mandatory: bool
     ordinal: int
+    obligation_id: str | None = None
+    source_spans: tuple["SourceSpan", ...] = ()
+    source_sha256: str | None = None
 
 
 @dataclass(frozen=True)

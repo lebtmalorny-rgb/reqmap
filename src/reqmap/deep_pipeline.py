@@ -1095,25 +1095,8 @@ def _decode_deep_atom_result(raw: object) -> DeepAtomResult:
 
 
 def _decode_atomic_claim(raw: object) -> AtomicClaim:
-    item = _exact_object(
-        raw,
-        {
-            "atom_id",
-            "requirement_id",
-            "text",
-            "source_quote",
-            "mandatory",
-            "ordinal",
-        },
-    )
-    return AtomicClaim(
-        atom_id=_string(item["atom_id"]),
-        requirement_id=_string(item["requirement_id"]),
-        text=_string(item["text"]),
-        source_quote=_string(item["source_quote"]),
-        mandatory=_boolean(item["mandatory"]),
-        ordinal=_integer(item["ordinal"]),
-    )
+    from reqmap.binding_source import decode_atomic_claim
+    return decode_atomic_claim(raw)
 
 
 def _decode_responsibility(raw: object) -> ResponsibilityRecord:
