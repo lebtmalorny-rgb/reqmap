@@ -4,6 +4,7 @@ from io import BytesIO
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils.cell import column_index_from_string
 from openpyxl.workbook.workbook import Workbook
 
 from reqmap.config import InputProfile
@@ -102,8 +103,13 @@ def _load_profiled_workbook(
     selected_sheets = _select_sheets(workbook, profile)
     requirements: list[Requirement] = []
     for sheet in selected_sheets:
-        columns = _header_columns(sheet, profile)
-        for row in sheet.iter_rows(min_row=profile.header_row + 1):
+        if profile.column_mode == "position":
+            columns = _position_columns(sheet, profile)
+            start_row = profile.data_start_row
+        else:
+            columns = _header_columns(sheet, profile)
+            start_row = profile.header_row + 1
+        for row in sheet.iter_rows(min_row=start_row):
             text_cell = row[columns[profile.text_column]]
             if text_cell.data_type == "f":
                 raise InputProfileError(
@@ -163,16 +169,7 @@ def _header_columns(sheet: object, profile: InputProfile) -> dict[str, int]:
         if isinstance(cell.value, str):
             header_indexes.setdefault(cell.value, []).append(index)
 
-    required = tuple(
-        dict.fromkeys(
-            [
-                profile.id_column,
-                profile.text_column,
-                *_source_field_columns(profile),
-                *profile.hint_columns,
-            ]
-        )
-    )
+    required = _required_columns(profile)
     missing = [column for column in required if column not in header_indexes]
     if missing:
         raise InputProfileError(
@@ -188,6 +185,23 @@ def _header_columns(sheet: object, profile: InputProfile) -> dict[str, int]:
             f"{sheet.title!r} повторяются заголовки профиля: {', '.join(ambiguous)}.",
         )
     return {column: header_indexes[column][0] for column in required}
+
+
+def _required_columns(profile: InputProfile) -> tuple[str, ...]:
+    return tuple(dict.fromkeys((profile.id_column, profile.text_column,
+                               *_source_field_columns(profile), *profile.hint_columns)))
+
+
+def _position_columns(sheet: object, profile: InputProfile) -> dict[str, int]:
+    columns = {column: column_index_from_string(column) - 1
+               for column in _required_columns(profile)}
+    missing = [column for column, index in columns.items() if index >= sheet.max_column]
+    if missing:
+        raise InputProfileError(
+            "XLSX_PROFILE_COLUMN_MISSING",
+            f"В листе {sheet.title!r} нет колонок профиля: {', '.join(missing)}.",
+        )
+    return columns
 
 
 def _source_field_columns(profile: InputProfile) -> tuple[str, ...]:
@@ -215,5 +229,6 @@ def _string_value(value: object) -> str:
 def _ambiguous_profile_error() -> InputProfileError:
     return InputProfileError(
         "XLSX_PROFILE_AMBIGUOUS",
-        "Структура XLSX неоднозначна. Укажите лист, строку заголовка и колонки во входном профиле.",
+        "Структура XLSX неоднозначна. Укажите листы и колонки во входном профиле: "
+        "по заголовкам либо явно по позициям с начальной строкой данных.",
     )

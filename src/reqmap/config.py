@@ -2,6 +2,7 @@
 
 import json
 import math
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -35,13 +36,15 @@ class ModelConfig:
 class InputProfile:
     include_sheets: tuple[str, ...]
     exclude_sheets: tuple[str, ...]
-    header_row: int
+    header_row: int | None
     id_column: str
     text_column: str
     priority_column: str | None = None
     expected_result_column: str | None = None
     parent_column: str | None = None
     hint_columns: tuple[str, ...] = ()
+    column_mode: str = "header"
+    data_start_row: int | None = None
 
 
 class AnalysisProfile(str, Enum):
@@ -214,19 +217,36 @@ def _build_input_profile(raw: object) -> InputProfile:
             "expected_result_column",
             "parent_column",
             "hint_columns",
+            "column_mode",
+            "data_start_row",
         },
     )
     include_sheets = _string_tuple(
         _required(raw, "include_sheets", "input_profile"), "input_profile.include_sheets"
     )
     exclude_sheets = _string_tuple(raw.get("exclude_sheets", []), "input_profile.exclude_sheets")
-    header_row = _required(raw, "header_row", "input_profile")
-    _require_positive_int(header_row, "input_profile.header_row")
+    column_mode = raw.get("column_mode", "header")
+    if column_mode not in ("header", "position"):
+        _invalid("input_profile.column_mode должен быть header или position")
+    if column_mode == "header":
+        header_row = _required(raw, "header_row", "input_profile")
+        _require_positive_int(header_row, "input_profile.header_row")
+        data_start_row = raw.get("data_start_row")
+        if data_start_row is not None:
+            _invalid("input_profile.data_start_row допустим только для column_mode=position")
+    else:
+        header_row = raw.get("header_row")
+        if header_row is not None:
+            _invalid("input_profile.header_row недопустим для column_mode=position")
+        data_start_row = _required(raw, "data_start_row", "input_profile")
+        _require_positive_int(data_start_row, "input_profile.data_start_row")
+        if data_start_row > 1048576:
+            _invalid("input_profile.data_start_row выходит за пределы XLSX")
     id_column = _required(raw, "id_column", "input_profile")
     text_column = _required(raw, "text_column", "input_profile")
     _require_nonempty_string(id_column, "input_profile.id_column")
     _require_nonempty_string(text_column, "input_profile.text_column")
-    return InputProfile(
+    profile = InputProfile(
         include_sheets=include_sheets,
         exclude_sheets=exclude_sheets,
         header_row=header_row,
@@ -238,7 +258,22 @@ def _build_input_profile(raw: object) -> InputProfile:
         ),
         parent_column=_optional_string(raw.get("parent_column"), "input_profile.parent_column"),
         hint_columns=_string_tuple(raw.get("hint_columns", []), "input_profile.hint_columns"),
+        column_mode=column_mode,
+        data_start_row=data_start_row,
     )
+    if column_mode == "position":
+        for column in (profile.id_column, profile.text_column, profile.priority_column,
+                       profile.expected_result_column, profile.parent_column, *profile.hint_columns):
+            if column is None:
+                continue
+            if re.fullmatch(r"[A-Z]{1,3}", column) is None:
+                _invalid("Колонки position должны быть буквами Excel от A до XFD")
+            index = 0
+            for char in column:
+                index = index * 26 + ord(char) - ord('A') + 1
+            if index > 16384:
+                _invalid("Колонки position должны быть буквами Excel от A до XFD")
+    return profile
 
 
 def _reject_unknown(raw: Mapping[str, Any], allowed: set[str]) -> None:
