@@ -338,6 +338,54 @@
       "sha256": "11e566015863a84640b58ef9d16ab4e85eda777c1055bc611e6a9164b0bcfc49",
       "source_url": null,
       "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "nova"
+      ],
+      "id": "SRC-API-NOVA-VM-2025.1",
+      "local_path": "sources/SRC-API-NOVA-VM-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "f2a6d8448a1a03566ff1c1a559eafc24ca0bfc8b4dd35efc5797f85420bbb1c4",
+      "source_url": "https://opendev.org/openstack/nova/raw/commit/6042300453411133652dd8d3b789f5057a084075/api-ref/source/servers.inc",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "neutron"
+      ],
+      "id": "SRC-API-NEUTRON-NETWORK-2025.1",
+      "local_path": "sources/SRC-API-NEUTRON-NETWORK-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "9f037824203253e870b7ec456a533cfd2351457568c54064f9ebad7ec9ee0d30",
+      "source_url": "https://opendev.org/openstack/neutron-lib/raw/commit/bf21a6dcd48bdd15c28086f256319ac035b7fef0/api-ref/source/v2/networks.inc",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "neutron"
+      ],
+      "id": "SRC-API-NEUTRON-PORT-2025.1",
+      "local_path": "sources/SRC-API-NEUTRON-PORT-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "e70e80dbbf05d6639024b88396ab9988bbfe5c4a3c32ab28686fdec69e4b2d03",
+      "source_url": "https://opendev.org/openstack/neutron-lib/raw/commit/bf21a6dcd48bdd15c28086f256319ac035b7fef0/api-ref/source/v2/ports.inc",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "cinder"
+      ],
+      "id": "SRC-API-CINDER-VOLUME-2025.1",
+      "local_path": "sources/SRC-API-CINDER-VOLUME-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "78bc9115478169d2bfc87299e9d016ea2525292a036e75cb4b52399f4ebe11d9",
+      "source_url": "https://opendev.org/openstack/cinder/raw/commit/06e8c0b5049cd978018740f4794cb162c7043540/api-ref/source/v3/volumes-v3-volumes.inc",
+      "version": "2025.1"
     }
   ]
 }

@@ -12,5 +12,6 @@
     "max_response_bytes": 1048576
   },
   "knowledge_path": "knowledge/epoxy-2025.1",
+  "binding_catalog_path": "knowledge/bindings/epoxy-2025.1-api",
   "top_k": 8
 }

@@ -190,7 +190,9 @@ claim из официального источника, не project policy. `co
 подпись. Ключи и доверие из tests не устанавливаются в production. Symlink,
 path traversal, duplicate JSON keys, лишние поля и изменившиеся файлы отвергаются.
 
-В репозитории пока есть только synthetic binding fixtures. Исторический набор
+В поставке есть legacy-каталог `knowledge/bindings/epoxy-2025.1-api`: 16
+predicates для создания, чтения сведений, переименования (`name`) и удаления
+ВМ Nova, сетей/портов Neutron и томов Cinder. Исторический набор
 `deep_gold.json` сохраняет ожидания нижнего evidence/procedure validator;
 сквозной runtime дополнительно проверяет полную исходную строку и закономерно
 возвращает недостаточность для фраз вне конечной грамматики. Эти две проверки
@@ -203,3 +205,39 @@ path traversal, duplicate JSON keys, лишние поля и изменивши
 Положительный API-пример может доказать наличие возможности при unspecified
 интерфейсе; отрицательное API-доказательство не доказывает отсутствие всех
 интерфейсов. Общее отрицание или запрет без интерфейса пока остаётся insufficient.
+
+
+### Сопровождение первого API-пакета
+
+Источники закреплены на коммитах Epoxy: Nova 31.0.0, neutron-lib 3.18.2,
+Cinder 26.0.0. Четыре локальных excerpt-файла `SRC-API-*-2025.1.md` содержат
+проверенный пересказ, ссылку на неизменяемый исходник, upstream SHA-256,
+разделы/строки, endpoints и ограничения. `source-manifest.sha256` и
+`source_sha256s` в predicates относятся к локальному excerpt, а не к полному
+upstream-файлу. Точная таблица источников и проверок — в
+[приёмке пакета](docs/acceptance/2026-10-07-core-api-evidence.md).
+
+Аннотации подготовлены и проверены агентом (`reviewed_by=codex-maintenance`);
+это не подпись OpenStack и не аттестация работоспособности стенда. Predicate
+с `direction=capability` утверждает наличие API-возможности. Его пустые
+`assumptions`/`constraints` не означают безусловного успеха запроса: условия
+исполнения описаны в excerpt, а требование с дополнительными условиями должно
+иметь отдельное применимое доказательство. Пакет не доказывает GUI, HA, сроки,
+resize, произвольные изменения полей или работу без прав и квот.
+
+После предметного review правок KB и аннотаций выполняйте из корня репозитория:
+
+```bash
+PYTHONPATH=src .venv/bin/python tools/kb/build_snapshot.py knowledge/epoxy-2025.1
+PYTHONPATH=src .venv/bin/python tools/kb/build_binding_catalog.py \
+  knowledge/bindings/epoxy-2025.1-api knowledge/epoxy-2025.1
+PYTHONPATH=src .venv/bin/reqmap knowledge validate --path knowledge/epoxy-2025.1
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_api_evidence_package.py -q
+```
+
+Сборщик каталога меняет только digest KB, размер и hash predicates в manifest.
+Он проверяет временную копию общим loader до замены manifest и не назначает
+`reviewed`, не переписывает refs и source hashes. Изменившийся excerpt требует
+повторной проверки claims и осознанного обновления аннотаций. KB и каталог
+фиксируются одним коммитом. Для deep действует отдельная процедура подписания.
+После обновления KB/каталога/грамматики создайте новую MCP-сессию.

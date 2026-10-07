@@ -12,20 +12,40 @@ from reqmap.models import AtomicClaim, Requirement
 from reqmap.proposals import ProposalError
 
 
-GRAMMAR_VERSION = "1.0"
+GRAMMAR_VERSION = "1.1"
 # The executable grammar is part of context/resume identity, including algorithm changes.
 GRAMMAR_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 _QUALIFIER = r"(?:за одну миллисекунду|за [0-9]{1,12} мс|при отказе узла|с GPU)"
-_ENDING = r"(?: через (?P<interface>API|GUI))?(?P<conditions>(?: " + _QUALIFIER + r")*)\.?"
+_ENDING = r"(?: через (?P<interface>REST API|API|GUI))?(?P<conditions>(?: " + _QUALIFIER + r")*)\.?"
+_PREFIX = r"(?:(?P<actor>Nova|Neutron|Cinder|Система) (?P<neg>не )?долж(?:на|ен) )?"
+_ACCUSATIVE = r"виртуальную машину|ВМ|сеть|сетевой порт|порт|блочный том|том|пользователя"
+_GENITIVE = r"виртуальной машины|ВМ|сети|сетевого порта|порта|блочного тома|тома|пользователя"
+_LOCATIVE = r"виртуальной машине|ВМ|сети|сетевом порте|порте|блочном томе|томе|пользователе"
 _RULES = (
-    ("nova.verbal.1", re.compile(
-        r"Nova (?P<neg>не )?должна (?P<action>создавать|удалять) "
-        r"(?P<object>виртуальную машину|ВМ|пользователя)" + _ENDING, re.IGNORECASE)),
-    ("nova.nominal.1", re.compile(
-        r"Nova (?P<neg>не )?должна обеспечивать (?P<action>создание|удаление) "
-        r"(?P<object>виртуальной машины|ВМ|пользователя)" + _ENDING, re.IGNORECASE)),
+    ("api.resource.verbal.1", re.compile(_PREFIX +
+        r"(?P<action>создавать|создать|удалять|удалить|переименовывать|переименовать) "
+        r"(?P<object>" + _ACCUSATIVE + r")" + _ENDING, re.IGNORECASE)),
+    ("api.resource.nominal.1", re.compile(_PREFIX + r"(?:обеспечивать )?"
+        r"(?P<action>создание|удаление|переименование) "
+        r"(?P<object>" + _GENITIVE + r")" + _ENDING, re.IGNORECASE)),
+    ("api.resource.read.1", re.compile(_PREFIX + r"(?:обеспечивать )?"
+        r"(?P<action>получать сведения о|получить сведения о|получение сведений о) "
+        r"(?P<object>" + _LOCATIVE + r")" + _ENDING, re.IGNORECASE)),
 )
 _QUALIFIER_PATTERN = re.compile(_QUALIFIER, re.IGNORECASE)
+_ACTIONS = {
+    **dict.fromkeys(("создавать", "создать", "создание"), "create"),
+    **dict.fromkeys(("удалять", "удалить", "удаление"), "delete"),
+    **dict.fromkeys(("переименовывать", "переименовать", "переименование"), "rename"),
+    **dict.fromkeys(("получать сведения о", "получить сведения о", "получение сведений о"), "read"),
+}
+_OBJECTS = {
+    **dict.fromkeys(("виртуальную машину", "виртуальной машины", "виртуальной машине", "вм"), ("nova", "vm")),
+    **dict.fromkeys(("сеть", "сети"), ("neutron", "network")),
+    **dict.fromkeys(("сетевой порт", "сетевого порта", "сетевом порте", "порт", "порта", "порте"), ("neutron", "port")),
+    **dict.fromkeys(("блочный том", "блочного тома", "блочном томе", "том", "тома", "томе"), ("cinder", "volume")),
+    **dict.fromkeys(("пользователя", "пользователе"), (None, "user")),
+}
 
 
 def _placeholder(requirement: Requirement, state="unresolved") -> BoundObligation:
@@ -41,6 +61,12 @@ def _parse_clause(req: Requirement, text: str, offset: int, ordinal: int):
     if len(matches) != 1:
         return None
     rule_id, match = matches[0]
+    owner, resource = _OBJECTS[match["object"].casefold()]
+    actor = (match["actor"] or "система").casefold()
+    if actor == "система":
+        actor = owner
+    if actor is None:
+        return None
     conditions = []
     names = set()
     for condition in _QUALIFIER_PATTERN.finditer(text, match.start("conditions"), match.end("conditions")):
@@ -61,11 +87,10 @@ def _parse_clause(req: Requirement, text: str, offset: int, ordinal: int):
     span = SourceSpan(offset, offset + len(text), text)
     return BoundObligation(
         f"{req.requirement_id}-O{ordinal:03d}", req.requirement_id, (span,), text,
-        "bound", rule_id, True, "nova",
-        "create" if match["action"].casefold() in {"создавать", "создание"} else "delete",
-        "user" if match["object"].casefold() == "пользователя" else "vm",
+        "bound", rule_id, True, actor,
+        _ACTIONS[match["action"].casefold()], resource,
         "prohibition" if match["neg"] else "capability",
-        (match["interface"] or "unspecified").casefold(),
+        (match["interface"] or "unspecified").casefold().removeprefix("rest "),
         "openstack_runtime", "runtime", "2025.1", tuple(conditions),
     )
 

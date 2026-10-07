@@ -2,6 +2,7 @@
 {
   "analysis_profile": "legacy",
   "knowledge_path": "knowledge/epoxy-2025.1",
+  "binding_catalog_path": "knowledge/bindings/epoxy-2025.1-api",
   "top_k": 8,
   "input_root": ".",
   "session_root": "results/agent-sessions",

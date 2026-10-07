@@ -242,7 +242,8 @@ def test_shipped_legacy_snapshot_migrates_losslessly_but_cannot_be_approved(tmp_
     output = tmp_path / "draft"
     report = migrate_v1_to_v2(source, output)
     draft = load_knowledge_v2_for_maintenance(output)
-    assert report.components == 30 and report.evidence == 37
+    assert report.components == 30 and report.evidence == 53
+    assert report.capabilities == 46
     assert draft.snapshot_status == "draft"
     assert not draft.actions and not draft.effects and not draft.procedures
     assert set(draft.evidence) == set(legacy.evidence)
