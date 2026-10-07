@@ -106,10 +106,13 @@ def _load_profiled_workbook(
         if profile.column_mode == "position":
             columns = _position_columns(sheet, profile)
             start_row = profile.data_start_row
+            # Unsized worksheets yield variable-width rows unless bounded explicitly.
+            max_column = max(columns.values()) + 1
         else:
             columns = _header_columns(sheet, profile)
             start_row = profile.header_row + 1
-        for row in sheet.iter_rows(min_row=start_row):
+            max_column = None
+        for row in sheet.iter_rows(min_row=start_row, max_col=max_column):
             text_cell = row[columns[profile.text_column]]
             if text_cell.data_type == "f":
                 raise InputProfileError(
@@ -195,7 +198,12 @@ def _required_columns(profile: InputProfile) -> tuple[str, ...]:
 def _position_columns(sheet: object, profile: InputProfile) -> dict[str, int]:
     columns = {column: column_index_from_string(column) - 1
                for column in _required_columns(profile)}
-    missing = [column for column, index in columns.items() if index >= sheet.max_column]
+    width = sheet.max_column
+    if width is None:
+        # Streaming XLSX writers may omit dimensions. Read to determine width;
+        # do not save the workbook or invent cells to satisfy a missing column.
+        width = max((len(row) for row in sheet.iter_rows()), default=0)
+    missing = [column for column, index in columns.items() if index >= width]
     if missing:
         raise InputProfileError(
             "XLSX_PROFILE_COLUMN_MISSING",

@@ -168,3 +168,37 @@ def test_duplicate_continuation_does_not_inherit_subject_or_parent_context(tmp_p
     assert context['parent_text'] is None
     binding = bind_source(grouped[1])
     assert binding.unresolved_fragments
+
+
+def test_position_import_without_dimensions_preserves_sparse_rows(tmp_path):
+    wb = Workbook(write_only=True)
+    sheet = wb.create_sheet('Data')
+    sheet.append([None, '7', 'First', 'P1'])
+    sheet.append([None, '7'])
+    sheet.append([None, '7', 'Last'])
+    path = tmp_path / 'streaming.xlsx'
+    wb.save(path)
+    wb.close()
+    profile = parse_input_profile({**positional(), 'include_sheets': ['Data'],
+                                   'data_start_row': 1, 'priority_column': 'D'})
+    before = path.read_bytes()
+    rows = load_xlsx(path, profile)
+    assert [(r.coordinate.row, r.source_id, r.text) for r in rows] == [(1, '7', 'First'), (3, '7', 'Last')]
+    assert rows[0].source_fields == (SourceField('D', 'P1'),)
+    assert rows[1].source_fields == (SourceField('D', ''),)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('empty', [False, True])
+def test_position_import_without_dimensions_rejects_missing_columns(tmp_path, empty):
+    wb = Workbook(write_only=True)
+    sheet = wb.create_sheet('Data')
+    if not empty:
+        sheet.append([None, '7'])
+    path = tmp_path / 'missing.xlsx'
+    wb.save(path)
+    wb.close()
+    profile = parse_input_profile({**positional(), 'include_sheets': ['Data'], 'data_start_row': 1})
+    with pytest.raises(InputProfileError) as error:
+        load_xlsx(path, profile)
+    assert error.value.code == 'XLSX_PROFILE_COLUMN_MISSING'
