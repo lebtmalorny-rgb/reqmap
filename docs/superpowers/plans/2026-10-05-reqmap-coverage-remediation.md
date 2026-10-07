@@ -148,6 +148,9 @@ JSON/JSONL snapshots, read-only XLSX input.
 
 - [x] Первый API-пакет: создание/чтение/переименование (`name`)/удаление
   ВМ, сетей, портов и томов. 16 reviewed predicates для legacy Epoxy 2025.1.
+- [ ] Второй API-пакет: создание/чтение/переименование (`name`)/удаление
+  пользователей, проектов и ролей Keystone. Явный actor; без назначения ролей,
+  effective policy, LDAP/AD и учётных записей ОС. Приёмка фиксируется отдельно.
 - [ ] Следующие пакеты: остальные изменения ресурсов, identity/access,
   host/deployment, HA/migration, monitoring и GUI. Приоритет определяется
   реальными обязательствами, а не числом keyword hits в поиске.

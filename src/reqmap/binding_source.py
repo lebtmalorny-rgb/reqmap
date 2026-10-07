@@ -12,15 +12,15 @@ from reqmap.models import AtomicClaim, Requirement
 from reqmap.proposals import ProposalError
 
 
-GRAMMAR_VERSION = "1.1"
+GRAMMAR_VERSION = "1.2"
 # The executable grammar is part of context/resume identity, including algorithm changes.
 GRAMMAR_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 _QUALIFIER = r"(?:за одну миллисекунду|за [0-9]{1,12} мс|при отказе узла|с GPU)"
 _ENDING = r"(?: через (?P<interface>REST API|API|GUI))?(?P<conditions>(?: " + _QUALIFIER + r")*)\.?"
-_PREFIX = r"(?:(?P<actor>Nova|Neutron|Cinder|Система) (?P<neg>не )?долж(?:на|ен) )?"
-_ACCUSATIVE = r"виртуальную машину|ВМ|сеть|сетевой порт|порт|блочный том|том|пользователя"
-_GENITIVE = r"виртуальной машины|ВМ|сети|сетевого порта|порта|блочного тома|тома|пользователя"
-_LOCATIVE = r"виртуальной машине|ВМ|сети|сетевом порте|порте|блочном томе|томе|пользователе"
+_PREFIX = r"(?:(?P<actor>Nova|Neutron|Cinder|Keystone|Система) (?P<neg>не )?долж(?:на|ен) )?"
+_ACCUSATIVE = r"виртуальную машину|ВМ|сеть|сетевой порт|порт|блочный том|том|пользователя|проект|роль"
+_GENITIVE = r"виртуальной машины|ВМ|сети|сетевого порта|порта|блочного тома|тома|пользователя|проекта|роли"
+_LOCATIVE = r"виртуальной машине|ВМ|сети|сетевом порте|порте|блочном томе|томе|пользователе|проекте|роли"
 _RULES = (
     ("api.resource.verbal.1", re.compile(_PREFIX +
         r"(?P<action>создавать|создать|удалять|удалить|переименовывать|переименовать) "
@@ -45,6 +45,9 @@ _OBJECTS = {
     **dict.fromkeys(("сетевой порт", "сетевого порта", "сетевом порте", "порт", "порта", "порте"), ("neutron", "port")),
     **dict.fromkeys(("блочный том", "блочного тома", "блочном томе", "том", "тома", "томе"), ("cinder", "volume")),
     **dict.fromkeys(("пользователя", "пользователе"), (None, "user")),
+    # Generic identity nouns do not establish the authorization contour.
+    **dict.fromkeys(("проект", "проекта", "проекте"), (None, "project")),
+    **dict.fromkeys(("роль", "роли"), (None, "role")),
 }
 
 

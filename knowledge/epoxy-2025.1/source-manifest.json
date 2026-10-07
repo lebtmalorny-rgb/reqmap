@@ -386,6 +386,42 @@
       "sha256": "78bc9115478169d2bfc87299e9d016ea2525292a036e75cb4b52399f4ebe11d9",
       "source_url": "https://opendev.org/openstack/cinder/raw/commit/06e8c0b5049cd978018740f4794cb162c7043540/api-ref/source/v3/volumes-v3-volumes.inc",
       "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "keystone"
+      ],
+      "id": "SRC-API-KEYSTONE-USER-2025.1",
+      "local_path": "sources/SRC-API-KEYSTONE-USER-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "caf9c5d0fd11fd8485b2bc0131d5f20b146fdc1d0e4e1774508a0e5c50d6682d",
+      "source_url": "https://opendev.org/openstack/keystone/raw/commit/bd2b97a0412b8ea01ef47fd8c0c4908ca9fcee8a/api-ref/source/v3/users.inc",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "keystone"
+      ],
+      "id": "SRC-API-KEYSTONE-PROJECT-2025.1",
+      "local_path": "sources/SRC-API-KEYSTONE-PROJECT-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "039ed4c18721f6817bb1d74a0c9e6cf07312d8d85ff6aed77363099cdbe66c89",
+      "source_url": "https://opendev.org/openstack/keystone/raw/commit/bd2b97a0412b8ea01ef47fd8c0c4908ca9fcee8a/api-ref/source/v3/projects.inc",
+      "version": "2025.1"
+    },
+    {
+      "component_ids": [
+        "keystone"
+      ],
+      "id": "SRC-API-KEYSTONE-ROLE-2025.1",
+      "local_path": "sources/SRC-API-KEYSTONE-ROLE-2025.1.md",
+      "provenance": "official",
+      "retrieved_at": "2026-10-07",
+      "sha256": "d67eb60b0b0951862b1d3094f6dd59c6036fbb8add34e146fc9c135e7a782bdf",
+      "source_url": "https://opendev.org/openstack/keystone/raw/commit/bd2b97a0412b8ea01ef47fd8c0c4908ca9fcee8a/api-ref/source/v3/roles.inc",
+      "version": "2025.1"
     }
   ]
 }
