@@ -86,3 +86,52 @@ def test_all_exports_preserve_exact_gap_and_predicate_refs(tmp_path, monkeypatch
     book.save(output/"result.xlsx")
     book.close()
     assert check(run, output/"result.json", output/"result.xlsx", output/"report.md")
+
+
+@pytest.mark.parametrize('profile', list(AnalysisProfile))
+@pytest.mark.parametrize('kind', ['binding', 'all_proof_fields'])
+def test_long_unknown_source_finalizes_and_every_xlsx_fragment_is_verified(tmp_path, profile, kind):
+    from tests.test_binding_sessions import insufficient_proposal
+    from reqmap.agent_finalize import build_agent_run
+    from reqmap.export_json import canonical_json_bytes
+    from reqmap.crosscheck import crosscheck
+    from reqmap.crosscheck_deep import crosscheck_deep
+    # The second variant also overflows span/decision/aspect JSON and tests astral Unicode.
+    text = 'Требование '+('дополнительное условие '*350 if kind=='binding' else '😀"'*16000)
+    config=make_agent_config(tmp_path/'agent',profile)
+    if kind=='all_proof_fields':
+        config=replace(config,limits=replace(config.limits,max_response_bytes=4*1024*1024))
+    svc=AgentService(config)
+    sid=start(svc,(text,))
+    context=select_source(svc,sid,text)
+    assert context.ok,context
+    reply=svc.call('reqmap_submit_mapping',dict(session_id=sid,atom_id='REQ-0001-A001',context_id=context.data['context_id'],proposal=insufficient_proposal(context.data['payload'],profile is AnalysisProfile.DEEP),request_id='map',expected_revision=1))
+    assert reply.ok,reply
+    view,knowledge=svc.verified_view(svc.store.read(sid))
+    run=build_agent_run(view,knowledge)
+    final=svc.call('reqmap_finalize',dict(session_id=sid,request_id='finish',expected_revision=2,allow_partial=True))
+    assert final.ok,final
+    output=Path(final.data['artifacts']['result.json']).parent
+    assert AgentService(svc.config).call('reqmap_get_result',dict(session_id=sid)).ok
+    payload=json.loads((output/'result.json').read_bytes())
+    book=load_workbook(output/'result.xlsx')
+    runsheet=book['Запуск'];parts={row[0].value:row[1].value for row in list(runsheet.rows)[1:]}
+    def restored(sheet,header):
+        headers=[c.value for c in book[sheet][1]]
+        value=book[sheet].cell(2,headers.index(header)+1).value
+        ref=json.loads(value)
+        if type(ref) is dict and set(ref)=={'xlsx_text_key','parts','sha256'}:
+            value=''.join(parts[f"{ref['xlsx_text_key']}:{i}"] for i in range(1,ref['parts']+1))
+            assert hashlib.sha256(value.encode()).hexdigest()==ref['sha256']
+        return json.loads(value)
+    assert restored('Требования','Source binding')==payload['requirements'][0]['source_binding']
+    assert restored('Атомарные утверждения','Binding decision')==payload['requirements'][0]['atom_results'][0]['binding_decision']
+    assert restored('Атомарные утверждения','Source spans')==payload['requirements'][0]['atom_results'][0]['atom']['source_spans']
+    assert len(book.sheetnames)==(7 if profile is AnalysisProfile.DEEP else 5)
+    assert all(len(c.value.encode('utf-16-le'))//2<=32767 for sh in book for row in sh for c in row if isinstance(c.value,str))
+    check=crosscheck_deep if profile is AnalysisProfile.DEEP else crosscheck
+    assert not check(run,output/'result.json',output/'result.xlsx',output/'report.md')
+    fragment=next(row[1] for row in list(runsheet.rows)[1:] if str(row[0].value).startswith('xlsx-text:'))
+    fragment.value+='tampered'
+    book.save(output/'result.xlsx');book.close()
+    assert check(run,output/'result.json',output/'result.xlsx',output/'report.md')

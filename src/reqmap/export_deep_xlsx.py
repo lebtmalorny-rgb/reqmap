@@ -12,6 +12,7 @@ from zipfile import BadZipFile, ZipFile
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
+from reqmap.xlsx_text import encode_long_cells
 from reqmap.deep_models import DeepRunResult
 from reqmap.export_deep_json import _deep_run_payload, validate_deep_run_result
 from reqmap.export_json import atomic_write_bytes, ensure_secure_directory, symlink_component
@@ -187,7 +188,7 @@ def _data_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
     assert isinstance(graphs, list)
     assert isinstance(evidence, list)
     decisions = {a["atom"]["atom_id"]: a["binding_decision"] for r in requirements for a in r["atom_results"]}
-    return {
+    return encode_long_cells({
         "Требования": tuple(_requirement_row(item) for item in requirements),
         "Атомарные утверждения": tuple(
             _atom_row(atom)
@@ -203,7 +204,7 @@ def _data_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
         "Доказательства": tuple(_evidence_row(item) for item in evidence),
         "Диагностика": _diagnostic_rows(run),
         "Запуск": _run_rows(payload, run),
-    }
+    })
 
 
 def _requirement_row(item: dict[str, object]) -> tuple[object, ...]:

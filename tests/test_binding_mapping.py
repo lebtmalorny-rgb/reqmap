@@ -157,3 +157,33 @@ def test_unbound_additional_records_do_not_leave_supported_atom(tmp_path):
     outcome = accept_deep_mapping(atom, candidates, knowledge, raw, binding_context=BindingContext(binding, catalog))
     assert any(r.support_status is SupportStatus.INSUFFICIENT_EVIDENCE for r in outcome.responsibility_records)
     assert outcome.atom_result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+
+
+@pytest.mark.parametrize("hide_evidence", [False, True])
+def test_loaded_legacy_catalog_conflict_cannot_be_hidden(tmp_path, kb, hide_evidence):
+    from types import MappingProxyType
+    from reqmap.models import EvidencePolarity
+    from tests.binding_factories import predicate_raw
+    ev=replace(kb.evidence['E-NOVA'],evidence_id='E-NEG',polarity=EvidencePolarity.NEGATIVE)
+    knowledge=replace(kb,evidence=MappingProxyType({**kb.evidence,ev.evidence_id:ev}))
+    p=predicate_raw(knowledge)
+    q={**p,'predicate_id':'P-NEG','evidence_ids':['E-NEG'],'polarity':'negative'}
+    catalog=load_binding_catalog(write_catalog(tmp_path/'catalog',knowledge,predicates=[p,q]),knowledge)
+    raw=response(raw_mapping(evidence_ids=['E-NOVA'] if hide_evidence else ['E-NOVA','E-NEG']))
+    result,_=submit((knowledge,catalog,raw),'Nova должна создавать ВМ через API',proposal_changes={'predicate_ids':['P-NOVA-CREATE']})
+    assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert 'EVIDENCE_CONFLICT' in {d.code for d in result.binding_decision.diagnostics}
+    assert 'E-NEG' in next(d.evidence_ids for d in result.binding_decision.diagnostics if d.code=='EVIDENCE_CONFLICT')
+    from reqmap.binding_runtime import validate_persisted_binding
+    source=bind_source(replace(requirement(),text='Nova должна создавать ВМ через API'))
+    validate_persisted_binding(result,BindingContext(source,catalog),knowledge,result.mappings,SupportStatus.SUPPORTED)
+
+
+def test_assumptions_do_not_cover_metric_in_either_public_acceptor(setup_binding):
+    from types import MappingProxyType
+    from reqmap.binding_models import BoundConstraint
+    knowledge,catalog,raw=setup_binding
+    p=replace(catalog.predicates['P-NOVA-CREATE'],assumptions=(BoundConstraint('duration','within','1','ms'),))
+    catalog=replace(catalog,predicates=MappingProxyType({p.predicate_id:p}))
+    result,_=submit((knowledge,catalog,raw),'Nova должна создавать ВМ через API за одну миллисекунду')
+    assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE

@@ -237,7 +237,7 @@ create `tests/test_binding_exports.py`, `docs/acceptance/2026-10-05-obligation-b
   и installed MCP submit/restart/finalize/get_result с проверкой пяти hashes.
   Отдельно показать положительный synthetic catalog control и контрастные
   случаи; не выдавать synthetic catalog за поставляемую предметную базу.
-- [ ] Выполнить одно независимое ревью всей ветки по executing-plans. Исправить
+- [x] Выполнить одно независимое ревью всей ветки по executing-plans. Исправить
   блокирующие замечания через RED/GREEN; не объявлять этапы corpus/IDE выполненными.
 - [x] Commit: `feat: export and verify complete obligation binding`.
 

@@ -111,3 +111,41 @@ def test_conditions_require_exact_values_without_numeric_inference(tmp_path, kb,
     catalog = replace(catalog, predicates=MappingProxyType({p.predicate_id: p}))
     result = decide(obligation("Nova должна создавать ВМ через API за одну миллисекунду"), catalog)
     assert result.support_status is expected
+
+
+@pytest.mark.parametrize('selected', [('P-NOVA-CREATE',), ('P-NEG',)])
+def test_unselected_opposite_predicate_cannot_hide_conflict(tmp_path, kb, selected):
+    catalog = loaded_catalog(tmp_path, kb)
+    p = next(iter(catalog.predicates.values()))
+    q = replace(p, predicate_id='P-NEG', polarity=EvidencePolarity.NEGATIVE, evidence_ids=('E-NEG',))
+    catalog = replace(catalog, predicates=MappingProxyType({p.predicate_id:p,q.predicate_id:q}))
+    prior = SupportStatus.SUPPORTED if selected[0] == p.predicate_id else SupportStatus.NOT_SUPPORTED
+    result = decide(obligation(), catalog, prior, selected, ('E-NOVA','E-NEG'))
+    assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert 'EVIDENCE_CONFLICT' in {d.code for d in result.diagnostics}
+    assert set(result.predicate_ids) == {p.predicate_id,q.predicate_id}
+
+
+@pytest.mark.parametrize('direction,polarity,prior', [
+    ('capability', EvidencePolarity.NEGATIVE, SupportStatus.NOT_SUPPORTED),
+    ('prohibition', EvidencePolarity.POSITIVE, SupportStatus.SUPPORTED),
+])
+def test_interface_specific_proof_cannot_establish_general_negative_or_prohibition(tmp_path, kb, direction, polarity, prior):
+    catalog = loaded_catalog(tmp_path, kb)
+    p = replace(next(iter(catalog.predicates.values())), direction=direction, polarity=polarity)
+    catalog = replace(catalog,predicates=MappingProxyType({p.predicate_id:p}))
+    text = 'Nova '+('не ' if direction == 'prohibition' else '')+'должна создавать ВМ'
+    result = decide(obligation(text),catalog,prior)
+    assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert 'SOURCE_INTERFACE_UNPROVEN' in {d.code for d in result.diagnostics}
+
+
+@pytest.mark.parametrize('guarantee', [False, True])
+def test_assumed_metric_is_not_guaranteed_even_if_repeated_in_constraints(tmp_path, kb, guarantee):
+    catalog=loaded_catalog(tmp_path,kb)
+    metric=BoundConstraint('duration','within','1','ms')
+    p=replace(next(iter(catalog.predicates.values())), assumptions=(metric,), constraints=(metric,) if guarantee else ())
+    catalog=replace(catalog,predicates=MappingProxyType({p.predicate_id:p}))
+    result=decide(obligation('Nova должна создавать ВМ через API за одну миллисекунду'),catalog)
+    assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+    assert 'SOURCE_CONDITION_UNPROVEN' in {d.code for d in result.diagnostics}

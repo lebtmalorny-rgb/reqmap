@@ -16,6 +16,7 @@ from openpyxl.cell.cell import Cell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.worksheet.worksheet import Worksheet
 
+from reqmap.xlsx_text import encode_long_cells
 from reqmap.errors import ReqmapError
 from reqmap.export_json import (
     atomic_write_bytes,
@@ -407,7 +408,7 @@ def _evidence_row(item: Evidence) -> tuple[object, ...]:
 
 
 def _data_rows(run: RunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
-    return {
+    return encode_long_cells({
         "Требования": tuple(
             [*(_requirement_row(item) for item in run.requirements)]
             + [*(_group_row(item) for item in run.groups)]
@@ -425,7 +426,7 @@ def _data_rows(run: RunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
         ),
         "Доказательства": tuple(_evidence_row(item) for item in run.evidence),
         "Запуск": _run_rows(run),
-    }
+    })
 
 
 def _run_rows(run: RunResult) -> tuple[tuple[str, object], ...]:

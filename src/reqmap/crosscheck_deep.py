@@ -11,6 +11,7 @@ from zipfile import BadZipFile
 from openpyxl import load_workbook
 from openpyxl.utils.exceptions import InvalidFileException
 
+from reqmap.xlsx_text import encode_long_cells
 from reqmap.crosscheck import CrosscheckIssue
 from reqmap.deep_models import DeepRunResult, ResponsibilityContour
 from reqmap.export_deep_json import _deep_run_payload, validate_deep_run_result
@@ -801,7 +802,7 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
         run_values += (("binding_contract", _json_text(metadata["binding_contract"])),)
     if "analysis_origin" in metadata:
         run_values += (("analysis_origin", _json_text(metadata["analysis_origin"])),)
-    return {
+    return encode_long_cells({
         "Требования": tuple(requirement_rows),
         "Атомарные утверждения": tuple(atom_rows),
         "Ответственность": responsibility_rows,
@@ -809,7 +810,7 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
         "Доказательства": evidence_rows,
         "Диагностика": _diagnostic_rows(run),
         "Запуск": run_values,
-    }
+    })
 
 
 def _diagnostic_rows(run: DeepRunResult) -> tuple[tuple[object, ...], ...]:

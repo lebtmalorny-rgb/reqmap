@@ -51,7 +51,7 @@ def diagnostic(obligation, code, field="source", evidence_ids=(), spans=None):
 
 def check_binding(obligation, predicate_ids, catalog, prior_status, cited_evidence_ids):
     """One predicate must match every field; never promote the evidence gate."""
-    diagnostics, matched, attempted = [], [], []
+    diagnostics, matched, attempted, applicable = [], [], [], []
     cited = set(cited_evidence_ids)
     if obligation.parse_state != "bound":
         code = "SOURCE_AMBIGUOUS" if obligation.parse_state == "ambiguous" else "SOURCE_UNPARSED"
@@ -61,15 +61,20 @@ def check_binding(obligation, predicate_ids, catalog, prior_status, cited_eviden
     elif not predicate_ids:
         diagnostics.append(diagnostic(obligation, "BINDING_UNREVIEWED", "predicate_ids"))
     else:
-        for pid in dict.fromkeys(predicate_ids):
+        # Reviewed contradictions are backend facts, not model selections.
+        selected = set(predicate_ids)
+        for pid in dict.fromkeys((*predicate_ids, *catalog.predicates)):
+            is_selected = pid in selected
             p = catalog.predicates.get(pid)
             if p is None or p.review_state != "reviewed":
-                diagnostics.append(diagnostic(obligation, "BINDING_UNREVIEWED", "predicate_ids"))
+                if is_selected:
+                    diagnostics.append(diagnostic(obligation, "BINDING_UNREVIEWED", "predicate_ids"))
                 continue
-            attempted.append(pid)
-            if not p.evidence_ids or not set(p.evidence_ids).issubset(cited):
+            if is_selected:
+                attempted.append(pid)
+            has_cited_proof = bool(p.evidence_ids) and set(p.evidence_ids).issubset(cited)
+            if not has_cited_proof and is_selected:
                 diagnostics.append(diagnostic(obligation, "EVIDENCE_MISSING", "evidence_ids", p.evidence_ids))
-                continue
             if obligation.parse_state != "bound":
                 continue
             mismatches = []
@@ -79,20 +84,34 @@ def check_binding(obligation, predicate_ids, catalog, prior_status, cited_eviden
                 if getattr(obligation, field) != getattr(p, field):
                     mismatches.append(diagnostic(obligation, code, field, p.evidence_ids))
             required = {c.semantic_key for c in obligation.constraints}
-            guaranteed = {c.semantic_key for c in (*p.constraints, *p.assumptions)}
+            guaranteed = {c.semantic_key for c in p.constraints}
             # Exact conditions only. In particular P => X cannot establish unconditional X.
-            if required != guaranteed:
+            if required != guaranteed or p.assumptions:
                 spans = tuple(s for c in obligation.constraints if c.semantic_key not in guaranteed for s in c.source_spans)
                 mismatches.append(diagnostic(obligation, "SOURCE_CONDITION_UNPROVEN", "constraints",
                                              p.evidence_ids, spans or obligation.source_spans))
-            if mismatches:
-                diagnostics.extend(mismatches)
-            else:
-                matched.append(p)
+            if not mismatches:
+                applicable.append(p)
+                if (obligation.interface == "unspecified"
+                        and not (p.polarity is EvidencePolarity.POSITIVE and obligation.direction == "capability")):
+                    mismatches.append(diagnostic(obligation, "SOURCE_INTERFACE_UNPROVEN", "interface", p.evidence_ids))
+            if is_selected:
+                if mismatches:
+                    diagnostics.extend(mismatches)
+                elif has_cited_proof:
+                    matched.append(p)
+    # Opposite facts conflict only in the SAME complete scope. API and GUI
+    # alternatives do not contradict each other for an unspecified interface.
+    conflicts = [p for p in applicable if any(
+        p.polarity is not q.polarity
+        and all(getattr(p, field) == getattr(q, field) for field in _FIELDS)
+        and {c.semantic_key for c in p.constraints} == {c.semantic_key for c in q.constraints}
+        for q in applicable)]
     polarities = {p.polarity for p in matched}
     status = _INSUFFICIENT
-    if {EvidencePolarity.POSITIVE, EvidencePolarity.NEGATIVE}.issubset(polarities):
-        diagnostics.append(diagnostic(obligation, "EVIDENCE_CONFLICT", "polarity", cited_evidence_ids))
+    if conflicts:
+        conflict_evidence = tuple(dict.fromkeys(e for p in conflicts for e in p.evidence_ids))
+        diagnostics = [diagnostic(obligation, "EVIDENCE_CONFLICT", "polarity", conflict_evidence)]
     elif EvidencePolarity.POSITIVE in polarities and prior_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}:
         status = prior_status
     elif EvidencePolarity.NEGATIVE in polarities and prior_status is SupportStatus.NOT_SUPPORTED:
@@ -104,7 +123,7 @@ def check_binding(obligation, predicate_ids, catalog, prior_status, cited_eviden
         diagnostics = []
     return BindingDecision(
         obligation.obligation_id, hashlib.sha256(obligation.source_quote.encode("utf-8")).hexdigest(),
-        status, tuple(p.predicate_id for p in matched) if matched else tuple(attempted),
+        status, tuple(p.predicate_id for p in (conflicts or matched)) if (conflicts or matched) else tuple(attempted),
         tuple(dict.fromkeys(cited_evidence_ids)), tuple(dict.fromkeys(diagnostics)),
         obligation.source_spans if status is _INSUFFICIENT else (),
         None if catalog is None else catalog.catalog_sha256,
@@ -170,16 +189,16 @@ def binding_payload(atom, context, kb, payload):
 
 
 def mapping_decision(atom, context, kb, predicate_ids, prior_status, records):
-    """Limit predicate proof to an already checked, exact selected relation."""
+    """Prove only cited exact relations; inspect their catalog contradictions."""
     from reqmap.knowledge import KnowledgeBase
     from reqmap.binding_catalog import _validate_relations
     from reqmap.errors import ReqmapError
     obligation = context_obligation(atom, context, kb)
     catalog = None if context is None else context.catalog
     evidence_ids = tuple(dict.fromkeys(e for r in records for e in r.evidence_ids))
-    allowed = []
+    allowed, checked = [], {}
     if catalog is not None:
-        for pid in predicate_ids:
+        for pid in catalog.predicates:
             p = catalog.predicates.get(pid)
             if p is None:
                 continue
@@ -189,8 +208,6 @@ def mapping_decision(atom, context, kb, predicate_ids, prior_status, records):
             except ReqmapError:
                 continue
             for r in records:
-                if not set(p.evidence_ids).issubset(r.evidence_ids):
-                    continue
                 if type(kb) is KnowledgeBase:
                     matches = p.component_ref == r.component_id and p.lifecycle_phase == r.phase.value
                 else:
@@ -198,8 +215,12 @@ def mapping_decision(atom, context, kb, predicate_ids, prior_status, records):
                         and p.effect_ref == r.effect_ref and p.target_ref == r.target_ref
                         and p.contour == r.contour.value and p.lifecycle_phase == r.lifecycle_phase.value)
                 if matches:
-                    allowed.append(pid)
+                    checked[pid] = p
+                    if pid in predicate_ids and set(p.evidence_ids).issubset(r.evidence_ids):
+                        allowed.append(pid)
                     break
+        from types import MappingProxyType
+        catalog = replace(catalog, predicates=MappingProxyType(checked))
     decision = check_binding(obligation, tuple(allowed), catalog, prior_status, evidence_ids)
     extras = []
     if context is None:
