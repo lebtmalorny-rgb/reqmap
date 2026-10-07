@@ -30,6 +30,7 @@ JSON/JSONL snapshots, read-only XLSX input.
 Проверки и границы: [приёмка runtime](../../acceptance/2026-10-05-obligation-binding-runtime.md).
 Этап 3 выполнен: [профили XLSX и проверка исходных книг](../../acceptance/2026-10-07-xlsx-input-profiles.md).
 Первый API-пакет этапа 4 реализован: [16 операций и границы](../../acceptance/2026-10-07-core-api-evidence.md).
+Второй пакет реализован: [12 операций Keystone и границы](../../acceptance/2026-10-07-keystone-api-evidence.md).
 Этап 4 целиком и этап 5 **не завершены**.
 Первый живой API-eval выполнен: [25 строк / 26 атомов и 17 пропущенных подтверждений](../../acceptance/2026-10-07-api-live-eval.md). Конечная грамматика прототипа не является
 универсальной семантической проверкой произвольного русского текста.
@@ -148,9 +149,11 @@ JSON/JSONL snapshots, read-only XLSX input.
 
 - [x] Первый API-пакет: создание/чтение/переименование (`name`)/удаление
   ВМ, сетей, портов и томов. 16 reviewed predicates для legacy Epoxy 2025.1.
-- [ ] Второй API-пакет: создание/чтение/переименование (`name`)/удаление
+- [x] Второй API-пакет: создание/чтение/переименование (`name`)/удаление
   пользователей, проектов и ролей Keystone. Явный actor; без назначения ролей,
-  effective policy, LDAP/AD и учётных записей ОС. Приёмка фиксируется отдельно.
+  effective policy, LDAP/AD и учётных записей ОС.
+  [Приёмка](../../acceptance/2026-10-07-keystone-api-evidence.md): 1655 тестов,
+  независимое ревью, офлайн-установка и stdio restart/replay. Live IDE не проверен.
 - [ ] Следующие пакеты: остальные изменения ресурсов, identity/access,
   host/deployment, HA/migration, monitoring и GUI. Приоритет определяется
   реальными обязательствами, а не числом keyword hits в поиске.
