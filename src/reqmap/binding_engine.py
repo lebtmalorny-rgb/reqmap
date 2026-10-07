@@ -40,6 +40,8 @@ _MESSAGES = {
     "BINDING_CATALOG_MISSING": "Каталог проверенных предикатов не настроен.",
     "BINDING_UNREVIEWED": "Нет выбранного проверенного предиката.",
     "EVIDENCE_CONFLICT": "Применимые полные предикаты противоречат друг другу.",
+    "MAPPING_ROLE_UNGROUNDED": "Текст роли не прошёл лексическую проверку по выбранному official specific evidence/capability.",
+    "MAPPING_STEP_UNGROUNDED": "Текст шага не прошёл лексическую проверку по выбранному official specific evidence/capability.",
 }
 
 
@@ -223,6 +225,22 @@ def mapping_decision(atom, context, kb, predicate_ids, prior_status, records):
         catalog = replace(catalog, predicates=MappingProxyType(checked))
     decision = check_binding(obligation, tuple(allowed), catalog, prior_status, evidence_ids)
     extras = []
+    if type(kb) is KnowledgeBase and decision.support_status is _INSUFFICIENT:
+        from reqmap.mapping import mapping_text_gaps
+        for record in records:
+            # Canonical IDs keep the original index in a one-record decision too.
+            index = int(record.mapping_id.rsplit("-M", 1)[1]) - 1
+            for field, missing in mapping_text_gaps(record, kb):
+                code = "MAPPING_ROLE_UNGROUNDED" if field == "role_ru" else "MAPPING_STEP_UNGROUNDED"
+                path = f"mappings[{index}].{field}"
+                diag = diagnostic(obligation, code, path, record.evidence_ids)
+                detail = ("Слова вне корпуса: " + ", ".join(missing) + "." if missing
+                          else "Нет значимых слов для проверки.")
+                extras.append(replace(diag, message_ru=f"{diag.message_ru} Поле {path}. {detail} "
+                    "Используйте подходящий claim_ru, сохранив полную source_quote."))
+        if extras:
+            decision = replace(decision, diagnostics=tuple(d for d in decision.diagnostics
+                if not (d.code == "EVIDENCE_MISSING" and d.field == "prior_status")))
     if context is None:
         extras.append(diagnostic(obligation, "SOURCE_CONTEXT_REQUIRED"))
     context_eids = tuple(e for e in evidence_ids

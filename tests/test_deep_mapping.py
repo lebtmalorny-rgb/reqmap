@@ -461,7 +461,7 @@ def test_prompt_payload_excludes_urls_local_excerpts_locators_and_commands(v2_kb
     map_atom_deep(model, atom(), deep_candidate(v2_kb), v2_kb)
     serialized = str(model.calls[0][2])
     assert PROMPT_DEEP_MAPPING_VERSION == "2.1"
-    assert PROMPT_MAPPING_VERSION == "1.2"
+    assert PROMPT_MAPPING_VERSION == "1.3"
     assert "https://" not in serialized
     assert "local_excerpt" not in serialized
     assert "locator" not in serialized

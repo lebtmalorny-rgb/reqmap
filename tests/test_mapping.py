@@ -1343,7 +1343,7 @@ def test_positive_supported_without_evidence_downgrades_deterministically(kb) ->
 
     assert mapped.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert mapped.mappings[0].evidence_ids == ()
-    assert "Статус понижен: отсутствует достаточное официальное evidence." in mapped.diagnostics
+    assert "Статус понижен: официальное evidence или описание mapping не прошли проверку." in mapped.diagnostics
 
 
 def test_unproved_confirmed_aspect_is_moved_to_unconfirmed_without_model_correction(kb) -> None:
@@ -1775,7 +1775,7 @@ def test_real_epoxy_negative_host_boundaries_remain_not_supported(
 
 
 def test_mapping_prompt_is_versioned_and_strictly_russian() -> None:
-    assert PROMPT_MAPPING_VERSION == "1.2"
+    assert PROMPT_MAPPING_VERSION == "1.3"
     assert "Верни только JSON" in MAPPING_PROMPT
     assert "source_hint" in MAPPING_PROMPT
     assert "не является evidence" in MAPPING_PROMPT

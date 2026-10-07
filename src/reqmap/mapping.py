@@ -55,7 +55,7 @@ _MAPPING_KEYS = frozenset(
 )
 _STEP_KEYS = frozenset({"action_ru", "mechanism", "command", "api_operation"})
 _POSITIVE_STRENGTHS = frozenset({EvidenceStrength.DIRECT, EvidenceStrength.INDIRECT})
-_DOWNGRADE_REASON = "Статус понижен: отсутствует достаточное официальное evidence."
+_DOWNGRADE_REASON = "Статус понижен: официальное evidence или описание mapping не прошли проверку."
 _CONTEXT_ONLY_REASON = (
     "EVIDENCE_CONTEXT_ONLY: общая справка не доказывает конкретную реализацию или ограничение."
 )
@@ -276,14 +276,14 @@ def _mapping_payload(
             "mappings": [
                 {
                     "component_id": "candidate component_id",
-                    "role_ru": "non-empty string",
+                    "role_ru": "non-empty description grounded in cited official specific evidence; prefer its exact claim_ru, not source_quote",
                     "relation": [item.value for item in RelationType],
                     "phase": [item.value for item in Phase],
                     "implementation_source": [item.value for item in ImplementationSource],
                     "mechanism": "non-empty string",
                     "steps": [
                         {
-                            "action_ru": "non-empty string",
+                            "action_ru": "non-empty step description grounded in cited official specific evidence; prefer its exact claim_ru",
                             "mechanism": "non-empty string",
                             "command": "string or null",
                             "api_operation": "string or null",
@@ -951,6 +951,26 @@ def _semantic_text_grounded(value: str, corpus: tuple[str, ...]) -> bool:
     return bool(significant_terms) and all(
         _phrase_in_corpus(term, corpus) for term in significant_terms
     )
+
+
+def mapping_text_gaps(item: Mapping, kb: KnowledgeBase) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    """Explain the existing lexical gate; never repair or promote a proposal."""
+    corpus = _official_component_corpus(item, kb)
+    if not corpus:
+        return ()
+    fields = (("role_ru", item.role_ru), *(
+        (f"steps[{index}].action_ru", step.action_ru)
+        for index, step in enumerate(item.steps)
+        if (item.phase is Phase.RUNTIME or item.component_id == "kolla_ansible"
+            or (step.command is None and step.mechanism != "kolla_ansible"))
+    ))
+    gaps = []
+    for field, value in fields:
+        if not _semantic_text_grounded(value, corpus):
+            missing = tuple(dict.fromkeys(term for term in _normalized_phrase(value).split()
+                if term not in _SEMANTIC_BOILERPLATE and not _phrase_in_corpus(term, corpus)))
+            gaps.append((field, missing))
+    return tuple(gaps)
 
 
 def _atom_mapping_grounded(

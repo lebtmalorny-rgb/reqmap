@@ -7,7 +7,7 @@ from typing import Mapping
 from reqmap.models import EvidencePolarity, SourceCoordinate, SupportStatus
 
 
-BINDING_ENGINE_VERSION = "1.0"
+BINDING_ENGINE_VERSION = "1.1"
 PROPOSAL_SCHEMA_VERSION = 2
 
 

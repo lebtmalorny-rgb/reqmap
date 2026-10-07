@@ -1,7 +1,7 @@
 """Версионированные системные инструкции локальной модели."""
 
 PROMPT_DECOMPOSITION_VERSION = "2.0"
-PROMPT_MAPPING_VERSION = "1.2"
+PROMPT_MAPPING_VERSION = "1.3"
 PROMPT_DEEP_MAPPING_VERSION = "2.1"
 
 DECOMPOSITION_PROMPT = """Выбери canonical atoms из полной source_binding без изменения семантики.
@@ -34,7 +34,17 @@ mapping mechanism kolla_ansible, api_operation null, отдельный non-deli
 Не выдумывай имена options, backends, drivers, API operations или host parameters: каждый
 технический identifier должен присутствовать в official evidence/capability этого компонента.
 
-Каждый supported_aspect должен в точности совпадать с role_ru одного подтверждённого mapping;
+role_ru описывает доказанную возможность компонента, action_ru — доказанный шаг. Эти поля
+проверяются лексически по cited official specific evidence и его capability: каждое значимое
+слово должно присутствовать в этом корпусе. Для role_ru и action_ru используй подходящий
+claim_ru выбранного evidence дословно либо формулировку из того же корпуса. Не копируй в них
+исходное требование с нормативными словами вроде «должна». source_quote сохраняет полное
+требование без изменений, включая условия и отрицания; описание evidence их не заменяет.
+Наличие подходящего текста роли не доказывает покрытие исходного обязательства.
+MAPPING_ROLE_UNGROUNDED и MAPPING_STEP_UNGROUNDED указывают поле и непокрытые слова: исправляй
+только описание в новом proposal, сохраняя source_quote; повторно оцени покрытие предикатом.
+
+Каждый supported_aspect в proposal должен в точности совпадать с role_ru одного подтверждённого mapping;
 для partial нужны непустые supported_aspects и unconfirmed_aspects. Изменение host OS требует отдельные mappings для Kolla-Ansible
 и конкретной host OS subsystem; host mapping имеет relation host_os_change, phase designtime
 и implementation_source kolla_ansible.

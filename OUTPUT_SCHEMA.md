@@ -180,6 +180,17 @@ Codex, ни OpenCode не являются именем языковой мод�
 `SOURCE_AMBIGUOUS`, `BINDING_CATALOG_MISSING`, `EVIDENCE_CONTEXT_ONLY`.
 Точные причины несовпадений и source spans находятся в `BindingDecision`.
 
+Начиная с `binding_engine_version=1.1`, для legacy доступны
+`MAPPING_ROLE_UNGROUNDED` и `MAPPING_STEP_UNGROUNDED`. Они означают, что текст
+`role_ru` или `steps[i].action_ru` не прошёл существующую лексическую проверку
+по выбранному official specific evidence/capability. `field` содержит путь
+`mappings[i].role_ru` или `mappings[i].steps[j].action_ru`; `message_ru` перечисляет
+слова вне корпуса. Это диагностика описания предложения, а не отрицательное
+доказательство функции. Она заменяет общий `EVIDENCE_MISSING` по `prior_status`,
+когда выявлен такой дефект текста; остальные ошибки исходного обязательства
+сохраняются. JSON, XLSX и Markdown содержат эту диагностику. Схемы результатов
+остаются 1.1/2.1; журнал содержит события и версии контракта.
+
 `metadata.binding_contract`, manifest и событие `analysis_finished` в журнале
 содержат одинаковые `binding_engine_version`, `grammar_version`,
 `grammar_sha256`, `binding_catalog_sha256`, `binding_catalog_schema_version`,
