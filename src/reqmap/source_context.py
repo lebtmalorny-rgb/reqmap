@@ -4,15 +4,20 @@ from __future__ import annotations
 from dataclasses import replace
 import hashlib
 import json
+from pathlib import Path
+import subprocess
+import tempfile
 
-from reqmap.config import InputProfile
+from reqmap.config import AnalysisProfile, InputProfile, KnowledgeTrustConfig
 from reqmap.errors import ReqmapError
 from reqmap.export_json import canonical_json_bytes
 from reqmap.ids import generated_requirement_id
 from reqmap.input_text import load_text
 from reqmap.input_xlsx import load_xlsx_bytes
 from reqmap.models import Requirement, SourceCoordinate, to_dict
-from reqmap.source_context_models import SourceDocumentSnapshot
+from reqmap.source_context_models import (
+    MAX_CONTEXT_BYTES, ContextTrust, LoadedSourceContext, SourceDocumentSnapshot,
+)
 
 
 def _source_rows(requirements: tuple[Requirement, ...]) -> tuple[Requirement, ...]:
@@ -69,3 +74,71 @@ def capture_source_document(*, content: bytes, source_kind: str, source_name: st
         hashlib.sha256(content).hexdigest(),
         hashlib.sha256(canonical_json_bytes(input_profile)).hexdigest() if input_profile is not None else None,
         _rows_digest(imported), imported)
+
+
+def verify_source_context_signature(map_bytes: bytes, signature_bytes: bytes,
+                                    trust: KnowledgeTrustConfig) -> ContextTrust:
+    """Freeze current trust and signature; verify the exact map bytes."""
+    from reqmap.agent_input import read_regular_bytes
+    from reqmap.snapshot_trust import _require_ed25519_signature
+    try:
+        if (type(trust) is not KnowledgeTrustConfig or type(signature_bytes) is not bytes
+                or len(signature_bytes) > 1024*1024 or type(map_bytes) is not bytes
+                or len(map_bytes) > MAX_CONTEXT_BYTES):
+            raise ValueError("invalid signature inputs")
+        signers = read_regular_bytes(trust.allowed_signers_path, 1024*1024)
+        _require_ed25519_signature(signature_bytes)
+        with tempfile.TemporaryDirectory(prefix="reqmap-context-verify-") as temporary:
+            directory = Path(temporary).resolve()
+            signer_file, signature_file = directory/"allowed_signers", directory/"signature"
+            signer_file.write_bytes(signers)
+            signature_file.write_bytes(signature_bytes)
+            # Signature envelope already restricts the key to Ed25519; OpenSSH
+            # verifies that exact key against the configured identity/namespace.
+            result = subprocess.run(
+                ["ssh-keygen", "-Y", "verify", "-f", str(signer_file),
+                 "-I", trust.signer_identity, "-n", "reqmap-source-context", "-s", str(signature_file)],
+                input=map_bytes, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                timeout=10, check=False, shell=False)
+        if result.returncode != 0:
+            raise ValueError("signature rejected")
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired, ReqmapError) as exc:
+        raise ReqmapError("SOURCE_CONTEXT_UNTRUSTED", "Подпись карты контекста не подтверждена.") from exc
+    return ContextTrust("deep", "reqmap-source-context", trust.signer_identity,
+                        hashlib.sha256(signature_bytes).hexdigest(), hashlib.sha256(signers).hexdigest())
+
+
+def load_source_context_map(path: Path | None, document: SourceDocumentSnapshot, *,
+                            profile: AnalysisProfile, trust: KnowledgeTrustConfig | None) -> LoadedSourceContext:
+    from reqmap.agent_input import read_regular_bytes
+    from reqmap.source_context_codec import decode_source_context_map
+    context_trust = ContextTrust(profile.value, None, None, None, None)
+    if path is None:
+        return LoadedSourceContext(None, None, None, None, context_trust)
+    try:
+        raw = read_regular_bytes(path, MAX_CONTEXT_BYTES)
+    except ReqmapError as exc:
+        raise ReqmapError("SOURCE_CONTEXT_INVALID", "Карта отсутствует, небезопасна или изменена при чтении.") from exc
+    mapping = decode_source_context_map(raw, document)
+    signature = None
+    if profile is AnalysisProfile.DEEP:
+        try:
+            signature = read_regular_bytes(Path(str(path)+".sig"), 1024*1024)
+        except ReqmapError as exc:
+            raise ReqmapError("SOURCE_CONTEXT_UNTRUSTED", "Не удалось прочитать подпись карты.") from exc
+        context_trust = verify_source_context_signature(raw, signature, trust)
+    return LoadedSourceContext(raw, signature, hashlib.sha256(raw).hexdigest(), mapping, context_trust)
+
+
+def source_context_output_diagnostics(path: Path | None, output_roots: tuple[Path, ...],
+                                      trust: KnowledgeTrustConfig | None) -> tuple[str, ...]:
+    protected = ([] if path is None else [path, Path(str(path)+".sig")])
+    if trust is not None:
+        protected.append(trust.allowed_signers_path)
+    for item in protected:
+        source = item.resolve(strict=False)
+        for root in output_roots:
+            output = root.resolve(strict=False)
+            if source.is_relative_to(output) or output.is_relative_to(source):
+                return ("SOURCE_CONTEXT_INVALID: каталог записи пересекается с картой, подписью или trust.",)
+    return ()

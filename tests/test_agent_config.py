@@ -17,6 +17,15 @@ def config_file(tmp_path, **changes):
     return p
 
 
+def test_agent_source_context_path_and_write_boundaries(tmp_path):
+    module = agent_module()
+    config = module.load_agent_config(config_file(tmp_path, source_context_path='review/map.json'))
+    assert config.source_context_path == tmp_path/'review/map.json'
+    for value in ('outputs/map.json', 'sessions/map.json'):
+        with pytest.raises(ConfigError):
+            module.load_agent_config(config_file(tmp_path, source_context_path=value))
+
+
 def test_agent_config_resolves_paths_and_has_no_model(tmp_path):
     module = agent_module()
     config = module.load_agent_config(config_file(tmp_path))

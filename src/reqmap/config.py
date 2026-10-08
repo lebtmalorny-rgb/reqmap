@@ -67,6 +67,7 @@ class AppConfig:
     analysis_profile: AnalysisProfile = AnalysisProfile.LEGACY
     knowledge_trust: KnowledgeTrustConfig | None = None
     binding_catalog_path: Path | None = None
+    source_context_path: Path | None = None
 
 
 def load_config(path: Path, environ: Mapping[str, str]) -> AppConfig:
@@ -85,6 +86,7 @@ def load_config(path: Path, environ: Mapping[str, str]) -> AppConfig:
             "analysis_profile",
             "knowledge_trust",
             "binding_catalog_path",
+            "source_context_path",
         },
     )
     return _build_app_config(raw, environ, path.parent)
@@ -116,9 +118,10 @@ def _build_app_config(
     )
     if analysis_profile is AnalysisProfile.DEEP and knowledge_trust is None:
         _invalid("knowledge_trust обязателен для analysis_profile=deep")
-    from reqmap.config_common import parse_binding_catalog_path
+    from reqmap.config_common import parse_binding_catalog_path, parse_source_context_path
     return AppConfig(model, knowledge_path, input_profile, top_k, analysis_profile, knowledge_trust,
-                     parse_binding_catalog_path(raw.get("binding_catalog_path"), config_directory))
+                     parse_binding_catalog_path(raw.get("binding_catalog_path"), config_directory),
+                     parse_source_context_path(raw.get("source_context_path"), config_directory))
 
 
 def _build_analysis_profile(raw: object) -> AnalysisProfile:

@@ -48,3 +48,10 @@ def parse_binding_catalog_path(raw: object, base: Path) -> Path | None:
     if symlink_component(path):
         raise ConfigError("CONFIG_INVALID", "binding_catalog_path содержит symlink.")
     return path
+
+
+def parse_source_context_path(raw: object, base: Path) -> Path | None:
+    try:
+        return parse_binding_catalog_path(raw, base)
+    except ConfigError as exc:
+        raise ConfigError("CONFIG_INVALID", "Некорректный source_context_path.") from exc

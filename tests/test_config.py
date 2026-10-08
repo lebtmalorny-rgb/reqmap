@@ -21,6 +21,11 @@ BASE_CONFIG = {
 }
 
 
+def test_source_context_path_is_operator_config(tmp_path):
+    config = load_config(write_config(tmp_path, {**BASE_CONFIG, "source_context_path": "review/map.json"}), {})
+    assert config.source_context_path == tmp_path / "review/map.json"
+
+
 def write_config(tmp_path: Path, value: object) -> Path:
     path = tmp_path / "config.yaml"
     path.write_text(json.dumps(value), encoding="utf-8")

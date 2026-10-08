@@ -70,3 +70,21 @@ class SourceContextMap:
     input_profile_sha256: str | None
     requirements_sha256: str
     rows: tuple[SourceContextEntry, ...]
+
+
+@dataclass(frozen=True)
+class ContextTrust:
+    profile: str
+    namespace: str | None
+    signer_identity: str | None
+    signature_sha256: str | None
+    allowed_signers_sha256: str | None
+
+
+@dataclass(frozen=True)
+class LoadedSourceContext:
+    map_bytes: bytes | None
+    signature_bytes: bytes | None
+    map_sha256: str | None
+    mapping: SourceContextMap | None
+    trust: ContextTrust
