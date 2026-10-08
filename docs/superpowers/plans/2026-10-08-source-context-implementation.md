@@ -413,9 +413,9 @@ create `tests/test_source_context_exports.py`; modify `tests/test_binding_export
   resolver digests, contract, trust metadata, diagnostic codes. В result.json
   остаётся весь frozen snapshot; в XLSX сохраняются 5/7 листов. Использовать
   существующее безопасное дробление длинных ячеек и plain-text запись.
-- [ ] GREEN: автоматические проверки прошли (134 tests); осталось ручное открытие:
-  повторить RED-команду и перечисленные Files tests;
-  программно проверить exact quotes и вручную открыть синтетический XLSX/Markdown.
+- [x] GREEN: автоматические проверки прошли (134 tests), включая exact quotes.
+  Ручное открытие синтетического XLSX/Markdown пропущено по прямому решению
+  пользователя 08.10.2026 («пропускаем ручную проверку»); это не результат PASS.
 - [x] Commit: `feat: expose and crosscheck source context in every report`.
 
 ### Task 7: Приёмка, установленный пакет и отдельный живой eval
@@ -484,8 +484,9 @@ Subagent-driven с отдельными implementer/reviewer на каждую �
 ## Исполнение 08.10.2026
 
 Пользователь выбрал inline-исполнение («давай дальше»). Tasks1–5 реализованы и
-проверены; Task6 реализован, 134 automated export/crosscheck tests проходят,
-ручной GUI gate остаётся открытым из-за ошибок CUA. Task7: frozen15-row eval,
+проверены; Task6 закрыт в согласованном объёме, 134 automated export/crosscheck
+tests проходят. Ручная проверка XLSX/Markdown пропущена по решению пользователя
+08.10.2026 и больше не блокирует приёмку. Task7: frozen15-row eval,
 installed/scripted приёмка и документация подготовлены; результаты полного suite
 и независимого review фиксируются в [отчёте](../../acceptance/2026-10-08-source-context-runtime.md).
 Живой IDE/model eval отдельно не выполнен, весь этап не объявляется завершённым.
