@@ -262,8 +262,8 @@ class DeepRunResult:
 
     def __post_init__(self) -> None:
         _safe_identifier(self.run_id, "run_id")
-        if self.schema_version not in {"2.0", "2.1"}:
-            raise ValueError("schema_version must be 2.0 or 2.1")
+        if self.schema_version not in {"2.0", "2.1", "2.2"}:
+            raise ValueError("schema_version must be 2.0, 2.1 or 2.2")
         _required_text(self.run_status, "run_status")
         _tuple_of(self.requirements, DeepRequirementResult, "requirements")
         _tuple_of(self.groups, DeepGroupResult, "groups")

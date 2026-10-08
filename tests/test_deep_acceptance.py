@@ -8,7 +8,7 @@ def test_deep_acceptance_is_traceable_cross_artifact_and_offline(tmp_path) -> No
     assert Path("tests/fixtures/deep_gold.json").is_file(), "deep acceptance fixtures missing"
     from tests.deep_acceptance_support import run_gold, assert_artifacts
     cases, result, output, requests = run_gold(tmp_path)
-    assert result["schema_version"] == "2.1"
+    assert result["schema_version"] == "2.2"
     assert result["run_status"] == "PARTIAL"
     assert_artifacts(output, result)
     assert len(result["requirements"]) == len(cases)

@@ -2,12 +2,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from reqmap.source_context_models import SourceContextDecision, SourceContextSnapshot, SourceFragmentRef
+    from reqmap.config import KnowledgeTrustConfig
 
 from reqmap.models import EvidencePolarity, SourceCoordinate, SupportStatus
 
 
-BINDING_ENGINE_VERSION = "1.1"
+BINDING_ENGINE_VERSION = "2.0"
 PROPOSAL_SCHEMA_VERSION = 2
 
 
@@ -75,7 +79,8 @@ class SourceBinding:
     unresolved_fragments: tuple[SourceSpan, ...]
     grammar_version: str
     grammar_sha256: str
-    contract_version: str = "1.0"
+    contract_version: str = "2.0"
+    context_decision: SourceContextDecision | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +92,7 @@ class BindingDiagnostic:
     field: str
     source_spans: tuple[SourceSpan, ...]
     evidence_ids: tuple[str, ...] = ()
+    source_refs: tuple[SourceFragmentRef, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -100,6 +106,8 @@ class BindingDecision:
     uncovered: tuple[SourceSpan, ...]
     catalog_sha256: str | None
     engine_version: str = BINDING_ENGINE_VERSION
+    uncovered_context_refs: tuple[SourceFragmentRef, ...] = ()
+    context_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -147,3 +155,5 @@ class BindingContext:
     source_binding: SourceBinding
     catalog: BindingCatalog | None
     engine_version: str = BINDING_ENGINE_VERSION
+    source_context: SourceContextSnapshot | None = None
+    source_context_trust: KnowledgeTrustConfig | None = None

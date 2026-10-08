@@ -55,7 +55,10 @@ def _reply(raw) -> ToolReply:
 
 
 def _seed_json(seed: SessionSeed) -> str:
-    return _json(dict(settings=to_dict(seed.settings), clarifications=list(seed.clarifications),
+    from reqmap.source_context_codec import encode_source_context_snapshot
+    extra = {} if seed.seed_version is None else dict(seed_version=seed.seed_version,
+        source_context=encode_source_context_snapshot(seed.source_context) if seed.source_context is not None else seed.source_context_record)
+    return _json(dict(**extra, settings=to_dict(seed.settings), clarifications=list(seed.clarifications),
         parent_session_id=seed.parent_session_id, reported_client=seed.reported_client,
         input=dict(source_kind=seed.input_snapshot.source_kind, source_name=seed.input_snapshot.source_name,
                    input_sha256=seed.input_snapshot.input_sha256, content=base64.b64encode(seed.input_snapshot.content).decode('ascii'))))
@@ -63,13 +66,16 @@ def _seed_json(seed: SessionSeed) -> str:
 
 def _seed(raw: str) -> SessionSeed:
     obj = strict_json_object(raw)
-    if set(obj) != {'settings','clarifications','parent_session_id','reported_client','input'}:
+    version = obj.get('seed_version')
+    old_fields = {'settings','clarifications','parent_session_id','reported_client','input'}
+    if (version is None and set(obj) != old_fields) or (version is not None and
+            (type(version) is not int or version != 2 or set(obj) != old_fields | {'seed_version','source_context'})):
         raise ValueError('invalid seed')
     settings = dict(obj['settings'])
     settings['analysis_profile'] = AnalysisProfile(settings['analysis_profile'])
     settings['input_profile'] = parse_input_profile(settings['input_profile']) if settings['input_profile'] is not None else None
     settings = SessionSettings(**settings)
-    if (settings.tool_contract_version, settings.workflow_version) not in (('1.0', '1.0'), ('2.0', '2.0')):
+    if (settings.tool_contract_version, settings.workflow_version) not in (('1.0', '1.0'), ('2.0', '2.0'), ('3.0', '3.0')):
         raise ValueError('unsupported session workflow')
     value = obj['input']
     if set(value) != {'source_kind','source_name','input_sha256','content'}:
@@ -92,8 +98,23 @@ def _seed(raw: str) -> SessionSeed:
         raise ValueError('invalid source kind')
     if not requirements:
         raise ValueError('empty session')
+    frozen = None
+    frozen_record = obj.get('source_context')
+    if version == 2:
+        if type(frozen_record) is not dict:
+            raise ValueError('missing context snapshot')
+        # Historical finalized reads must not execute a different resolver.
+        from reqmap.source_context import source_context_resolver_sha256
+        if settings.resolver_version == '1.0' and settings.resolver_sha256 == source_context_resolver_sha256():
+            from reqmap.source_context_codec import inspect_source_context_record
+            frozen = inspect_source_context_record(frozen_record)
+            if (frozen.document.content != content or frozen.document.requirements != requirements
+                    or frozen.document.source_kind != kind or frozen.document.source_name != name
+                    or frozen.document.input_sha256 != value['input_sha256']):
+                raise ValueError('seed input differs from context document')
     return SessionSeed(InputSnapshot(kind, name, content, value['input_sha256'], requirements),
-                       settings, tuple(obj['clarifications']), obj['parent_session_id'], obj['reported_client'])
+                       settings, tuple(obj['clarifications']), obj['parent_session_id'], obj['reported_client'],
+                       frozen, frozen_record if frozen is None else None, version)
 
 
 class SessionStore:

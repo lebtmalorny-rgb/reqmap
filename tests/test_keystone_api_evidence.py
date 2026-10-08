@@ -58,7 +58,7 @@ def submit(package, case, text=None, *, predicate=True):
     atom, = canonical_atoms(binding)
     return accept_mapping(atom, retrieve(kb, binding.source_text, (), 8), kb,
         proposal_for(kb, atom, case, predicate=predicate),
-        binding_context=BindingContext(binding, catalog))
+        binding_context=reviewed_context(binding, catalog))
 
 
 @pytest.mark.parametrize('case', CASES, ids=lambda c: c[0])
@@ -143,7 +143,7 @@ def test_identity_scope_is_never_inferred_from_generic_accounts(package, text):
     kb, catalog = package
     atom, = canonical_atoms(binding)
     result = accept_mapping(atom, retrieve(kb, CASES[0][3], (), 8), kb,
-        proposal_for(kb, atom, CASES[0]), binding_context=BindingContext(binding, catalog))
+        proposal_for(kb, atom, CASES[0]), binding_context=reviewed_context(binding, catalog))
     assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
     assert result.supported_aspects == ()
 
@@ -170,9 +170,11 @@ def test_identity_mcp_preserves_repeated_occurrences_and_exports(package, tmp_pa
     from tests.agent_support import make_agent_config
     kb, _ = package
     config = replace(make_agent_config(tmp_path), binding_catalog_path=CATALOG.absolute())
-    service = AgentService(config)
     texts = [c[3] for c in CASES] + [CASES[0][3] + ' в Active Directory по LDAPS',
                                    CASES[0][3] + '; ' + CASES[0][3]]
+    from tests.source_context_support import with_reviewed_texts
+    config = with_reviewed_texts(config, texts)
+    service = AgentService(config)
     started = service.call('reqmap_start_session', dict(request_id='start', source=dict(kind='texts', texts=texts)))
     assert started.ok, started.error
     sid, revision = started.data['session_id'], 0
@@ -207,3 +209,5 @@ def test_identity_mcp_preserves_repeated_occurrences_and_exports(package, tmp_pa
     assert [r['atom']['source_quote'] for r in repeated] == [CASES[0][3]] * 2
     assert repeated[0]['atom']['atom_id'] != repeated[1]['atom']['atom_id']
     assert repeated[1]['atom']['source_spans'][0]['start'] == len(CASES[0][3]) + 2
+
+from tests.source_context_support import reviewed_context

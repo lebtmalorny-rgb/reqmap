@@ -65,7 +65,8 @@ def binding_case(kb, catalog, proposal, text="Nova должна создават
     from tests.factories import requirement
     binding = bind_source(replace(requirement(), text=text))
     atom = canonical_atoms(binding)[0]
-    return atom, BindingContext(binding, catalog), {
+    from tests.source_context_support import reviewed_context
+    return atom, reviewed_context(binding, catalog), {
         **proposal, "proposal_schema_version": 2, "obligation_id": atom.obligation_id,
         "predicate_ids": list(catalog.predicates),
     }

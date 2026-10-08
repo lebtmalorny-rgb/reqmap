@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 import base64
 import binascii
 import hashlib
@@ -213,6 +214,21 @@ def _document_record(raw):
 
 
 def inspect_source_context_record(raw: object) -> SourceContextSnapshot:
+    from reqmap.export_json import canonical_json_bytes
+    from reqmap.source_context import source_context_resolver_sha256
+    try:
+        return _inspect_context_cached(canonical_json_bytes(raw), source_context_resolver_sha256())
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Некорректный snapshot контекста.") from exc
+
+
+@lru_cache(maxsize=4)
+def _inspect_context_cached(payload: bytes, resolver_digest: str) -> SourceContextSnapshot:
+    raw = json.loads(payload)
+    return _inspect_context_uncached(raw, resolver_digest)
+
+
+def _inspect_context_uncached(raw: object, resolver_digest: str) -> SourceContextSnapshot:
     """Prove frozen integrity only. This does not authorize an active deep run."""
     from reqmap.export_json import canonical_json_bytes
     from reqmap.source_context import freeze_source_context, source_context_resolver_sha256
@@ -224,7 +240,7 @@ def inspect_source_context_record(raw: object) -> SourceContextSnapshot:
             if type(decision) is not dict:
                 raise ValueError("invalid decision")
             if (decision.get("resolver_version") != SOURCE_CONTEXT_RESOLVER_VERSION
-                    or decision.get("resolver_sha256") != source_context_resolver_sha256()):
+                    or decision.get("resolver_sha256") != resolver_digest):
                 raise ReqmapError("SOURCE_CONTEXT_CONTRACT_MISMATCH", "Версия или код resolver изменены; начните новый анализ.")
         document = _document_record(raw["document"])
         value = raw["loaded"]
@@ -278,6 +294,21 @@ def decode_source_context_snapshot(raw: object, *, profile: AnalysisProfile,
 
 def validate_source_context_snapshot(snapshot: SourceContextSnapshot, *, profile: AnalysisProfile,
                                      trust: KnowledgeTrustConfig | None) -> None:
-    restored = decode_source_context_snapshot(encode_source_context_snapshot(snapshot), profile=profile, trust=trust)
-    if restored != snapshot:
+    from reqmap.source_context import source_context_resolver_sha256, verify_source_context_signature
+    try:
+        _validate_context_integrity(snapshot, source_context_resolver_sha256())
+    except (ValueError, TypeError) as exc:
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Snapshot контекста изменён.") from exc
+    if snapshot.loaded.trust.profile != profile.value:
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Контекст относится к другому профилю.")
+    if profile is AnalysisProfile.DEEP and snapshot.loaded.map_bytes is not None:
+        current = verify_source_context_signature(snapshot.loaded.map_bytes, snapshot.loaded.signature_bytes, trust)
+        if current.signer_identity != snapshot.loaded.trust.signer_identity:
+            raise ReqmapError("SOURCE_CONTEXT_UNTRUSTED", "Identity подписанта карты изменена.")
+
+
+@lru_cache(maxsize=4)
+def _validate_context_integrity(snapshot, resolver_digest):
+    # Only deeply immutable snapshots are hashable. Current trust is never cached.
+    if inspect_source_context_record(encode_source_context_snapshot(snapshot)) != snapshot:
         raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Snapshot контекста изменён.")

@@ -7,7 +7,7 @@ from reqmap.errors import ReqmapError
 from reqmap.proposals import ProposalError
 
 
-def replay_session(record: SessionRecord, knowledge: VerifiedKnowledge) -> SessionView:
+def replay_session(record: SessionRecord, knowledge: VerifiedKnowledge, *, source_context_trust=None) -> SessionView:
     if record.seed.settings.knowledge_sha256 != knowledge.knowledge_sha256:
         raise ReqmapError('KNOWLEDGE_CHANGED', 'Snapshot изменился; требуется новая сессия.')
     require_session_contract(record.seed.settings, knowledge)
@@ -26,10 +26,10 @@ def replay_session(record: SessionRecord, knowledge: VerifiedKnowledge) -> Sessi
                 atoms[rid] = accept_decomposition(by_id[rid], args['proposal'])
             elif event.operation == 'reqmap_submit_mapping':
                 from reqmap.agent_context import accept_context_mapping
-                view = SessionView(record,requirements,atoms,mappings)
+                view = SessionView(record,requirements,atoms,mappings,source_context_trust)
                 mappings[args['atom_id']] = accept_context_mapping(view,knowledge,args)
             elif event.operation != 'reqmap_finalize':
                 raise ValueError('Unknown accepted event')
     except (KeyError, TypeError, ValueError, ProposalError) as exc:
         raise ReqmapError('SESSION_CORRUPT', 'Сохранённые предложения не проходят повторную проверку.') from exc
-    return SessionView(record, requirements, atoms, mappings)
+    return SessionView(record, requirements, atoms, mappings, source_context_trust)

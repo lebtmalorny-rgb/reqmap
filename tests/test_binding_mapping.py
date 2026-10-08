@@ -24,7 +24,7 @@ def setup_binding(request, tmp_path, kb):
     return deep, load_binding_catalog(root, deep, signers), deep_mapping_response()
 
 
-def submit(setup, text, *, context=True, catalog=True, proposal_changes=None):
+def submit(setup, text, *, context=True, catalog=True, proposal_changes=None, reviewed=True):
     from reqmap.knowledge import KnowledgeBase
     from reqmap.mapping import accept_mapping
     from reqmap.deep_mapping import accept_deep_mapping
@@ -34,7 +34,10 @@ def submit(setup, text, *, context=True, catalog=True, proposal_changes=None):
     proposal = {**proposal, "proposal_schema_version": 2, "obligation_id": atom.obligation_id,
                 "predicate_ids": list(predicates.predicates) if catalog else []}
     proposal.update(proposal_changes or {})
-    kwargs = {"binding_context": BindingContext(binding, predicates if catalog else None)} if context else {}
+    from tests.source_context_support import reviewed_context
+    value = reviewed_context(binding, predicates) if reviewed else BindingContext(binding, predicates)
+    if not catalog: value = replace(value, catalog=None)
+    kwargs = {"binding_context": value} if context else {}
     if type(knowledge) is KnowledgeBase:
         result = accept_mapping(atom, retrieve(knowledge, text, (), 8), knowledge, proposal, **kwargs)
         records = result.mappings
@@ -176,7 +179,7 @@ def test_loaded_legacy_catalog_conflict_cannot_be_hidden(tmp_path, kb, hide_evid
     assert 'E-NEG' in next(d.evidence_ids for d in result.binding_decision.diagnostics if d.code=='EVIDENCE_CONFLICT')
     from reqmap.binding_runtime import validate_persisted_binding
     source=bind_source(replace(requirement(),text='Nova должна создавать ВМ через API'))
-    validate_persisted_binding(result,BindingContext(source,catalog),knowledge,result.mappings,SupportStatus.SUPPORTED)
+    validate_persisted_binding(result,reviewed_context(source,catalog),knowledge,result.mappings,SupportStatus.SUPPORTED)
 
 
 def test_assumptions_do_not_cover_metric_in_either_public_acceptor(setup_binding):
@@ -187,3 +190,5 @@ def test_assumptions_do_not_cover_metric_in_either_public_acceptor(setup_binding
     catalog=replace(catalog,predicates=MappingProxyType({p.predicate_id:p}))
     result,_=submit((knowledge,catalog,raw),'Nova должна создавать ВМ через API за одну миллисекунду')
     assert result.support_status is SupportStatus.INSUFFICIENT_EVIDENCE
+
+from tests.source_context_support import reviewed_context

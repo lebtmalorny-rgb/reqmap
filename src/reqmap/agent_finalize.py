@@ -41,8 +41,8 @@ def build_agent_run(view: SessionView, knowledge: VerifiedKnowledge) -> RunResul
     for req in view.requirements:
         atoms = view.atoms_by_requirement.get(req.requirement_id, ())
         if not atoms:
-            rows.append(DeepRequirementResult(req,AnalysisState.SKIPPED,None,(),(),(),_SKIPPED,source_binding=requirement_context(req,knowledge.binding_catalog).source_binding) if deep else
-                        RequirementResult(req,AnalysisState.SKIPPED,None,(),(),_SKIPPED,source_binding=requirement_context(req,knowledge.binding_catalog).source_binding))
+            rows.append(DeepRequirementResult(req,AnalysisState.SKIPPED,None,(),(),(),_SKIPPED,source_binding=requirement_context(req,knowledge.binding_catalog,record.seed.source_context).source_binding) if deep else
+                        RequirementResult(req,AnalysisState.SKIPPED,None,(),(),_SKIPPED,source_binding=requirement_context(req,knowledge.binding_catalog,record.seed.source_context).source_binding))
             continue
         if deep:
             outcomes = tuple(view.mappings_by_atom.get(a.atom_id,DeepMappingOutcome(DeepAtomResult(a,AnalysisState.SKIPPED,None,(),diagnostics=_SKIPPED),(),())) for a in atoms)
@@ -54,8 +54,10 @@ def build_agent_run(view: SessionView, knowledge: VerifiedKnowledge) -> RunResul
         else:
             outcomes = tuple(view.mappings_by_atom.get(a.atom_id,AtomResult(a,AnalysisState.SKIPPED,None,(),diagnostics=_SKIPPED)) for a in atoms)
             rows.append(aggregate_requirement(req,outcomes))
+    rows = [replace(row, source_binding=requirement_context(row.requirement, knowledge.binding_catalog, record.seed.source_context).source_binding) for row in rows]
     rows, records, graphs = tuple(rows), tuple(records), tuple(graphs)
-    metadata = dict(reqmap_version=__version__, model='external-agent',seed=None,top_k=record.seed.settings.top_k,
+    from reqmap.source_context_codec import encode_source_context_snapshot
+    metadata = dict(source_context=encode_source_context_snapshot(record.seed.source_context), reqmap_version=__version__, model='external-agent',seed=None,top_k=record.seed.settings.top_k,
         input_sha256=record.seed.input_snapshot.input_sha256,
         analysis_origin=build_analysis_origin(record,record.revision+int(record.status == 'active')),
         prompt_versions=dict(decomposition=PROMPT_DECOMPOSITION_VERSION),
@@ -65,12 +67,12 @@ def build_agent_run(view: SessionView, knowledge: VerifiedKnowledge) -> RunResul
     if not deep:
         metadata.update(knowledge_sha256=knowledge.knowledge_sha256)
         metadata['prompt_versions']['mapping'] = PROMPT_MAPPING_VERSION
-        return RunResult(run_id,'1.1',run_status(rows,preflight_ok=True),rows,aggregate_groups(rows),collect_cited_evidence(rows,kb),metadata,diagnostics)
+        return RunResult(run_id,'1.2',run_status(rows,preflight_ok=True),rows,aggregate_groups(rows),collect_cited_evidence(rows,kb),metadata,diagnostics)
     metadata.update(analysis_profile='deep',snapshot_id=kb.snapshot_id,manifest_sha256=kb.trust.manifest_sha256,
         key_id=kb.trust.key_id,signer_identity=kb.trust.signer_identity,retry_counts=dict(decomposition=0,deep_mapping=0),
         release_profile=dict(source_release=kb.base_release,target_release='2026.1' if any(r.lifecycle_phase is LifecyclePhase.UPGRADE and r.version_scope.target_release == '2026.1' for r in records) else '2025.1',kolla_ansible_release=kb.kolla_ansible_release,host_profile=kb.host_profile))
     metadata['prompt_versions']['deep_mapping'] = PROMPT_DEEP_MAPPING_VERSION
-    return DeepRunResult(run_id,'2.1',deep_run_status(rows,True),rows,aggregate_deep_groups(rows,records),records,graphs,cited_deep_evidence(records,graphs,kb),metadata,diagnostics)
+    return DeepRunResult(run_id,'2.2',deep_run_status(rows,True),rows,aggregate_deep_groups(rows,records),records,graphs,cited_deep_evidence(records,graphs,kb),metadata,diagnostics)
 
 
 def _hashes(directory):
@@ -189,7 +191,7 @@ def get_result(store, config, args, page_size):
         if offset > len(rows):
             raise ReqmapError('CURSOR_INVALID','Cursor вне диапазона.')
         page = rows[offset:offset+page_size]
-        data.update(historical=payload['schema_version'] in ('1.0','2.0'),schema_version=payload['schema_version'],run_status=manifest['run_status'],requirements_count=len(rows),requirements=page,
+        data.update(historical=payload['schema_version'] not in ('1.2','2.2') or any(payload.get('metadata',{}).get('binding_contract',{}).get(key) != value for key,value in binding_contract(record.seed.settings.analysis_profile).items() if key not in ('binding_catalog_sha256','binding_catalog_schema_version')),schema_version=payload['schema_version'],run_status=manifest['run_status'],requirements_count=len(rows),requirements=page,
             artifacts={name:str(directory/name) for name in ARTIFACTS},
             next_cursor=page_cursor(record.session_id,record.revision,'result',offset+len(page)) if offset+len(page)<len(rows) else None)
         return ToolReply(True,data)

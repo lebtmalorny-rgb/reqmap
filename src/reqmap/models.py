@@ -204,6 +204,7 @@ class AnalysisRequest:
     input_kind: str
     source_path: Path | None
     output_dir: Path
+    source_document: "SourceDocumentSnapshot | None" = None
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,9 @@
 """Versioned local-agent records; no transport or model execution."""
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, TYPE_CHECKING
+if TYPE_CHECKING:
+    from reqmap.source_context_models import SourceContextSnapshot
+    from reqmap.config import KnowledgeTrustConfig
 from reqmap.agent_input import InputSnapshot
 from reqmap.config import AnalysisProfile, InputProfile
 
@@ -39,6 +42,9 @@ class SessionSettings:
     binding_catalog_schema_version: int | None = None
     proposal_schema_version: int | None = None
     result_schema_version: str | None = None
+    source_context_version: str | None = None
+    resolver_version: str | None = None
+    resolver_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +54,9 @@ class SessionSeed:
     clarifications: tuple[str, ...]
     parent_session_id: str | None
     reported_client: str
+    source_context: 'SourceContextSnapshot | None' = None
+    source_context_record: dict | None = None
+    seed_version: int | None = None
 
 
 @dataclass(frozen=True)
@@ -91,3 +100,4 @@ class SessionView:
     requirements: tuple['Requirement', ...]
     atoms_by_requirement: dict[str, tuple['AtomicClaim', ...]]
     mappings_by_atom: dict[str, 'AtomResult | DeepMappingOutcome']
+    source_context_trust: 'KnowledgeTrustConfig | None' = None

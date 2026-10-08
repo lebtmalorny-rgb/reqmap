@@ -213,6 +213,6 @@ def test_decompose_propagates_transport_model_error() -> None:
 
 def test_decomposition_prompt_is_versioned_and_declares_parent_untrusted() -> None:
     """Версия и запрет authority родителя являются контрактом переносимых запусков."""
-    assert PROMPT_DECOMPOSITION_VERSION == "2.0"
+    assert PROMPT_DECOMPOSITION_VERSION == "2.1"
     assert "proposal_schema_version=2" in DECOMPOSITION_PROMPT
     assert "неавторитет" in DECOMPOSITION_PROMPT.lower()

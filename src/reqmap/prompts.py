@@ -1,8 +1,8 @@
 """Версионированные системные инструкции локальной модели."""
 
-PROMPT_DECOMPOSITION_VERSION = "2.0"
-PROMPT_MAPPING_VERSION = "1.3"
-PROMPT_DEEP_MAPPING_VERSION = "2.1"
+PROMPT_DECOMPOSITION_VERSION = "2.1"
+PROMPT_MAPPING_VERSION = "1.4"
+PROMPT_DEEP_MAPPING_VERSION = "2.2"
 
 DECOMPOSITION_PROMPT = """Выбери canonical atoms из полной source_binding без изменения семантики.
 Верни только JSON object с proposal_schema_version=2 и atoms по canonical_proposal.
@@ -79,3 +79,8 @@ backend из исходных обязательств; свободный те�
 """
 MAPPING_PROMPT += _BINDING_INSTRUCTION
 DEEP_MAPPING_PROMPT += _BINDING_INSTRUCTION
+
+SOURCE_CONTEXT_RULE = "\nИспользуй effective obligation и context_decision, сохраняя собственную цитату. Контекст утверждает сопровождающий; модель не может снять условие, утвердить карту или заменить GUI на API. Без independent/linked результат insufficient_evidence.\n"
+DECOMPOSITION_PROMPT += SOURCE_CONTEXT_RULE
+MAPPING_PROMPT += SOURCE_CONTEXT_RULE
+DEEP_MAPPING_PROMPT += SOURCE_CONTEXT_RULE

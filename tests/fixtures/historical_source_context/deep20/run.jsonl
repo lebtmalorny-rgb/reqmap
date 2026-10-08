@@ -1,0 +1,2 @@
+{"event":"analysis_finished","level":"info","message_ru":"Глубокий предметный анализ требований завершён.","requirements_count":1,"run_status":"FAILED"}
+{"event":"artifacts_verified","level":"info","message_ru":"Deep JSON, XLSX и Markdown согласованы с canonical DeepRunResult."}

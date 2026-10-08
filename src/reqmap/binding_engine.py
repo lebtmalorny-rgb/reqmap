@@ -25,6 +25,7 @@ _FIELDS = {
     "release_scope": "EVIDENCE_VERSION_MISMATCH",
 }
 _MESSAGES = {
+    "SOURCE_CONTEXT_UNREVIEWED": "Независимость или полный внешний контекст строки не проверены.",
     "SOURCE_UNPARSED": "Исходное обязательство не распознано целиком.",
     "SOURCE_AMBIGUOUS": "Исходное обязательство допускает неоднозначный разбор.",
     "SOURCE_CONTEXT_REQUIRED": "Нет проверенной связи с полной исходной строкой.",
@@ -147,12 +148,24 @@ def context_obligation(atom, context, kb):
         _fail("SOURCE_CONTEXT_REQUIRED")
     binding = context.source_binding
     canonical = bind_source(Requirement(binding.requirement_id, "", binding.source_text, 1, binding.coordinate))
-    if canonical != binding or atom not in canonical_atoms(canonical):
+    if canonical != replace(binding, context_decision=None) or atom not in canonical_atoms(canonical):
         _fail("SOURCE_SPAN_INVALID")
     if context.catalog is not None:
         from reqmap.binding_catalog import knowledge_digest
         if context.catalog.knowledge_sha256 != knowledge_digest(kb):
             _fail("BINDING_KNOWLEDGE_MISMATCH")
+    if context.source_context is not None:
+        from reqmap.source_context_codec import validate_source_context_snapshot
+        from reqmap.config import AnalysisProfile
+        from reqmap.knowledge import KnowledgeBase
+        profile = AnalysisProfile.LEGACY if type(kb) is KnowledgeBase else AnalysisProfile.DEEP
+        validate_source_context_snapshot(context.source_context, profile=profile, trust=context.source_context_trust)
+        decision = next((d for d in context.source_context.decisions if d.target.requirement_id == binding.requirement_id), None)
+        if decision != binding.context_decision or decision is None or decision.target.coordinate != binding.coordinate or decision.target.source_sha256 != binding.source_sha256:
+            _fail("SOURCE_CONTEXT_CHANGED")
+        return next(e.obligation for e in decision.effective_obligations if e.obligation.obligation_id == atom.obligation_id)
+    if binding.context_decision is not None:
+        _fail("SOURCE_CONTEXT_CHANGED")
     return next(o for o in binding.obligations if o.obligation_id == atom.obligation_id)
 
 
@@ -224,6 +237,27 @@ def mapping_decision(atom, context, kb, predicate_ids, prior_status, records):
         from types import MappingProxyType
         catalog = replace(catalog, predicates=MappingProxyType(checked))
     decision = check_binding(obligation, tuple(allowed), catalog, prior_status, evidence_ids)
+    source_decision = None if context is None else context.source_binding.context_decision
+    if source_decision is None or source_decision.state not in ("independent", "linked"):
+        issues = () if source_decision is None else source_decision.diagnostics
+        context_diags = tuple(BindingDiagnostic(issue.code, issue.message_ru, atom.requirement_id,
+            obligation.obligation_id, issue.field or "context", (), (), issue.source_refs) for issue in issues)
+        if not context_diags:
+            context_diags = (diagnostic(obligation, "SOURCE_CONTEXT_UNREVIEWED"),)
+        decision = replace(decision, support_status=_INSUFFICIENT, uncovered=obligation.source_spans,
+                           diagnostics=tuple(dict.fromkeys((*decision.diagnostics, *context_diags))))
+    if source_decision is not None:
+        effective = next(e for e in source_decision.effective_obligations if e.obligation.obligation_id == atom.obligation_id)
+        diagnostics = []
+        for diag in decision.diagnostics:
+            refs = diag.source_refs
+            if diag.field == "interface":
+                refs = effective.interface_refs
+            elif diag.field == "constraints":
+                refs = tuple(dict.fromkeys(ref for c in effective.constraint_refs for ref in c.source_refs))
+            diagnostics.append(replace(diag, source_refs=refs))
+        decision = replace(decision, diagnostics=tuple(diagnostics), context_id=source_decision.context_id,
+                           uncovered_context_refs=tuple(dict.fromkeys(ref for d in diagnostics for ref in d.source_refs)))
     extras = []
     if type(kb) is KnowledgeBase and decision.support_status is _INSUFFICIENT:
         from reqmap.mapping import mapping_text_gaps

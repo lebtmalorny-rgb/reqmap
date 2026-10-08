@@ -8,6 +8,8 @@ from reqmap.models import AnalysisState, SupportStatus, to_dict
 def contract_payload(raw):
     keys = {"binding_engine_version", "grammar_version", "grammar_sha256", "binding_catalog_sha256",
             "binding_catalog_schema_version", "proposal_schema_version", "result_schema_version"}
+    if type(raw) is dict and raw.get("result_schema_version") in {"1.2", "2.2"}:
+        keys |= {"source_context_version", "resolver_version", "resolver_sha256"}
     if type(raw) is not dict or set(raw) != keys:
         raise ValueError("BINDING_CONTRACT_INVALID")
     for key in ("binding_engine_version", "grammar_version", "result_schema_version"):
@@ -24,20 +26,34 @@ def contract_payload(raw):
     if ((raw["binding_catalog_sha256"] is None and schema is not None)
             or (raw["binding_catalog_sha256"] is not None and (type(schema) is not int or schema != 1))):
         raise ValueError("BINDING_CONTRACT_INVALID")
+    if "source_context_version" in raw:
+        if (raw["source_context_version"] != "1.0" or raw["resolver_version"] != "1.0"
+                or type(raw["resolver_sha256"]) is not str or re.fullmatch(r"[0-9a-f]{64}", raw["resolver_sha256"]) is None):
+            raise ValueError("BINDING_CONTRACT_INVALID")
     return dict(raw)
 
 
 def validate_binding_run(run):
-    if run.schema_version not in {"1.1", "2.1"}:
+    if run.schema_version not in {"1.1", "2.1", "1.2", "2.2"}:
         return
     from reqmap.binding_source import canonical_atoms
     from reqmap.binding_codec import decode_source_binding, decode_binding_decision
     contract = contract_payload(run.metadata.get("binding_contract"))
     if contract["result_schema_version"] != run.schema_version:
         raise ValueError("BINDING_RESULT_SCHEMA_MISMATCH")
+    context = None
+    if run.schema_version in {"1.2", "2.2"}:
+        raw = run.metadata.get("source_context")
+        if raw is not None:
+            from reqmap.source_context_codec import inspect_source_context_record
+            context = inspect_source_context_record(raw)
+            if any(d.resolver_sha256 != contract["resolver_sha256"] for d in context.decisions):
+                raise ValueError("SOURCE_CONTEXT_CHANGED")
+        elif any(row.analysis_state is AnalysisState.COMPLETED for row in run.requirements):
+            raise ValueError("SOURCE_CONTEXT_CHANGED: snapshot missing")
     for row in run.requirements:
         binding = row.source_binding
-        if type(binding) is not SourceBinding or decode_source_binding(to_dict(binding), row.requirement) != binding:
+        if type(binding) is not SourceBinding or decode_source_binding(to_dict(binding), row.requirement, context) != binding:
             raise ValueError("SOURCE_BINDING_MISSING")
         if (binding.grammar_version, binding.grammar_sha256) != (contract["grammar_version"], contract["grammar_sha256"]):
             raise ValueError("SOURCE_GRAMMAR_MISMATCH")
@@ -61,6 +77,18 @@ def validate_binding_run(run):
                 raise ValueError("BINDING_DECISION_MISMATCH")
             positive = decision.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}
             proven = positive or decision.support_status is SupportStatus.NOT_SUPPORTED
+            if context is not None:
+                source = binding.context_decision
+                if source is None or decision.context_id != source.context_id:
+                    raise ValueError("SOURCE_CONTEXT_CHANGED")
+                if proven and source.state not in {"independent", "linked"}:
+                    raise ValueError("SOURCE_CONTEXT_UNREVIEWED")
+                valid_refs = {link.origin for link in source.applied_links}
+                for diag in decision.diagnostics:
+                    if any(ref not in valid_refs for ref in diag.source_refs):
+                        raise ValueError("SOURCE_CONTEXT_REF_INVALID")
+                if decision.uncovered_context_refs != tuple(dict.fromkeys(ref for d in decision.diagnostics for ref in d.source_refs)):
+                    raise ValueError("SOURCE_CONTEXT_CHANGED")
             if proven and (obligation.parse_state != "bound" or not decision.predicate_ids or not decision.evidence_ids
                            or decision.catalog_sha256 is None or decision.uncovered):
                 raise ValueError("BINDING_PROOF_MISSING")

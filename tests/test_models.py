@@ -346,7 +346,7 @@ def test_canonical_dataclasses_have_exact_field_order_and_are_frozen() -> None:
             "group_id", "source_requirement_ids", "support_status", "component_ids", "mapping_ids",
             "analysis_states",
         ),
-        AnalysisRequest: ("requirements", "input_sha256", "input_kind", "source_path", "output_dir"),
+        AnalysisRequest: ("requirements", "input_sha256", "input_kind", "source_path", "output_dir", "source_document"),
         PreflightResult: ("ok", "diagnostics", "knowledge_sha256"),
         RunResult: (
             "run_id", "schema_version", "run_status", "requirements", "groups", "evidence", "metadata",

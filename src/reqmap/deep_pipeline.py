@@ -78,13 +78,14 @@ from reqmap.prompts import (
 )
 
 
-SCHEMA_VERSION = "2.1"
+SCHEMA_VERSION = "2.2"
 _SAFE_MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NO_PREFLIGHT_OUTPUT_CODES = frozenset(
     {
         "ANALYSIS_PROFILE_INVALID",
         "CONFIG_INVALID",
+        "SOURCE_CONTEXT_INVALID",
         "INPUT_UNREADABLE",
         "OUTPUT_INPUT_COLLISION",
         "OUTPUT_INVALID",
@@ -132,20 +133,25 @@ def analyze_deep(
     model: JsonModel,
 ) -> DeepRunResult:
     """Analyze requirements with the schema-v2 deep pipeline."""
+    from reqmap.binding_runtime import save_run_context
+    from reqmap.source_context_codec import encode_source_context_snapshot
+    contexts = []
     preflight_result, knowledge = _perform_deep_preflight(
-        config, model, request=request
+        config, model, request=request, contexts=contexts
     )
     if not preflight_result.ok or knowledge is None:
         run = _failed_preflight_run(request, config, preflight_result, knowledge)
         return _finish_failed_preflight(run, request)
 
+    source_context = contexts[0]
     catalog = load_configured_catalog(config, knowledge)
-    signature = _deep_run_signature(request, config, knowledge, catalog=catalog)
+    signature = _deep_run_signature(request, config, knowledge, catalog=catalog, source_context=source_context)
     work_dir = request.output_dir / ".work"
     signature_dir = work_dir / signature
     try:
         ensure_secure_directory(work_dir)
         ensure_secure_directory(signature_dir)
+        save_run_context(signature_dir, source_context)
     except OSError:
         failed = PreflightResult(
             False,
@@ -172,7 +178,7 @@ def analyze_deep(
             requirement,
             knowledge,
             config,
-            catalog=catalog,
+            catalog=catalog, source_context=source_context,
         )
         if resumed is None:
             build = _analyze_deep_requirement(
@@ -182,8 +188,9 @@ def analyze_deep(
                 counted_model,
                 knowledge,
                 expected_initials,
-                catalog=catalog,
+                catalog=catalog, source_context=source_context,
             )
+            build = replace(build, result=replace(build.result, source_binding=requirement_context(requirement, catalog, source_context).source_binding))
             if build.result.analysis_state is AnalysisState.COMPLETED:
                 try:
                     _write_deep_checkpoint(
@@ -202,7 +209,7 @@ def analyze_deep(
                     )
         else:
             build = resumed
-        results.append(build.result)
+        results.append(replace(build.result, source_binding=requirement_context(requirement, catalog, source_context).source_binding))
         all_records.extend(build.records)
         all_graphs.extend(build.graphs)
 
@@ -226,7 +233,7 @@ def analyze_deep(
             knowledge,
             records,
             _retry_counts(counted_model, expected_initials),
-        ), "binding_contract": binding_contract(config.analysis_profile, catalog)},
+        ), "binding_contract": binding_contract(config.analysis_profile, catalog), "source_context": encode_source_context_snapshot(source_context)},
         diagnostics=_ordered_unique(
             message
             for result in requirement_results
@@ -241,6 +248,7 @@ def _perform_deep_preflight(
     config: AppConfig,
     model: JsonModel,
     request: AnalysisRequest | None = None,
+    contexts: list | None = None,
 ) -> tuple[PreflightResult, KnowledgeBaseV2 | None]:
     diagnostics = _deep_config_diagnostics(config)
     if diagnostics:
@@ -271,6 +279,9 @@ def _perform_deep_preflight(
     trust = config.knowledge_trust
     assert trust is not None
     try:
+        if request is not None and contexts is not None:
+            from reqmap.binding_runtime import prepare_run_context
+            contexts.append(prepare_run_context(request, config))
         knowledge = load_knowledge_v2(
             config.knowledge_path,
             trust.allowed_signers_path,
@@ -407,7 +418,7 @@ def _analyze_deep_requirement(
     model: _CountingModel,
     knowledge: KnowledgeBaseV2,
     expected_initials: dict[str, int],
-    *, catalog=None,
+    *, catalog=None, source_context=None,
 ) -> _RequirementBuild:
     expected_initials["decomposition"] += 1
     try:
@@ -457,7 +468,7 @@ def _analyze_deep_requirement(
                 config.top_k,
             )
             expected_initials["deep_mapping"] += 1
-            outcome = map_atom_deep(model, atom, retrieval, knowledge, binding_context=requirement_context(requirement, catalog))
+            outcome = map_atom_deep(model, atom, retrieval, knowledge, binding_context=requirement_context(requirement, catalog, source_context, source_context_trust=config.knowledge_trust))
         except ModelError as exc:
             outcome = _failed_mapping_outcome(
                 atom,
@@ -761,12 +772,13 @@ def _deep_run_signature(
     request: AnalysisRequest,
     config: AppConfig,
     knowledge: KnowledgeBaseV2,
-    *, catalog=None,
+    *, catalog=None, source_context=None,
 ) -> str:
     trust = knowledge.trust
     assert trust is not None
     payload = {
         "binding_contract": binding_contract(config.analysis_profile, catalog),
+        "source_context_ids": None if source_context is None else [d.context_id for d in source_context.decisions],
         "requirements": to_dict(request.requirements),
         "input_sha256": request.input_sha256,
         "manifest_sha256": trust.manifest_sha256,
@@ -814,7 +826,7 @@ def _load_deep_checkpoint(
     requirement: Requirement,
     knowledge: KnowledgeBaseV2,
     config: AppConfig,
-    *, catalog=None,
+    *, catalog=None, source_context=None,
 ) -> _RequirementBuild | None:
     seal_path = _checkpoint_seal_path(path)
     if path.is_symlink():
@@ -858,7 +870,7 @@ def _load_deep_checkpoint(
             return None
         if _string(item["run_signature"]) != signature:
             return None
-        result = _decode_deep_requirement_result(item["requirement"])
+        result = _decode_deep_requirement_result(item["requirement"], source_context)
         records = tuple(
             _decode_responsibility(value)
             for value in _array(item["responsibility_records"])
@@ -877,7 +889,7 @@ def _load_deep_checkpoint(
         if result.analysis_state is not AnalysisState.COMPLETED:
             return None
         validate_deep_graph(_checkpoint_validation_run(build, request))
-        _validate_checkpoint_kb(build, knowledge, config, catalog=catalog)
+        _validate_checkpoint_kb(build, knowledge, config, catalog=catalog, source_context=source_context)
     except (
         KeyError,
         OSError,
@@ -930,7 +942,7 @@ def _validate_checkpoint_kb(
     build: _RequirementBuild,
     knowledge: KnowledgeBaseV2,
     config: AppConfig,
-    *, catalog=None,
+    *, catalog=None, source_context=None,
 ) -> None:
     if build.evidence != cited_deep_evidence(
         build.records, build.graphs, knowledge
@@ -973,7 +985,7 @@ def _validate_checkpoint_kb(
             records_by_id[record_id]
             for record_id in atom_result.responsibility_ids
         )
-        context = requirement_context(build.result.requirement, catalog)
+        context = requirement_context(build.result.requirement, catalog, source_context, source_context_trust=config.knowledge_trust)
         from reqmap.binding_source import canonical_atoms
         from reqmap.binding_engine import mapping_decision, apply_record_decision
         if tuple(item.atom for item in build.result.atom_results) != canonical_atoms(context.source_binding):
@@ -1003,7 +1015,7 @@ def _validate_checkpoint_kb(
     if (
         procedure.graphs != build.graphs
         or expected_records != build.records
-        or expected_result != build.result
+        or replace(expected_result, source_binding=build.result.source_binding) != build.result
     ):
         raise ValueError(
             "checkpoint procedure closure differs from deterministic recomputation"
@@ -1015,7 +1027,7 @@ def _validate_checkpoint_kb(
             raise ValueError("checkpoint procedure graph is invalid")
 
 
-def _decode_deep_requirement_result(raw: object) -> DeepRequirementResult:
+def _decode_deep_requirement_result(raw: object, source_context=None) -> DeepRequirementResult:
     item = _exact_object(
         raw,
         {
@@ -1040,7 +1052,7 @@ def _decode_deep_requirement_result(raw: object) -> DeepRequirementResult:
         responsibility_ids=_strings(item["responsibility_ids"]),
         procedure_graph_ids=_strings(item["procedure_graph_ids"]),
         diagnostics=_strings(item["diagnostics"]),
-        source_binding=decode_source_binding(item.get("source_binding"), _decode_requirement(item["requirement"])),
+        source_binding=decode_source_binding(item.get("source_binding"), _decode_requirement(item["requirement"]), source_context),
     )
 
 

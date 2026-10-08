@@ -132,26 +132,16 @@ def config_for(
     )
 
 
-def request_for(tmp_path: Path, count: int = 1) -> AnalysisRequest:
+def request_for(tmp_path: Path, count: int = 1, *, text: str | None = None) -> AnalysisRequest:
     texts = (
         "Nova должна создавать ВМ через API",
         "Nova должна обеспечивать создание ВМ через API",
     )
-    requirements = tuple(
-        replace(
-            requirement(ordinal=index, requirement_id=f"REQ-{index:04d}"),
-            text=texts[index - 1],
-            source_id=f"source-{index}",
-        )
-        for index in range(1, count + 1)
-    )
-    return AnalysisRequest(
-        requirements=requirements,
-        input_sha256="a" * 64,
-        input_kind="text",
-        source_path=None,
-        output_dir=tmp_path / "result",
-    )
+    from tests.source_context_support import text_document
+    from reqmap.source_context import capture_source_document
+    document = capture_source_document(**text_document((text,) if text is not None else texts[:count]))
+    return AnalysisRequest(document.requirements, document.input_sha256, "text", None,
+                           tmp_path / "result", source_document=document)
 
 
 def test_preflight_validates_snapshot_and_model() -> None:
@@ -421,8 +411,7 @@ def test_completed_requirement_resumes_without_subject_model_call(
 ) -> None:
     request = request_for(tmp_path)
     source_text = "Nova должна создавать виртуальную машину через API"
-    source = replace(request.requirements[0], text=source_text)
-    request = replace(request, requirements=(source,))
+    request = request_for(tmp_path, text=source_text)
     first_model = FakeModel(
         (
             valid_decomposition(source_text),
@@ -445,7 +434,7 @@ def test_completed_requirement_resumes_without_subject_model_call(
     assert len(checkpoints) == 1
     checkpoint = checkpoints[0]
     payload = json.loads(checkpoint.read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "1.1"
+    assert payload["schema_version"] == "1.2"
     assert payload["run_signature"] == checkpoint.parent.name
     assert stat.S_IMODE(checkpoint.stat().st_mode) == 0o600
     assert stat.S_IMODE(checkpoint.parent.stat().st_mode) == 0o700
@@ -481,10 +470,7 @@ def test_resume_rejects_forged_mapping_component_against_knowledge(
 ) -> None:
     request = request_for(tmp_path)
     source_text = "Nova должна создавать виртуальную машину через API"
-    request = replace(
-        request,
-        requirements=(replace(request.requirements[0], text=source_text),),
-    )
+    request = request_for(tmp_path, text=source_text)
     first_model = FakeModel(
         (valid_decomposition(source_text), supported_nova_mapping())
     )

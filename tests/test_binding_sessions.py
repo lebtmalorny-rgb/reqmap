@@ -52,8 +52,11 @@ def test_cli_and_mcp_preserve_uncovered_condition(tmp_path, profile):
         mcp = mcp["atom_result"]
     app_config = replace(config_for(knowledge_path=config.knowledge_path), analysis_profile=profile,
                          knowledge_trust=config.knowledge_trust)
-    req = replace(requirement(), text=TEXT)
-    request = AnalysisRequest((req,), hashlib.sha256(TEXT.encode()).hexdigest(), "text", None, tmp_path/"cli")
+    from tests.source_context_support import text_document
+    from reqmap.source_context import capture_source_document
+    document = capture_source_document(**text_document((TEXT,), "agent-texts"))
+    req = document.requirements[0]
+    request = AnalysisRequest((req,), document.input_sha256, "text", None, tmp_path/"cli", source_document=document)
     class Model:
         def preflight(self): pass
         def complete_json(self, stage, prompt, payload):

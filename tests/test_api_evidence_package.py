@@ -56,7 +56,7 @@ def submit(package, case, text=None, *, predicate=True, evidence_key=None):
         steps=[step('runtime', api_operation=operation, action_ru=claim)]), supported_aspects=(claim,))
     proposal.update(obligation_id=atom.obligation_id, predicate_ids=['P-' + key] if predicate else [])
     candidates = retrieve(kb, binding.source_text, (), 8)
-    return accept_mapping(atom, candidates, kb, proposal, binding_context=BindingContext(binding, catalog))
+    return accept_mapping(atom, candidates, kb, proposal, binding_context=reviewed_context(binding, catalog))
 
 
 def test_api_package_mcp_finalizes_positive_and_contrast_rows(tmp_path, package):
@@ -64,8 +64,10 @@ def test_api_package_mcp_finalizes_positive_and_contrast_rows(tmp_path, package)
     from reqmap.agent_service import AgentService
     from tests.agent_support import make_agent_config
     config = replace(make_agent_config(tmp_path), binding_catalog_path=CATALOG.absolute())
-    service = AgentService(config)
     texts = [c[4] for c in CASES] + [c[4] + ' за одну миллисекунду' for c in CASES]
+    from tests.source_context_support import with_reviewed_texts
+    config = with_reviewed_texts(config, texts)
+    service = AgentService(config)
     started = service.call('reqmap_start_session', dict(request_id='api-start', source=dict(kind='texts', texts=texts)))
     assert started.ok, started.error
     sid, revision = started.data['session_id'], 0
@@ -202,3 +204,5 @@ def test_catalog_maintenance_rebuild_is_deterministic_and_never_marks_reviewed(t
         build_binding_catalog(copied, KB)
     assert (copied/'binding-manifest.json').read_bytes() == data
     assert json.loads((copied/'predicates.jsonl').read_text().splitlines()[0])['review_state'] == 'needs_review'
+
+from tests.source_context_support import reviewed_context

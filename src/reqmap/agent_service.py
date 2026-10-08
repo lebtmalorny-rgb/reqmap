@@ -60,6 +60,9 @@ def validate_reported_model(value):
 
 class AgentService:
     def __init__(self, config: AgentConfig):
+        from reqmap.source_context import source_context_output_diagnostics
+        if source_context_output_diagnostics(config.source_context_path, (config.session_root, config.output_root), config.knowledge_trust):
+            raise ReqmapError('SOURCE_CONTEXT_INVALID', 'Каталоги записи пересекаются с контекстом или trust.')
         self.config = config
         self.store = SessionStore(config.session_root,config.limits.max_response_bytes)
 
@@ -121,23 +124,34 @@ class AgentService:
             if parent is not None:
                 self.store.read(parent)
             snapshot = import_agent_input(args['source'], self.config)
+            from reqmap.source_context import capture_source_document, load_source_context_map, freeze_source_context
+            document = capture_source_document(content=snapshot.content, source_kind=snapshot.source_kind,
+                source_name=snapshot.source_name, requirements=snapshot.requirements,
+                input_profile=self.config.input_profile if snapshot.source_kind == 'xlsx' else None,
+                text_mode='lines' if snapshot.source_kind == 'txt' else None)
+            context = freeze_source_context(document, load_source_context_map(self.config.source_context_path,
+                document, profile=self.config.analysis_profile, trust=self.config.knowledge_trust))
             knowledge = load_agent_knowledge(self.config)
             settings = SessionSettings(self.config.analysis_profile,self.config.top_k,self.config.input_profile,
-                                       knowledge.knowledge_sha256,knowledge.snapshot_id,'2.0','2.0',
+                                       knowledge.knowledge_sha256,knowledge.snapshot_id,'3.0','3.0',
                                        **binding_contract(self.config.analysis_profile, knowledge.binding_catalog))
-            return SessionSeed(snapshot,settings,tuple(clarifications),parent,client)
+            return SessionSeed(snapshot,settings,tuple(clarifications),parent,client,context,seed_version=2)
         return self.store.create(args['request_id'], args, prepare)
 
     def verified_view(self, record):
         settings = record.seed.settings
         require_session_contract(settings)
+        from reqmap.source_context_codec import validate_source_context_snapshot
+        if record.seed.source_context is None:
+            raise ReqmapError('SESSION_CONTRACT_MISMATCH', 'Нет обязательного snapshot контекста.')
+        validate_source_context_snapshot(record.seed.source_context, profile=self.config.analysis_profile, trust=self.config.knowledge_trust)
         if (settings.analysis_profile, settings.top_k, settings.input_profile) != (self.config.analysis_profile,self.config.top_k,self.config.input_profile):
             raise ReqmapError('CONFIG_CHANGED','Профиль/параметры изменены; требуется новая сессия.')
         try:
             knowledge = load_agent_knowledge(self.config)
         except ReqmapError as exc:
             raise ReqmapError('KNOWLEDGE_CHANGED','База знаний больше не проходит проверку.') from exc
-        return replay_session(record, knowledge), knowledge
+        return replay_session(record, knowledge, source_context_trust=self.config.knowledge_trust), knowledge
 
     def _page_size(self, args):
         size = args.get('page_size', self.config.limits.max_page_size)

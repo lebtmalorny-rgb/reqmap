@@ -29,9 +29,9 @@ def atom_candidates(view, atom_id, knowledge):
 def get_atom_context(view: SessionView, atom_id: str, knowledge: VerifiedKnowledge) -> dict[str, object]:
     atom, req, candidates = atom_candidates(view,atom_id,knowledge)
     deep = view.record.seed.settings.analysis_profile is AnalysisProfile.DEEP
-    payload = (prepare_deep_mapping if deep else prepare_mapping)(atom,candidates,knowledge.kb,binding_context=requirement_context(req,knowledge.binding_catalog))
+    payload = (prepare_deep_mapping if deep else prepare_mapping)(atom,candidates,knowledge.kb,binding_context=requirement_context(req,knowledge.binding_catalog,view.record.seed.source_context,source_context_trust=view.source_context_trust))
     signature = dict(session_id=view.record.session_id,atom=to_dict(atom),hints=to_dict(req.source_hints),
-        settings=to_dict(view.record.seed.settings),prompt_version=PROMPT_DEEP_MAPPING_VERSION if deep else PROMPT_MAPPING_VERSION)
+        settings=to_dict(view.record.seed.settings),source_context_id=payload["source_binding"]["context_decision"]["context_id"],prompt_version=PROMPT_DEEP_MAPPING_VERSION if deep else PROMPT_MAPPING_VERSION)
     return dict(session_id=view.record.session_id,revision=view.record.revision,
         context_id=hashlib.sha256(canonical_json_bytes(signature)).hexdigest(),
         rules=DEEP_MAPPING_PROMPT if deep else MAPPING_PROMPT,response_schema=payload['response_schema'],payload=payload)
@@ -43,7 +43,7 @@ def accept_context_mapping(view: SessionView, knowledge: VerifiedKnowledge, argu
         raise ReqmapError('CONTEXT_MISMATCH','Контекст не соответствует текущему атому и snapshot.')
     atom, req, retrieval = atom_candidates(view,arguments['atom_id'],knowledge)
     accept = accept_deep_mapping if view.record.seed.settings.analysis_profile is AnalysisProfile.DEEP else accept_mapping
-    return accept(atom,retrieval,knowledge.kb,arguments['proposal'],binding_context=requirement_context(req,knowledge.binding_catalog))
+    return accept(atom,retrieval,knowledge.kb,arguments['proposal'],binding_context=requirement_context(req,knowledge.binding_catalog,view.record.seed.source_context,source_context_trust=view.source_context_trust))
 
 
 def search_knowledge(view: SessionView, query: str, knowledge: VerifiedKnowledge, cursor: str | None, page_size: int) -> dict[str, object]:

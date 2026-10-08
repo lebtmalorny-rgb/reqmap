@@ -1775,7 +1775,7 @@ def test_real_epoxy_negative_host_boundaries_remain_not_supported(
 
 
 def test_mapping_prompt_is_versioned_and_strictly_russian() -> None:
-    assert PROMPT_MAPPING_VERSION == "1.3"
+    assert PROMPT_MAPPING_VERSION == "1.4"
     assert "Верни только JSON" in MAPPING_PROMPT
     assert "source_hint" in MAPPING_PROMPT
     assert "не является evidence" in MAPPING_PROMPT

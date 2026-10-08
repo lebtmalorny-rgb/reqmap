@@ -82,3 +82,19 @@ def test_contract_change_is_explicit_not_a_reinterpreted_decision(tmp_path,monke
     monkeypatch.setattr(module,'source_context_resolver_sha256',lambda:'0'*64)
     with pytest.raises(ReqmapError) as error:codec.decode_source_context_snapshot(raw,profile=AnalysisProfile.LEGACY,trust=None)
     assert error.value.code=='SOURCE_CONTEXT_CONTRACT_MISMATCH'
+
+
+def test_replay_resolver_file_hashing_does_not_scale_with_row_count(tmp_path,monkeypatch):
+    import reqmap.source_context as module
+    import reqmap.source_context_codec as codec
+    doc=capture_source_document(**text_document(tuple('Требование '+str(i) for i in range(30))))
+    frozen=freeze(doc,None)
+    raw=codec.encode_source_context_snapshot(frozen)
+    actual=module.source_context_resolver_sha256
+    calls=[]
+    def counted():
+        calls.append(1)
+        return actual()
+    monkeypatch.setattr(module,'source_context_resolver_sha256',counted)
+    assert codec.inspect_source_context_record(raw)==frozen
+    assert len(calls)<=2, 'code manifest must be read per snapshot, not per row'

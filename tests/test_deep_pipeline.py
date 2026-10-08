@@ -109,21 +109,11 @@ def _config(
 
 def _request(tmp_path: Path, *texts: str) -> AnalysisRequest:
     values = texts or ("Nova должна создавать ВМ через API",)
-    requirements = tuple(
-        replace(
-            requirement(ordinal=index, requirement_id=f"REQ-{index:04d}"),
-            source_id=f"source-{index}",
-            text=text,
-        )
-        for index, text in enumerate(values, 1)
-    )
-    return AnalysisRequest(
-        requirements=requirements,
-        input_sha256="a" * 64,
-        input_kind="text",
-        source_path=None,
-        output_dir=tmp_path / "output",
-    )
+    from tests.source_context_support import text_document
+    from reqmap.source_context import capture_source_document
+    document = capture_source_document(**text_document(values))
+    return AnalysisRequest(document.requirements, document.input_sha256, "text", None,
+                           tmp_path / "output", source_document=document)
 
 
 def _decomposition(text: str) -> dict[str, object]:
@@ -384,10 +374,10 @@ def test_deep_pipeline_processes_mixed_contours_without_source_reads(
         procedure_template_ids=(),
     )
 
-    run = analyze_deep(
-        replace(_request(tmp_path, text), requirements=(replace(_request(tmp_path, text).requirements[0],
-            source_hints=(SourceHint("sysctl", "test"),)),)), config, FakeModel((_decomposition(text), response))
-    )
+    from tests.source_context_support import request_with_hint
+    request, profile = request_with_hint(tmp_path, text, "sysctl")
+    run = analyze_deep(request, replace(config, input_profile=profile),
+                       FakeModel((_decomposition(text), response)))
 
     assert run.run_status == "PARTIAL"
     assert tuple(item.contour for item in run.responsibility_records) == (
@@ -487,6 +477,8 @@ def test_deep_resume_uses_exact_schema2_closure_and_secure_modes(tmp_path: Path)
     config = _signed_config(tmp_path)
     text = "Nova должна создавать ВМ через API"
     request = _request(tmp_path, text)
+    from tests.source_context_support import with_reviewed_request
+    config = with_reviewed_request(config, request)
     first = analyze_deep(request, config, FakeModel(_completed_responses(text)))
 
     resumed_model = FakeModel()
@@ -505,7 +497,7 @@ def test_deep_resume_uses_exact_schema2_closure_and_secure_modes(tmp_path: Path)
         "procedure_graphs",
         "evidence",
     }
-    assert payload["schema_version"] == "2.1"
+    assert payload["schema_version"] == "2.2"
     assert payload["run_signature"] == checkpoint.parent.name
     assert len(payload["responsibility_records"]) == 1
     assert len(payload["procedure_graphs"]) == 1
@@ -630,7 +622,8 @@ def test_deep_resume_recomputes_forged_checkpoint_subject_fields(
     resumed_atom = resumed.requirements[0].atom_results[0]
     assert resumed_atom.atom.text == text
     assert resumed_atom.atom.mandatory is True
-    assert resumed_atom.supported_aspects == (text,)
+    assert resumed_atom.supported_aspects == ()
+    assert resumed_atom.support_status.value == "insufficient_evidence"
 
 
 @pytest.mark.parametrize(
@@ -751,8 +744,8 @@ def test_duplicate_json_keys_and_symlinked_checkpoint_recompute(tmp_path: Path) 
     _write_checkpoint_bytes(
         checkpoint,
         source.replace(
-            '"schema_version":"2.1"',
-            '"schema_version":"2.1","schema_version":"2.1"',
+            '"schema_version":"2.2"',
+            '"schema_version":"2.2","schema_version":"2.2"',
         ).encode(),
         update_seal=True,
     )

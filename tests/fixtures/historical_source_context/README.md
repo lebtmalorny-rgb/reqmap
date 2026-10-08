@@ -23,3 +23,5 @@ Restore the four tables in a temporary AgentStore and copy the five artifacts
 to the publication's recorded final_name under the temporary output_root.
 Historical reads must validate the original hashes without running the new
 resolver. Do not regenerate these fixtures with the new runtime.
+
+`deep20` generated from commit `434c76e385bda3d988947b33b522a228ed59fcb5` in a temporary archive checkout. Original schema 2.0, finalized with allow_partial=true for one synthetic unanalysed row. Original artifact bytes and seals preserved; no signing keys included.

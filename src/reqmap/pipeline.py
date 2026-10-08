@@ -57,7 +57,7 @@ from reqmap.output_safety import (
 from reqmap.retrieval import retrieve
 
 
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 
 def preflight(config: AppConfig, model: JsonModel) -> PreflightResult:
@@ -72,18 +72,23 @@ def analyze(
     model: JsonModel,
 ) -> RunResult:
     """Analyze all requirements while isolating per-requirement failures."""
-    preflight_result, knowledge = _perform_preflight(config, model, request=request)
+    from reqmap.binding_runtime import save_run_context
+    from reqmap.source_context_codec import encode_source_context_snapshot
+    contexts = []
+    preflight_result, knowledge = _perform_preflight(config, model, request=request, contexts=contexts)
     if not preflight_result.ok or knowledge is None:
         run = failed_preflight_run(request, preflight_result)
         return _finish_failed_preflight(run, request, config)
 
+    source_context = contexts[0]
     catalog = load_configured_catalog(config, knowledge)
-    signature = _run_signature(request, config, knowledge.snapshot_sha256, catalog=catalog)
+    signature = _run_signature(request, config, knowledge.snapshot_sha256, catalog=catalog, source_context=source_context)
     work_dir = request.output_dir / ".work"
     signature_dir = work_dir / signature
     try:
         _ensure_secure_directory(work_dir)
         _ensure_secure_directory(signature_dir)
+        save_run_context(signature_dir, source_context)
     except OSError as exc:
         failed = PreflightResult(
             ok=False,
@@ -105,7 +110,7 @@ def analyze(
                 signature,
                 requirement,
                 knowledge,
-                catalog=catalog,
+                catalog=catalog, source_context=source_context, source_context_trust=config.knowledge_trust,
             )
             if resumed is not None:
                 results.append(resumed)
@@ -116,8 +121,9 @@ def analyze(
                 config,
                 model,
                 knowledge,
-                catalog=catalog,
+                catalog=catalog, source_context=source_context, source_context_trust=config.knowledge_trust,
             )
+            result = replace(result, source_binding=requirement_context(requirement, catalog, source_context).source_binding)
             _write_checkpoint(checkpoint_path, signature, result)
         except (OSError, ValueError) as exc:
             result = _failed_requirement(
@@ -125,7 +131,7 @@ def analyze(
                 AnalysisState.VALIDATION_FAILED,
                 f"CHECKPOINT_FAILED: {exc}",
             )
-        results.append(result)
+        results.append(replace(result, source_binding=requirement_context(requirement, catalog, source_context).source_binding))
 
     requirement_results = tuple(results)
     groups = aggregate_groups(requirement_results)
@@ -139,7 +145,7 @@ def analyze(
         groups=groups,
         evidence=cited_evidence,
         metadata={**_metadata(request, config, knowledge.snapshot_sha256, signature),
-                  "binding_contract": binding_contract(config.analysis_profile, catalog)},
+                  "binding_contract": binding_contract(config.analysis_profile, catalog), "source_context": encode_source_context_snapshot(source_context)},
         diagnostics=tuple(
             dict.fromkeys(
                 diagnostic
@@ -208,6 +214,7 @@ def _perform_preflight(
     config: AppConfig,
     model: JsonModel,
     request: AnalysisRequest | None,
+    contexts: list | None = None,
 ) -> tuple[PreflightResult, KnowledgeBase | None]:
     diagnostics = list(_config_diagnostics(config))
     if request is not None:
@@ -223,6 +230,9 @@ def _perform_preflight(
             return PreflightResult(False, cleanup_diagnostics, None), None
 
     try:
+        if request is not None and contexts is not None:
+            from reqmap.binding_runtime import prepare_run_context
+            contexts.append(prepare_run_context(request, config))
         knowledge = load_knowledge(config.knowledge_path)
         load_configured_catalog(config, knowledge)
     except ReqmapError as exc:
@@ -284,7 +294,7 @@ def _analyze_requirement(
     config: AppConfig,
     model: JsonModel,
     knowledge: KnowledgeBase,
-    *, catalog=None,
+    *, catalog=None, source_context=None, source_context_trust=None,
 ) -> RequirementResult:
     try:
         decomposition = decompose(model, requirement, parent_text)
@@ -317,7 +327,7 @@ def _analyze_requirement(
                 requirement.source_hints,
                 config.top_k,
             )
-            result = map_atom(model, claim, candidates, knowledge, binding_context=requirement_context(requirement, catalog))
+            result = map_atom(model, claim, candidates, knowledge, binding_context=requirement_context(requirement, catalog, source_context, source_context_trust=config.knowledge_trust))
         except ModelError as exc:
             result = AtomResult(
                 atom=claim,
@@ -366,10 +376,11 @@ def _run_signature(
     request: AnalysisRequest,
     config: AppConfig,
     knowledge_sha256: str,
-    *, catalog=None,
+    *, catalog=None, source_context=None, source_context_trust=None,
 ) -> str:
     payload = {
         "binding_contract": binding_contract(config.analysis_profile, catalog),
+        "source_context_ids": None if source_context is None else [d.context_id for d in source_context.decisions],
         "requirements": to_dict(request.requirements),
         "input_sha256": request.input_sha256,
         "knowledge_sha256": knowledge_sha256,
@@ -434,7 +445,7 @@ def _load_checkpoint(
     signature: str,
     requirement: Requirement,
     knowledge: KnowledgeBase,
-    *, catalog=None,
+    *, catalog=None, source_context=None, source_context_trust=None,
 ) -> RequirementResult | None:
     if path.is_symlink():
         raise ValueError("checkpoint не может быть symlink")
@@ -447,12 +458,12 @@ def _load_checkpoint(
         if payload.get("run_signature") != signature:
             return None
         raw_result = payload.get("requirement")
-        result = _decode_requirement_result(raw_result)
+        result = _decode_requirement_result(raw_result, source_context)
         if result.requirement != requirement:
             return None
         if result.analysis_state is not AnalysisState.COMPLETED:
             return None
-        context = requirement_context(requirement, catalog)
+        context = requirement_context(requirement, catalog, source_context, source_context_trust=source_context_trust)
         from reqmap.binding_source import canonical_atoms
         if tuple(item.atom for item in result.atom_results) != canonical_atoms(context.source_binding):
             return None
@@ -461,10 +472,7 @@ def _load_checkpoint(
                 if r.support_status in {SupportStatus.SUPPORTED, SupportStatus.PARTIAL}))
             validated = validate_atom_result(evidence_input, knowledge)
             validate_persisted_binding(item, context, knowledge, item.mappings, validated.support_status)
-        if aggregate_requirement(
-            result.requirement,
-            result.atom_results,
-        ) != result:
+        if replace(aggregate_requirement(result.requirement, result.atom_results), source_binding=context.source_binding) != result:
             return None
     except (
         KeyError,
@@ -478,7 +486,7 @@ def _load_checkpoint(
     return result
 
 
-def _decode_requirement_result(raw: object) -> RequirementResult:
+def _decode_requirement_result(raw: object, source_context=None) -> RequirementResult:
     item = _object(raw)
     requirement = _decode_requirement(item["requirement"])
     atom_results = tuple(
@@ -492,7 +500,7 @@ def _decode_requirement_result(raw: object) -> RequirementResult:
         atom_results=atom_results,
         mappings=mappings,
         diagnostics=_strings(item.get("diagnostics", [])),
-        source_binding=decode_source_binding(item.get("source_binding"), _decode_requirement(item["requirement"])),
+        source_binding=decode_source_binding(item.get("source_binding"), _decode_requirement(item["requirement"]), source_context),
     )
 
 
@@ -655,6 +663,8 @@ def _finish_failed_preflight(
         for diagnostic in run.diagnostics
     )
     written = False
+    if type(config) is AppConfig and isinstance(request.output_dir, Path) and catalog_output_diagnostics(config, request.output_dir):
+        output_not_clean = True
     if not output_not_clean:
         written = _write_preflight_diagnostics(run, request, config)
     return replace(

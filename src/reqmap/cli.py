@@ -507,12 +507,19 @@ def _analysis_request(
 
     if not requirements:
         raise _UsageError("Источник не содержит ни одного непустого требования.")
+    from reqmap.source_context import capture_source_document
+    source_kind = "xlsx" if arguments.input is not None else "texts" if arguments.requirements is not None else "txt"
+    document = capture_source_document(content=raw_input, source_kind=source_kind,
+        source_name=requirements[0].coordinate.source_name, requirements=requirements,
+        input_profile=config.input_profile if source_kind == "xlsx" else None,
+        text_mode=arguments.text_mode if source_kind == "txt" else None)
     return AnalysisRequest(
         requirements=requirements,
         input_sha256=hashlib.sha256(raw_input).hexdigest(),
         input_kind=input_kind,
         source_path=source_path,
         output_dir=arguments.output,
+        source_document=document,
     )
 
 

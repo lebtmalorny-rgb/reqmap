@@ -27,8 +27,10 @@ def test_all_exports_preserve_exact_gap_and_predicate_refs(tmp_path, monkeypatch
     profile = AnalysisProfile.DEEP if deep else AnalysisProfile.LEGACY
     verified = VerifiedKnowledge(knowledge, knowledge_digest(knowledge), knowledge.snapshot_id if deep else None, catalog)
     monkeypatch.setattr("reqmap.agent_service.load_agent_knowledge", lambda config: verified)
-    svc = AgentService(replace(make_agent_config(tmp_path/"agent"), analysis_profile=profile))
     text = "Nova должна создавать ВМ через API" + suffix
+    from tests.source_context_support import with_reviewed_texts
+    config = with_reviewed_texts(replace(make_agent_config(tmp_path/"agent"), analysis_profile=profile), (text,))
+    svc = AgentService(config)
     sid = start(svc, (text,))
     context = select_source(svc, sid, text)
     assert context.ok, context
@@ -55,7 +57,7 @@ def test_all_exports_preserve_exact_gap_and_predicate_refs(tmp_path, monkeypatch
         output.mkdir()
         assert not publish_artifacts(run, output)
     payload = json.loads((output/"result.json").read_text())
-    assert payload["schema_version"] == ("2.1" if deep else "1.1")
+    assert payload["schema_version"] == ("2.2" if deep else "1.2")
     row = payload["requirements"][0]
     assert row["source_binding"] == context.data["payload"]["source_binding"]
     assert row["atom_results"][0]["binding_decision"] == decision

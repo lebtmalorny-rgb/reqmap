@@ -34,7 +34,7 @@ def test_copied_requirement_identifies_ungrounded_field_and_can_be_repaired(pack
     kb, catalog = package
     binding = bind_source(replace(requirement(), text=case[4]))
     atom, = canonical_atoms(binding)
-    context = BindingContext(binding, catalog)
+    context = reviewed_context(binding, catalog)
     candidates = retrieve(kb, atom.text, (), 8)
     raw = proposal_for(kb, case, atom.text, field)
     raw['obligation_id'] = atom.obligation_id
@@ -123,7 +123,7 @@ def test_second_mapping_has_same_field_path_in_record_and_atom_diagnostic(packag
     raw['supported_aspects'].extend(copied['supported_aspects'])
     raw['obligation_id'] = atom.obligation_id
     result = accept_mapping(atom, retrieve(knowledge, atom.text, (), 8), knowledge, raw,
-                            binding_context=BindingContext(binding, catalog))
+                            binding_context=reviewed_context(binding, catalog))
     diag, = [d for d in result.binding_decision.diagnostics if d.code == 'MAPPING_ROLE_UNGROUNDED']
     assert diag.field == 'mappings[1].role_ru'
     assert diag.message_ru in result.mappings[1].reason_ru
@@ -143,3 +143,5 @@ def test_host_delivery_step_is_not_reported_as_lexical_gap(kb):
     result = validate_atom_result(_build_result(make_atom('Изменить sysctl'), response(host, delivery)), kb)
     assert result.support_status is SupportStatus.SUPPORTED
     assert mapping_text_gaps(result.mappings[0], kb) == ()
+
+from tests.source_context_support import reviewed_context
