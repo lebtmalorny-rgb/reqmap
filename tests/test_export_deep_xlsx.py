@@ -23,7 +23,7 @@ EXPECTED_HEADERS = {
         "Исходная цитата", "Обязательный", "Состояние: код",
         "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
         "Неподтверждённые аспекты", "Диагностика",
-        "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
+        "Obligation ID", "Source spans", "Source SHA-256", "Binding decision", "Source context",
     ),
     "Ответственность": (
         "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",

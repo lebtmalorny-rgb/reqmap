@@ -110,6 +110,9 @@ def write_manifest(
     if "binding_contract" in metadata:
         from reqmap.binding_export import contract_payload
         manifest["binding_contract"] = contract_payload(metadata["binding_contract"])
+    if "source_context" in metadata:
+        from reqmap.binding_export import source_context_summary
+        manifest["source_context"] = source_context_summary(run)
     origin = origin_metadata(metadata)
     if origin is not None:
         manifest["analysis_origin"] = origin
@@ -225,7 +228,9 @@ def _deep_manifest_payload(
             raise ValueError(f"artifact hash for {name} must be lowercase SHA-256")
         safe_hashes[name] = digest
     metadata = _deep_metadata_payload(run)
+    from reqmap.binding_export import source_context_summary
     return {
+        **({"source_context": source_context_summary(run)} if "source_context" in metadata else {}),
         "schema_version": run.schema_version,
         "run_id": run.run_id,
         "run_status": run.run_status,

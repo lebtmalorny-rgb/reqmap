@@ -107,6 +107,7 @@ def _deep_metadata_payload(run: DeepRunResult) -> dict[str, object]:
     from reqmap.binding_export import contract_payload
     return {
         **({"binding_contract": contract_payload(metadata["binding_contract"])} if "binding_contract" in metadata else {}),
+        **({"source_context": metadata["source_context"]} if "source_context" in metadata else {}),
         **({"analysis_origin": origin} if origin is not None else {}),
         "reqmap_version": _safe_version(
             metadata.get("reqmap_version"), "reqmap_version"

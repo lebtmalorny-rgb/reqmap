@@ -47,6 +47,11 @@ def validate_binding_run(run):
         if raw is not None:
             from reqmap.source_context_codec import inspect_source_context_record
             context = inspect_source_context_record(raw)
+            from dataclasses import replace
+            rows = tuple(replace(row.requirement, parent_id=None, group_ids=()) for row in run.requirements)
+            if (rows != context.document.requirements
+                    or run.metadata.get("input_sha256") != context.document.input_sha256):
+                raise ValueError("SOURCE_CONTEXT_INPUT_MISMATCH")
             if any(d.resolver_sha256 != contract["resolver_sha256"] for d in context.decisions):
                 raise ValueError("SOURCE_CONTEXT_CHANGED")
         elif any(row.analysis_state is AnalysisState.COMPLETED for row in run.requirements):
@@ -115,6 +120,57 @@ def binding_markdown(run):
         parts.append("### " + row.requirement.requirement_id)
         parts.append("```json\n" + canonical_json_bytes(to_dict(row.source_binding)).decode().strip() + "\n```")
         for atom in row.atom_results:
+            if row.source_binding.context_decision is not None:
+                parts.append("Контекст атома `" + atom.atom.atom_id + "` (условия и исходные ссылки):")
+                display = source_context_display(row.source_binding.context_decision, atom.atom.obligation_id)
+                parts.append("```json\n" + canonical_json_bytes(display).decode().strip() + "\n```")
             if atom.binding_decision is not None:
                 parts.append("```json\n" + canonical_json_bytes(to_dict(atom.binding_decision)).decode().strip() + "\n```")
     return "\n\n".join(parts)
+
+
+def source_context_display(decision, obligation_id):
+    """One lossless display contract; references never become local offsets."""
+    effective = next(item for item in decision.effective_obligations
+                     if item.obligation.obligation_id == obligation_id)
+    return {
+        "state": decision.state,
+        "context_id": decision.context_id,
+        "map_sha256": decision.map_sha256,
+        "resolver_sha256": decision.resolver_sha256,
+        "own_quote": effective.obligation.source_quote,
+        "effective_interface": effective.obligation.interface,
+        "effective_constraints": to_dict(effective.obligation.constraints),
+        "interface_refs": to_dict(effective.interface_refs),
+        "constraint_refs": to_dict(effective.constraint_refs),
+        "origins": to_dict(decision.applied_links),
+    }
+
+
+def atom_context_displays(run):
+    return {atom.atom.atom_id: (
+        source_context_display(row.source_binding.context_decision, atom.atom.obligation_id)
+        if row.source_binding is not None and row.source_binding.context_decision is not None else None)
+        for row in run.requirements for atom in row.atom_results}
+
+
+def source_context_summary(run):
+    """Capture-time trust metadata, without claiming current signer authorization."""
+    raw = run.metadata.get("source_context")
+    if raw is None:
+        return None
+    from reqmap.source_context_codec import inspect_source_context_record
+    snapshot = inspect_source_context_record(raw)
+    contract = contract_payload(run.metadata["binding_contract"])
+    return {
+        "input_sha256": snapshot.document.input_sha256,
+        "input_profile_sha256": snapshot.document.input_profile_sha256,
+        "requirements_sha256": snapshot.document.requirements_sha256,
+        "map_sha256": snapshot.loaded.map_sha256,
+        "resolver_version": contract["resolver_version"],
+        "resolver_sha256": contract["resolver_sha256"],
+        "trust_at_capture": to_dict(snapshot.loaded.trust),
+        "diagnostic_codes": sorted({d.code for decision in snapshot.decisions for d in decision.diagnostics}
+            | {d.code for row in run.requirements for atom in row.atom_results
+               if atom.binding_decision is not None for d in atom.binding_decision.diagnostics}),
+    }

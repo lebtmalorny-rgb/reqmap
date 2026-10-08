@@ -32,7 +32,7 @@ _EXPECTED_SHEET_HEADERS = {
         "Atom ID", "Requirement ID", "Ordinal", "Формулировка атома",
         "Исходная цитата", "Обязательный", "Состояние: код",
         "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
-        "Неподтверждённые аспекты", "Диагностика", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
+        "Неподтверждённые аспекты", "Диагностика", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision", "Source context",
     ),
     "Ответственность": (
         "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",
@@ -360,10 +360,17 @@ def _expected_markdown_stream(
             ("line", "Смещения `[start,end)` измеряются в Unicode code points. Непокрытая цитата сохраняется полностью.")))
         for row in bound_rows:
             binding_tokens.append(("line", "### " + row.requirement.requirement_id))
-            values = [row.source_binding, *(a.binding_decision for a in row.atom_results if a.binding_decision is not None)]
-            for value in values:
-                binding_tokens.extend((("line", "```json"),
-                    ("line", canonical_json_bytes(to_dict(value)).decode().strip()), ("line", "```")))
+            binding_tokens.extend((("line", "```json"),
+                ("line", canonical_json_bytes(to_dict(row.source_binding)).decode().strip()), ("line", "```")))
+            for atom in row.atom_results:
+                if row.source_binding.context_decision is not None:
+                    from reqmap.binding_export import source_context_display
+                    display = source_context_display(row.source_binding.context_decision, atom.atom.obligation_id)
+                    binding_tokens.extend((("line", "Контекст атома `" + atom.atom.atom_id + "` (условия и исходные ссылки):"),
+                        ("line", "```json"), ("line", canonical_json_bytes(display).decode().strip()), ("line", "```")))
+                if atom.binding_decision is not None:
+                    binding_tokens.extend((("line", "```json"),
+                        ("line", canonical_json_bytes(to_dict(atom.binding_decision)).decode().strip()), ("line", "```")))
         tokens = (*tokens[:2], *binding_tokens, *tokens[2:])
 
     if "analysis_origin" in run.metadata:
@@ -728,6 +735,8 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
     trust = metadata["knowledge_trust"]
     assert isinstance(trust, dict)
 
+    from reqmap.binding_export import atom_context_displays
+    displays = atom_context_displays(run)
     requirement_rows = []
     atom_rows = []
     for item in requirements:
@@ -754,7 +763,7 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
                 _json_text(atom_result["unconfirmed_aspects"]),
                 _json_text(atom_result["diagnostics"]),
                 atom["obligation_id"], _json_text(atom["source_spans"]), atom["source_sha256"],
-                _json_text(atom_result["binding_decision"]),
+                _json_text(atom_result["binding_decision"]), _json_text(displays[atom["atom_id"]]),
             ))
     decisions = {a["atom"]["atom_id"]: a["binding_decision"] for r in requirements for a in r["atom_results"]}
     def binding_cells(atom_id):
@@ -800,6 +809,9 @@ def _expected_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ..
     )
     if "binding_contract" in metadata:
         run_values += (("binding_contract", _json_text(metadata["binding_contract"])),)
+    if "source_context" in metadata:
+        from reqmap.binding_export import source_context_summary
+        run_values += (("source_context", _json_text(source_context_summary(run))),)
     if "analysis_origin" in metadata:
         run_values += (("analysis_origin", _json_text(metadata["analysis_origin"])),)
     return encode_long_cells({

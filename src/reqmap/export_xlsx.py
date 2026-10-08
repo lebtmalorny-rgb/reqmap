@@ -73,7 +73,7 @@ SHEET_HEADERS = {
         "Поддержка: код",
         "Поддержка: русский",
         "Подтверждённые аспекты",
-        "Неподтверждённые аспекты", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
+        "Неподтверждённые аспекты", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision", "Source context",
     ),
     "Сопоставления": (
         "Mapping ID",
@@ -408,13 +408,15 @@ def _evidence_row(item: Evidence) -> tuple[object, ...]:
 
 
 def _data_rows(run: RunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
+    from reqmap.binding_export import atom_context_displays
+    displays = atom_context_displays(run)
     return encode_long_cells({
         "Требования": tuple(
             [*(_requirement_row(item) for item in run.requirements)]
             + [*(_group_row(item) for item in run.groups)]
         ),
         "Атомарные утверждения": tuple(
-            _atom_row(atom_result)
+            _atom_row(atom_result) + (_json_text(displays[atom_result.atom.atom_id]),)
             for result in run.requirements
             for atom_result in result.atom_results
         ),
@@ -452,6 +454,9 @@ def _run_rows(run: RunResult) -> tuple[tuple[str, object], ...]:
     )
 
     rows += ((("binding_contract", _json_text(metadata["binding_contract"])),) if "binding_contract" in metadata else ())
+    if "source_context" in metadata:
+        from reqmap.binding_export import source_context_summary
+        rows += (("source_context", _json_text(source_context_summary(run))),)
     return rows + ((("analysis_origin", _json_text(metadata["analysis_origin"])),) if "analysis_origin" in metadata else ())
 
 

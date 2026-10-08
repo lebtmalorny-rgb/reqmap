@@ -36,7 +36,7 @@ SHEET_HEADERS = {
         "Atom ID", "Requirement ID", "Ordinal", "Формулировка атома",
         "Исходная цитата", "Обязательный", "Состояние: код",
         "Поддержка: код", "Responsibility IDs", "Подтверждённые аспекты",
-        "Неподтверждённые аспекты", "Диагностика", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision",
+        "Неподтверждённые аспекты", "Диагностика", "Obligation ID", "Source spans", "Source SHA-256", "Binding decision", "Source context",
     ),
     "Ответственность": (
         "Record ID", "Requirement ID", "Atom ID", "Контур", "Component ref",
@@ -188,10 +188,12 @@ def _data_rows(run: DeepRunResult) -> dict[str, tuple[tuple[object, ...], ...]]:
     assert isinstance(graphs, list)
     assert isinstance(evidence, list)
     decisions = {a["atom"]["atom_id"]: a["binding_decision"] for r in requirements for a in r["atom_results"]}
+    from reqmap.binding_export import atom_context_displays
+    displays = atom_context_displays(run)
     return encode_long_cells({
         "Требования": tuple(_requirement_row(item) for item in requirements),
         "Атомарные утверждения": tuple(
-            _atom_row(atom)
+            _atom_row(atom) + (_json_text(displays[atom["atom"]["atom_id"]]),)
             for item in requirements
             for atom in item["atom_results"]
         ),
@@ -341,6 +343,9 @@ def _run_rows(payload: dict[str, object], run: DeepRunResult) -> tuple[tuple[str
     }
     rows = tuple((key, values[key]) for key in RUN_KEYS)
     rows += ((("binding_contract", _json_text(metadata["binding_contract"])),) if "binding_contract" in metadata else ())
+    if "source_context" in metadata:
+        from reqmap.binding_export import source_context_summary
+        rows += (("source_context", _json_text(source_context_summary(run))),)
     return rows + ((("analysis_origin", _json_text(metadata["analysis_origin"])),) if "analysis_origin" in metadata else ())
 
 

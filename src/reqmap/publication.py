@@ -17,11 +17,13 @@ ARTIFACTS = ('result.json','result.xlsx','report.md','run.jsonl','manifest.json'
 
 
 def publish_artifacts(run: RunResult | DeepRunResult, output: Path, *, redacted_values: tuple[str, ...] = ()) -> tuple[CrosscheckIssue, ...]:
+    from reqmap.binding_export import source_context_summary
     deep = type(run) is DeepRunResult
     paths = {name:output/name for name in ARTIFACTS}
     logger = RunLogger(paths['run.jsonl'],redacted_values=redacted_values)
     logger.write('analysis_finished','info','Глубокий предметный анализ требований завершён.' if deep else 'Предметный анализ требований завершён.',
                  run_status=run.run_status,requirements_count=len(run.requirements),
+                 **({"source_context":source_context_summary(run)} if "source_context" in run.metadata else {}),
                  **({"binding_contract":run.metadata["binding_contract"]} if "binding_contract" in run.metadata else {}))
     writers = (write_deep_canonical_json,write_deep_xlsx,write_deep_markdown) if deep else (write_canonical_json,write_xlsx,write_markdown)
     hashes = {name:writer(run,paths[name]) for name,writer in zip(ARTIFACTS[:3],writers)}
