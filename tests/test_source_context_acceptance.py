@@ -212,6 +212,7 @@ def test_installed_context_contract(tmp_path):
 
 def test_live_fixture_is_frozen_before_model_evaluation():
     assert FROZEN['synthetic_only'] is True
+    assert (FIXTURE.parent/'live_input.json').read_bytes()==canonical_json_bytes(FROZEN['texts'])
     assert hashlib.sha256((FIXTURE.parent/'cases.json').read_bytes()).hexdigest()==FROZEN['baseline_cases_sha256']
     assert hashlib.sha256(canonical_json_bytes(FROZEN['texts'])).hexdigest()==FROZEN['input_sha256']
     for value in FROZEN['maps'].values():

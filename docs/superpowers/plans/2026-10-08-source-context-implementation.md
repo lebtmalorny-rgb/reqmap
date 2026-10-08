@@ -259,7 +259,8 @@ create `tests/test_source_context_resolver.py`.
 
 **Interfaces:**
 - Models: `SourceContextSnapshot(document: SourceDocumentSnapshot,
-  loaded: LoadedSourceContext, decisions: tuple[SourceContextDecision, ...])`.
+  loaded: LoadedSourceContext, decisions: tuple[SourceContextDecision, ...],
+  grammar_version: str, grammar_sha256: str)`.
 - `freeze_source_context(document: SourceDocumentSnapshot,
   loaded: LoadedSourceContext) -> SourceContextSnapshot` в `source_context.py`.
 - Codec: `encode_source_context_snapshot(snapshot: SourceContextSnapshot)
@@ -396,25 +397,26 @@ create `tests/test_source_context_exports.py`; modify `tests/test_binding_export
   целостности отчёта не заявляет актуальное доверие signer. Active CLI/MCP
   проверяют текущий trust через полный decode до mapping/finalize.
 
-- [ ] `test_five_artifacts_preserve_context_and_local_spans`: JSON включает
+- [x] `test_five_artifacts_preserve_context_and_local_spans`: JSON включает
   normalized draft/reviewed map, original/effective obligations; Markdown/XLSX
   показывают условия рядом с атомом и точные origin coords/quotes; parent offsets
   никогда не попадают в локальные source_spans/uncovered. Supported aspect
   сохраняет собственную буквальную цитату и явные applied context refs.
-- [ ] `test_export_tamper_with_same_status_fails_crosscheck`: удалить/подменить
+- [x] `test_export_tamper_with_same_status_fails_crosscheck`: удалить/подменить
   condition/ref/map digest в любом доказательном представлении → CHANGED либо
   соответствующая crosscheck error. `test_long_and_formula_like_context_quotes`:
   длинные/emoji/`=...` quotes сохраняются полностью, XLSX без formulas; превышение
   лимита MCP ответа даёт явную size error, не усечённый context.
-- [ ] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_exports.py`.
+- [x] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_exports.py`.
   Ожидаются отсутствующие context columns/условия и неполный crosscheck.
-- [ ] Реализовать display/render/verify и поля run.jsonl/manifest: source/map/
+- [x] Реализовать display/render/verify и поля run.jsonl/manifest: source/map/
   resolver digests, contract, trust metadata, diagnostic codes. В result.json
   остаётся весь frozen snapshot; в XLSX сохраняются 5/7 листов. Использовать
   существующее безопасное дробление длинных ячеек и plain-text запись.
-- [ ] GREEN: повторить RED-команду и перечисленные Files tests;
+- [ ] GREEN: автоматические проверки прошли (134 tests); осталось ручное открытие:
+  повторить RED-команду и перечисленные Files tests;
   программно проверить exact quotes и вручную открыть синтетический XLSX/Markdown.
-- [ ] Commit: `feat: expose and crosscheck source context in every report`.
+- [x] Commit: `feat: expose and crosscheck source context in every report`.
 
 ### Task 7: Приёмка, установленный пакет и отдельный живой eval
 
@@ -428,22 +430,22 @@ modify `README.md`, `RUNBOOK.md`, `OUTPUT_SCHEMA.md`, `CLIENTS_CODEX_OPENCODE.md
 не добавляет новые runtime API. Acceptance fixture содержит неизменные тексты,
 reviewed synthetic map, независимые expected codes/statuses/refs и hashes.
 
-- [ ] До запуска модели freeze live_eval с cases Task 1 и контрольными
+- [x] До запуска модели freeze live_eval с cases Task 1 и контрольными
   evidence/predicate IDs; tests `test_cli_mcp_context_acceptance_matrix` и
   `test_installed_context_contract` сверяют строки/атомы, exact codes/refs,
   пять artifact hashes, restart и `reqmap_finalize(allow_partial=false)` +
   `reqmap_get_result`. RED должен обнаружить реальный integration gap, если он
   остался; исправлять в ответственном модуле с regression, не правкой expectation.
-- [ ] GREEN: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_acceptance.py tests/test_distribution.py`.
+- [x] GREEN: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_acceptance.py tests/test_distribution.py`.
   В `test_installed_context_contract` использовать tmp_path и subprocess
   `./install.sh <tmp_path>/venv` с текущим Python, `PIP_NO_INDEX=1`; вызвать
   установленный `reqmap --version`, `reqmap agent serve` через stdio и CLI
   analyze с локальным scripted transport существующих acceptance fixtures.
   Проверить версии 3.0/3.0 и результаты 1.2/2.2 с точными context refs.
-- [ ] Выполнить `PYTHONPATH=src .venv/bin/python -m pytest -q` и `git diff --check`.
+- [x] Выполнить `PYTHONPATH=src .venv/bin/python -m pytest -q` и `git diff --check`.
   Ожидается полный GREEN; в отчёте
   записать команды, counts, code/resolver/input/map hashes и границы проверки.
-- [ ] Провести независимое ревью всей ветки согласно выбранному execution skill.
+- [x] Провести независимое ревью всей ветки согласно выбранному execution skill.
   Исправить подтверждённые замечания и повторить затронутые проверки;
   полный suite повторять после runtime fixes, не ради неизменённой документации.
 - [ ] Провести отдельный eval настоящим IDE-клиентом по frozen synthetic input:
@@ -451,12 +453,12 @@ reviewed synthetic map, независимые expected codes/statuses/refs и h
   фактические atoms/statuses/codes/refs и hashes артефактов. Scripted backend
   не выдавать за этот запуск. Если клиент недоступен, явно оставить этот checkbox
   незавершённым и сообщить блокировку, не объявлять полный этап законченным.
-- [ ] Обновить русские инструкции: подготовка и review карты, отсутствие карты,
+- [x] Обновить русские инструкции: подготовка и review карты, отсутствие карты,
   отдельная настройка deep namespace сопровождающим, frozen session/restart,
   новые версии и historical outputs. Для реальных книг сначала нужна утверждённая
   карта конкретной выборки; отдельно считать reviewed/unreviewed, own unresolved
   и нехватку evidence. Приёмка synthetic не доказывает покрытие 1949 строк.
-- [ ] Commit: `docs: record source context acceptance and operator workflow`.
+- [x] Commit: `docs: record source context acceptance and operator workflow`.
   Merge/push выполняются только в рамках отдельного распоряжения пользователя.
 
 ## Самопроверка плана и передача в работу
@@ -489,3 +491,11 @@ installed/scripted приёмка и документация подготовл
 Живой IDE/model eval отдельно не выполнен, весь этап не объявляется завершённым.
 Ни merge, ни push не выполняются. Первоначальные сведения о самопроверке выше
 описывают подготовку плана, а не текущую приёмку реализации.
+
+Независимое ревью нашло один Important: смена только грамматики могла заново
+интерпретировать frozen payload до проверки совместимости. Исправление хранит
+отдельную идентичность грамматики в snapshot/context_id и учитывает её в кешах,
+MCP historical/active и CLI resume. Пять regression cases: RED 5 failed,
+GREEN 5 passed; профильный набор 108 passed. Итоговый полный suite после fix:
+1840 passed, 3 прежних fork warnings, 543.55 s; `git diff --check` прошёл.
+Minor и отказов от оценки нет.

@@ -133,7 +133,9 @@ approved status, Ed25519-подпись, внешний allowed_signers, hashes 
 | SOURCE_CONTEXT_CYCLE | Удалите self-link/цикл в reviewed linked после повторного review |
 | SOURCE_CONTEXT_UNTRUSTED | Проверить Ed25519, namespace reqmap-source-context, identity и текущий allowed_signers |
 | SOURCE_CONTEXT_INVALID | Проверить строгие ключи, дубликаты, лимиты, ordinary file и пересечение с output |
-| SESSION_CONTRACT_MISMATCH | Старый active contract или другой resolver; требуется новая сессия |
+| SOURCE_CONTEXT_CHANGED | Frozen bytes/refs/решения повреждены; восстановить исходный snapshot |
+| SOURCE_CONTEXT_CONTRACT_MISMATCH | Изменились грамматика/resolver; новый анализ, а для CLI без карты сначала восстановить её |
+| SESSION_CONTRACT_MISMATCH | Старый active contract или другая грамматика/resolver; требуется новая сессия |
 | RESPONSE_TOO_LARGE | Ответ не усечён; уменьшите выборку/страницу или согласованно увеличьте лимит |
 
 Проверяемую карту нельзя «исправить» полем proposal. Для valid frozen session

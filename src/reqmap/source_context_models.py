@@ -130,3 +130,5 @@ class SourceContextSnapshot:
     document: SourceDocumentSnapshot
     loaded: LoadedSourceContext
     decisions: tuple[SourceContextDecision, ...]
+    grammar_version: str
+    grammar_sha256: str

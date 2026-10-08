@@ -217,13 +217,13 @@ def inspect_source_context_record(raw: object) -> SourceContextSnapshot:
     from reqmap.export_json import canonical_json_bytes
     from reqmap.source_context import source_context_resolver_sha256
     try:
-        return _inspect_context_cached(canonical_json_bytes(raw), source_context_resolver_sha256())
+        return _inspect_context_cached(canonical_json_bytes(raw), source_context_resolver_sha256(), _grammar_identity())
     except (ValueError, TypeError, RecursionError) as exc:
         raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Некорректный snapshot контекста.") from exc
 
 
 @lru_cache(maxsize=4)
-def _inspect_context_cached(payload: bytes, resolver_digest: str) -> SourceContextSnapshot:
+def _inspect_context_cached(payload: bytes, resolver_digest: str, grammar_identity: tuple[str, str]) -> SourceContextSnapshot:
     raw = json.loads(payload)
     return _inspect_context_uncached(raw, resolver_digest)
 
@@ -233,7 +233,9 @@ def _inspect_context_uncached(raw: object, resolver_digest: str) -> SourceContex
     from reqmap.export_json import canonical_json_bytes
     from reqmap.source_context import freeze_source_context, source_context_resolver_sha256
     try:
-        _keys(raw, "document loaded decisions")
+        _keys(raw, "document loaded decisions grammar_version grammar_sha256")
+        if (raw["grammar_version"], raw["grammar_sha256"]) != _grammar_identity():
+            raise ReqmapError("SOURCE_CONTEXT_CONTRACT_MISMATCH", "Собственная грамматика изменена; начните новый анализ.")
         if type(raw["decisions"]) is not list or not raw["decisions"]:
             raise ValueError("missing decisions")
         for decision in raw["decisions"]:
@@ -296,7 +298,7 @@ def validate_source_context_snapshot(snapshot: SourceContextSnapshot, *, profile
                                      trust: KnowledgeTrustConfig | None) -> None:
     from reqmap.source_context import source_context_resolver_sha256, verify_source_context_signature
     try:
-        _validate_context_integrity(snapshot, source_context_resolver_sha256())
+        _validate_context_integrity(snapshot, source_context_resolver_sha256(), _grammar_identity())
     except (ValueError, TypeError) as exc:
         raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Snapshot контекста изменён.") from exc
     if snapshot.loaded.trust.profile != profile.value:
@@ -308,7 +310,12 @@ def validate_source_context_snapshot(snapshot: SourceContextSnapshot, *, profile
 
 
 @lru_cache(maxsize=4)
-def _validate_context_integrity(snapshot, resolver_digest):
+def _validate_context_integrity(snapshot, resolver_digest, grammar_identity):
     # Only deeply immutable snapshots are hashable. Current trust is never cached.
     if inspect_source_context_record(encode_source_context_snapshot(snapshot)) != snapshot:
         raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Snapshot контекста изменён.")
+
+
+def _grammar_identity():
+    from reqmap import binding_source
+    return binding_source.GRAMMAR_VERSION, binding_source.GRAMMAR_SHA256

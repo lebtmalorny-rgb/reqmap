@@ -248,7 +248,8 @@ def resolve_source_context(document: SourceDocumentSnapshot,
         entry_digest = None if entry is None else hashlib.sha256(canonical_json_bytes(wire_entries[requirement.requirement_id])).hexdigest()
         decision = SourceContextDecision(target, state, digest, entry_digest, "",
             SOURCE_CONTEXT_RESOLVER_VERSION, resolver_digest, tuple(links), tuple(effective), tuple(diagnostics))
-        identity = {"input_sha256": document.input_sha256, "input_profile_sha256": document.input_profile_sha256,
+        identity = {"grammar_version": own.grammar_version, "grammar_sha256": own.grammar_sha256,
+                    "input_sha256": document.input_sha256, "input_profile_sha256": document.input_profile_sha256,
                     "requirements_sha256": document.requirements_sha256, "source_kind": document.source_kind,
                     "source_name": document.source_name, "text_mode": document.text_mode,
                     "decision": {k: v for k, v in to_dict(decision).items() if k != "context_id"}}
@@ -258,4 +259,6 @@ def resolve_source_context(document: SourceDocumentSnapshot,
 
 def freeze_source_context(document: SourceDocumentSnapshot,
                           loaded: LoadedSourceContext) -> SourceContextSnapshot:
-    return SourceContextSnapshot(document, loaded, resolve_source_context(document, loaded))
+    from reqmap import binding_source
+    return SourceContextSnapshot(document, loaded, resolve_source_context(document, loaded),
+                                 binding_source.GRAMMAR_VERSION, binding_source.GRAMMAR_SHA256)

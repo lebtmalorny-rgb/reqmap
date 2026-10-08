@@ -104,8 +104,13 @@ def _seed(raw: str) -> SessionSeed:
         if type(frozen_record) is not dict:
             raise ValueError('missing context snapshot')
         # Historical finalized reads must not execute a different resolver.
-        from reqmap.source_context import source_context_resolver_sha256
-        if settings.resolver_version == '1.0' and settings.resolver_sha256 == source_context_resolver_sha256():
+        from reqmap.binding_runtime import require_session_contract
+        try:
+            require_session_contract(settings)
+        except ReqmapError as exc:
+            if exc.code != 'SESSION_CONTRACT_MISMATCH':
+                raise
+        else:
             from reqmap.source_context_codec import inspect_source_context_record
             frozen = inspect_source_context_record(frozen_record)
             if (frozen.document.content != content or frozen.document.requirements != requirements

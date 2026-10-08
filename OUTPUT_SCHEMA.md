@@ -224,7 +224,8 @@ Crosscheck сравнивает эти данные с canonical result; изм�
 ## Контекст источника в результатах 1.2 / 2.2
 
 `metadata.source_context` хранит полный frozen snapshot: exact input/map/signature
-bytes в base64, полный нормализованный профиль, строки, normalized map и decisions.
+bytes в base64, полный нормализованный профиль, строки, normalized map, decisions
+и отдельные `grammar_version`/`grammar_sha256`.
 `SourceBinding.context_decision` содержит state, target, map/entry/resolver hashes,
 context_id, applied_links и effective_obligations. `obligations` остаются собственным
 разбором исходной строки. `BindingDecision.context_id`, `uncovered_context_refs` и
@@ -237,6 +238,9 @@ source context map/resolver 1.0; prompts 2.1/1.4/2.2. Proposal schema остаё
 SQLite STATE_VERSION остаётся 1, грамматика остаётся 1.2. Resolver SHA-256 строится
 по отсортированному manifest шести файлов: source_context.py, source_context_models.py,
 source_context_codec.py, binding_models.py, binding_engine.py, binding_runtime.py.
+Идентичность грамматики дополнительно входит в context_id и ключи кеша.
+Смена только грамматики делает active-контракт несовместимым; чтение finalized
+остаётся historical по сохранённым hashes, без нового разбора исходных строк.
 
 В XLSX сохранены 5/7 листов. Колонка `Source context` у атома показывает state,
 context_id, own_quote, effective_interface/constraints и все origin refs.

@@ -95,12 +95,17 @@ def prepare_run_context(request, config):
     current = None if missing else freeze_source_context(document, load_source_context_map(path, document,
         profile=config.analysis_profile, trust=config.knowledge_trust))
     matches = []
+    incompatible = False
     for saved in sorted((request.output_dir/".work").glob("*/source-context.json")):
         raw = strict_json_object(read_regular_bytes(saved, 512*1024*1024).decode("utf-8"))
         identity = raw.get("document", {})
         if (identity.get("input_sha256") != document.input_sha256
                 or identity.get("requirements_sha256") != document.requirements_sha256
                 or identity.get("input_profile_sha256") != document.input_profile_sha256):
+            continue
+        if (raw.get("grammar_version"), raw.get("grammar_sha256")) != (
+                binding_source.GRAMMAR_VERSION, binding_source.GRAMMAR_SHA256):
+            incompatible = True
             continue
         if not missing:
             from reqmap.source_context_codec import encode_source_context_snapshot
@@ -118,6 +123,8 @@ def prepare_run_context(request, config):
             raise ReqmapError("SOURCE_CONTEXT_INVALID", "Несколько сохранённых карт; укажите карту для нового запуска.")
         return matches[0]
     if missing:
+        if incompatible:
+            raise ReqmapError("SOURCE_CONTEXT_CONTRACT_MISMATCH", "Грамматика сохранённого запуска изменена; укажите карту для нового анализа.")
         raise ReqmapError("SOURCE_CONTEXT_INVALID", "Карта отсутствует и подходящий snapshot не найден.")
     return current
 

@@ -129,3 +129,94 @@ def test_cli_checkpoint_uses_frozen_map_and_new_map_changes_run(tmp_path, profil
     changed = runner(request, config, model())
     assert changed.run_id != first.run_id
     assert len(tuple((request.output_dir/'.work').glob('*/source-context.json'))) == 2
+
+
+@pytest.mark.parametrize('finalized', [False, True])
+def test_grammar_change_does_not_reinterpret_frozen_finalized_session(tmp_path, monkeypatch, finalized):
+    from tests.source_context_support import API_TEXT
+    import reqmap.binding_source as grammar
+    import reqmap.source_context_codec as codec
+    from reqmap.source_context import source_context_resolver_sha256
+    config = make_agent_config(tmp_path)
+    svc = AgentService(config)
+    sid = start(svc, (API_TEXT,))
+    if finalized:
+        reply = svc.call('reqmap_finalize', dict(session_id=sid, request_id='finish',
+                         expected_revision=0, allow_partial=True))
+        assert reply.ok, reply
+        assert svc.call('reqmap_get_result', dict(session_id=sid)).ok
+        artifacts = {name:Path(path).read_bytes() for name,path in reply.data['artifacts'].items()}
+    digest = source_context_resolver_sha256()
+    original = grammar.bind_source
+    def changed(requirement):
+        binding = original(requirement)
+        return replace(binding, obligations=tuple(replace(o, interface='gui') for o in binding.obligations))
+    monkeypatch.setattr(grammar, 'bind_source', changed)
+    monkeypatch.setattr(grammar, 'GRAMMAR_SHA256', '0'*64)
+    codec._inspect_context_cached.cache_clear()
+    codec._validate_context_integrity.cache_clear()
+    assert source_context_resolver_sha256() == digest
+    reopened = AgentService(config)
+    result = reopened.call('reqmap_get_result' if finalized else 'reqmap_get_session', dict(session_id=sid))
+    if finalized:
+        assert result.ok, result
+        assert result.data['historical'] is True
+        publication = svc.store.publication(sid)
+        assert artifacts == {name:(config.output_root/publication['final_name']/name).read_bytes() for name in artifacts}
+    else:
+        assert result.error.code == 'SESSION_CONTRACT_MISMATCH'
+
+
+@pytest.mark.parametrize('missing_map', [False, True])
+def test_cli_selects_frozen_context_by_grammar_contract(tmp_path, monkeypatch, missing_map):
+    from reqmap.binding_runtime import prepare_run_context, save_run_context
+    from reqmap.errors import ReqmapError
+    from reqmap.source_context import source_context_resolver_sha256
+    import reqmap.binding_source as grammar
+    import reqmap.source_context_codec as codec
+    from tests.test_pipeline import request_for, config_for
+    from tests.source_context_support import with_reviewed_request
+    request = request_for(tmp_path)
+    config = with_reviewed_request(config_for(), request)
+    original = prepare_run_context(request, config)
+    directory = request.output_dir/'.work/original'
+    directory.mkdir(parents=True)
+    save_run_context(directory, original)
+    if missing_map:config.source_context_path.unlink()
+    digest = source_context_resolver_sha256()
+    bind = grammar.bind_source
+    def changed(requirement):
+        binding = bind(requirement)
+        return replace(binding, obligations=tuple(replace(o, interface='gui') for o in binding.obligations))
+    monkeypatch.setattr(grammar, 'bind_source', changed)
+    monkeypatch.setattr(grammar, 'GRAMMAR_SHA256', '0'*64)
+    codec._inspect_context_cached.cache_clear()
+    codec._validate_context_integrity.cache_clear()
+    assert source_context_resolver_sha256() == digest
+    if missing_map:
+        with pytest.raises(ReqmapError, match='') as error:
+            prepare_run_context(request, config)
+        assert error.value.code == 'SOURCE_CONTEXT_CONTRACT_MISMATCH'
+    else:
+        current = prepare_run_context(request, config)
+        assert current.decisions[0].context_id != original.decisions[0].context_id
+        assert current.decisions[0].effective_obligations[0].obligation.interface == 'gui'
+
+
+def test_integrity_cache_is_invalidated_by_grammar_identity(tmp_path, monkeypatch):
+    from reqmap.binding_runtime import prepare_run_context
+    from reqmap.source_context_codec import encode_source_context_snapshot, inspect_source_context_record, validate_source_context_snapshot
+    import reqmap.binding_source as grammar
+    from reqmap.errors import ReqmapError
+    from tests.test_pipeline import request_for, config_for
+    snapshot = prepare_run_context(request_for(tmp_path), config_for())
+    raw = encode_source_context_snapshot(snapshot)
+    inspect_source_context_record(raw)
+    validate_source_context_snapshot(snapshot, profile=AnalysisProfile.LEGACY, trust=None)
+    monkeypatch.setattr(grammar, 'GRAMMAR_SHA256', '0'*64)
+    with pytest.raises(ReqmapError) as error:
+        inspect_source_context_record(raw)
+    assert error.value.code == 'SOURCE_CONTEXT_CONTRACT_MISMATCH'
+    with pytest.raises(ReqmapError) as error:
+        validate_source_context_snapshot(snapshot, profile=AnalysisProfile.LEGACY, trust=None)
+    assert error.value.code == 'SOURCE_CONTEXT_CONTRACT_MISMATCH'
