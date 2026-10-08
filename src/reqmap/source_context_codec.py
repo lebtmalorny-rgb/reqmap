@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import base64
+import binascii
 import hashlib
 import json
 import re
@@ -9,9 +11,11 @@ import re
 from reqmap.binding_models import BoundConstraint, SourceSpan
 from reqmap.errors import ReqmapError
 from reqmap.models import SourceCoordinate, to_dict
+from reqmap.config import AnalysisProfile, KnowledgeTrustConfig
 from reqmap.source_context_models import (
     MAX_CONTEXT_BYTES, MAX_CONTEXT_LINKS, SourceDocumentSnapshot, SourceRowRef,
     SourceFragmentRef, SourceContextLink, SourceContextEntry, SourceContextMap,
+    SourceContextSnapshot, ContextTrust, LoadedSourceContext, SOURCE_CONTEXT_RESOLVER_VERSION,
 )
 
 
@@ -167,3 +171,113 @@ def encode_source_context_map(mapping: SourceContextMap) -> dict[str, object]:
             if link["field"] == "constraint":
                 del link["value"]["source_spans"]
     return raw
+
+
+def encode_source_context_snapshot(snapshot: SourceContextSnapshot) -> dict[str, object]:
+    raw = to_dict(snapshot)
+    raw["document"]["content"] = base64.b64encode(snapshot.document.content).decode("ascii")
+    for key in ("map_bytes", "signature_bytes"):
+        value = getattr(snapshot.loaded, key)
+        raw["loaded"][key] = None if value is None else base64.b64encode(value).decode("ascii")
+    raw["loaded"]["mapping"] = None if snapshot.loaded.mapping is None else encode_source_context_map(snapshot.loaded.mapping)
+    return raw
+
+
+def _unbase64(raw):
+    if type(raw) is not str:
+        raise ValueError("expected base64 string")
+    value = base64.b64decode(raw, validate=True)
+    if base64.b64encode(value).decode("ascii") != raw:
+        raise ValueError("noncanonical base64")
+    return value
+
+
+def _document_record(raw):
+    from reqmap.config_common import parse_input_profile
+    from reqmap.models import Requirement, SourceField, SourceHint
+    from reqmap.source_context import capture_source_document
+    _keys(raw, "content source_kind source_name text_mode input_profile input_sha256 input_profile_sha256 requirements_sha256 requirements")
+    profile = None if raw["input_profile"] is None else parse_input_profile(raw["input_profile"])
+    if type(raw["requirements"]) is not list:
+        raise ValueError("invalid requirements")
+    requirements = []
+    for row in raw["requirements"]:
+        _keys(row, "requirement_id source_id text ordinal coordinate parent_id group_ids source_fields source_hints")
+        coordinate = SourceCoordinate(**row["coordinate"])
+        requirements.append(Requirement(**{k: v for k, v in row.items() if k not in ("coordinate", "group_ids", "source_fields", "source_hints")},
+                            coordinate=coordinate, group_ids=tuple(row["group_ids"]),
+                            source_fields=tuple(SourceField(**field) for field in row["source_fields"]),
+                            source_hints=tuple(SourceHint(**hint) for hint in row["source_hints"])))
+    return capture_source_document(content=_unbase64(raw["content"]), source_kind=raw["source_kind"],
+        source_name=raw["source_name"], input_profile=profile, text_mode=raw["text_mode"], requirements=tuple(requirements))
+
+
+def inspect_source_context_record(raw: object) -> SourceContextSnapshot:
+    """Prove frozen integrity only. This does not authorize an active deep run."""
+    from reqmap.export_json import canonical_json_bytes
+    from reqmap.source_context import freeze_source_context, source_context_resolver_sha256
+    try:
+        _keys(raw, "document loaded decisions")
+        if type(raw["decisions"]) is not list or not raw["decisions"]:
+            raise ValueError("missing decisions")
+        for decision in raw["decisions"]:
+            if type(decision) is not dict:
+                raise ValueError("invalid decision")
+            if (decision.get("resolver_version") != SOURCE_CONTEXT_RESOLVER_VERSION
+                    or decision.get("resolver_sha256") != source_context_resolver_sha256()):
+                raise ReqmapError("SOURCE_CONTEXT_CONTRACT_MISMATCH", "Версия или код resolver изменены; начните новый анализ.")
+        document = _document_record(raw["document"])
+        value = raw["loaded"]
+        _keys(value, "map_bytes signature_bytes map_sha256 mapping trust")
+        _keys(value["trust"], "profile namespace signer_identity signature_sha256 allowed_signers_sha256")
+        trust = ContextTrust(**value["trust"])
+        map_bytes = None if value["map_bytes"] is None else _unbase64(value["map_bytes"])
+        signature = None if value["signature_bytes"] is None else _unbase64(value["signature_bytes"])
+        mapping = None if map_bytes is None else decode_source_context_map(map_bytes, document)
+        if trust.profile not in ("legacy", "deep"):
+            raise ValueError("invalid profile")
+        if map_bytes is None or trust.profile == "legacy":
+            if signature is not None or trust != ContextTrust(trust.profile, None, None, None, None):
+                raise ValueError("inconsistent unsigned context")
+        else:
+            if (signature is None or len(signature) > 1024*1024
+                    or trust.namespace != "reqmap-source-context"
+                    or type(trust.signer_identity) is not str or not trust.signer_identity.strip()
+                    or trust.signature_sha256 != hashlib.sha256(signature).hexdigest()
+                    or type(trust.allowed_signers_sha256) is not str
+                    or re.fullmatch(r"[0-9a-f]{64}", trust.allowed_signers_sha256) is None):
+                raise ValueError("inconsistent signed context")
+        loaded = LoadedSourceContext(map_bytes, signature,
+            None if map_bytes is None else hashlib.sha256(map_bytes).hexdigest(), mapping, trust)
+        snapshot = freeze_source_context(document, loaded)
+        # Whole-wire comparison includes normalized profiles, draft maps, bytes,
+        # original rows and every semantic field. Equal statuses are insufficient.
+        if canonical_json_bytes(encode_source_context_snapshot(snapshot)) != canonical_json_bytes(raw):
+            raise ValueError("saved decisions differ from rederived source")
+        return snapshot
+    except ReqmapError as exc:
+        if exc.code == "SOURCE_CONTEXT_CONTRACT_MISMATCH":
+            raise
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Сохранённый контекст не прошёл повторную проверку.") from exc
+    except (ValueError, TypeError, KeyError, AttributeError, binascii.Error, RecursionError) as exc:
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Сохранённый контекст повреждён или изменён.") from exc
+
+
+def decode_source_context_snapshot(raw: object, *, profile: AnalysisProfile,
+                                    trust: KnowledgeTrustConfig | None) -> SourceContextSnapshot:
+    from reqmap.source_context import verify_source_context_signature
+    snapshot = inspect_source_context_record(raw)
+    if snapshot.loaded.trust.profile != profile.value:
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Контекст относится к другому профилю.")
+    if profile is AnalysisProfile.DEEP and snapshot.loaded.map_bytes is not None:
+        current = verify_source_context_signature(snapshot.loaded.map_bytes, snapshot.loaded.signature_bytes, trust)
+        if current.signer_identity != snapshot.loaded.trust.signer_identity:
+            raise ReqmapError("SOURCE_CONTEXT_UNTRUSTED", "Identity подписанта карты изменена.")
+    return snapshot
+
+
+def validate_source_context_snapshot(snapshot: SourceContextSnapshot, *, profile: AnalysisProfile,
+                                     trust: KnowledgeTrustConfig | None) -> None:
+    restored = decode_source_context_snapshot(encode_source_context_snapshot(snapshot), profile=profile, trust=trust)
+    if restored != snapshot:
+        raise ReqmapError("SOURCE_CONTEXT_CHANGED", "Snapshot контекста изменён.")

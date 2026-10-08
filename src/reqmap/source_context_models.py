@@ -123,3 +123,10 @@ class SourceContextDecision:
     applied_links: tuple[SourceContextLink, ...]
     effective_obligations: tuple[EffectiveObligation, ...]
     diagnostics: tuple[SourceContextIssue, ...]
+
+
+@dataclass(frozen=True)
+class SourceContextSnapshot:
+    document: SourceDocumentSnapshot
+    loaded: LoadedSourceContext
+    decisions: tuple[SourceContextDecision, ...]

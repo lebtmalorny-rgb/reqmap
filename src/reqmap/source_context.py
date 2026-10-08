@@ -20,6 +20,7 @@ from reqmap.source_context_models import (
     MAX_CONTEXT_BYTES, ContextTrust, LoadedSourceContext, SourceDocumentSnapshot,
     SOURCE_CONTEXT_RESOLVER_VERSION, SourceContextDecision, SourceContextIssue,
     SourceRowRef, EffectiveObligation, ConstraintOrigins,
+    SourceContextSnapshot,
 )
 
 
@@ -253,3 +254,8 @@ def resolve_source_context(document: SourceDocumentSnapshot,
                     "decision": {k: v for k, v in to_dict(decision).items() if k != "context_id"}}
         decisions.append(replace(decision, context_id=hashlib.sha256(canonical_json_bytes(identity)).hexdigest()))
     return tuple(decisions)
+
+
+def freeze_source_context(document: SourceDocumentSnapshot,
+                          loaded: LoadedSourceContext) -> SourceContextSnapshot:
+    return SourceContextSnapshot(document, loaded, resolve_source_context(document, loaded))
