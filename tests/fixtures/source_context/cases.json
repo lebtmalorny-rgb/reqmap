@@ -293,7 +293,7 @@
     },
     {
       "id": "different-atom-contexts",
-      "own_text": "Nova должна создавать ВМ и удалять ВМ",
+      "own_text": "Nova должна создавать ВМ; Nova должна удалять ВМ",
       "origin_texts": [],
       "disposition": "unresolved",
       "review_state": "reviewed",
@@ -308,7 +308,7 @@
     },
     {
       "id": "multi-atom-same-context",
-      "own_text": "Nova должна создавать ВМ и Neutron должна создавать порт",
+      "own_text": "Nova должна создавать ВМ; Neutron должна создавать порт",
       "origin_texts": [
         "GUI"
       ],

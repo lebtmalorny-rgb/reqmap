@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from reqmap.binding_models import BoundConstraint, SourceSpan
+from reqmap.binding_models import BoundConstraint, BoundObligation, SourceSpan
 from reqmap.config import InputProfile
 from reqmap.models import Requirement, SourceCoordinate
 
@@ -88,3 +88,38 @@ class LoadedSourceContext:
     map_sha256: str | None
     mapping: SourceContextMap | None
     trust: ContextTrust
+
+
+@dataclass(frozen=True)
+class ConstraintOrigins:
+    semantic_key: tuple[str, str, str, str | None]
+    source_refs: tuple[SourceFragmentRef, ...]
+
+
+@dataclass(frozen=True)
+class EffectiveObligation:
+    obligation: BoundObligation
+    interface_refs: tuple[SourceFragmentRef, ...]
+    constraint_refs: tuple[ConstraintOrigins, ...]
+
+
+@dataclass(frozen=True)
+class SourceContextIssue:
+    code: str
+    message_ru: str
+    field: str | None
+    source_refs: tuple[SourceFragmentRef, ...]
+
+
+@dataclass(frozen=True)
+class SourceContextDecision:
+    target: SourceRowRef
+    state: str
+    map_sha256: str | None
+    entry_sha256: str | None
+    context_id: str
+    resolver_version: str
+    resolver_sha256: str
+    applied_links: tuple[SourceContextLink, ...]
+    effective_obligations: tuple[EffectiveObligation, ...]
+    diagnostics: tuple[SourceContextIssue, ...]
