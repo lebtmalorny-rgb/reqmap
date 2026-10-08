@@ -150,3 +150,19 @@ console entry point к клиенту по [CLIENTS_CODEX_OPENCODE.md](CLIENTS_C
 Сам reqmap работает локально; установка клиента, вход и доступ к его provider/model
 готовятся отдельно. Offline Python bundle не содержит IDE, Codex/OpenCode или
 веса модели и не обеспечивает автономность облачного клиента.
+
+
+## Проверка контракта контекста после установки
+
+Новые CLI/MCP запуски используют result schema 1.2/2.2 и tool/workflow3.0.
+Новых wheel-зависимостей нет. `source_context_path` указывает на отдельно
+проверенную карту; deep требует локального OpenSSH Ed25519 и внешнего trust store
+с namespace `reqmap-source-context`. Installer не утверждает карту и не расширяет
+доверие. Версия пакета `reqmap --version` остаётся 0.1.0; версии контрактов смотрите
+в metadata результата. До повторного предметного анализа старые active sessions
+не возобновляются; historical finalized сохраняются.
+
+Приёмка `tests/test_source_context_acceptance.py::test_installed_context_contract`
+выполняет `install.sh` в tmp venv при `PIP_NO_INDEX=1`, затем настоящий stdio и CLI
+с локальным scripted transport. Это воспроизводимая backend-проверка, отдельная
+от [живого IDE-eval](docs/acceptance/2026-10-08-source-context-runtime.md).

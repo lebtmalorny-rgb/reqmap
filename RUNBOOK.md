@@ -307,3 +307,114 @@ Checkpoint CLI с иным контрактом не восстанавлива�
 обновления действуют правила раздела 9: тот же session_id, те же request_id и
 аргументы для потерянного mutation/finalize. Повторный анализ без необходимости
 не нужен.
+
+## Проверенный контекст исходных строк
+
+В новых результатах 1.2/2.2 доказательный вывод требует reviewed-решения о
+контексте каждой строки. Без карты или при draft результат —
+`insufficient_evidence` с `SOURCE_CONTEXT_UNREVIEWED`. Это относится также к
+отрицательным выводам. Связи задаёт сопровождающий в `source_context_path`;
+модель не утверждает карту и не меняет её через MCP. Подсказки, parent/group и
+совпадающие исходные ID не заменяют review.
+
+Карта относится к точным bytes и профилю импорта. Сначала выберите конкретную
+книгу и листы. Следующий пример **создаёт только draft**, без одобрения строк:
+
+```python
+import hashlib
+import os
+from pathlib import Path
+from reqmap.config import load_config
+from reqmap.export_json import canonical_json_bytes
+from reqmap.input_xlsx import load_xlsx_bytes
+from reqmap.models import to_dict
+from reqmap.source_context import capture_source_document
+
+config = load_config(Path("config.json"), os.environ)
+source = Path("requirements.xlsx")
+content = source.read_bytes()
+rows = load_xlsx_bytes(content, config.input_profile, source.name)
+doc = capture_source_document(content=content, source_kind="xlsx",
+    source_name=source.name, requirements=rows, input_profile=config.input_profile)
+mapping = dict(schema_version="1.0", map_id="review-selection-01",
+    source_kind=doc.source_kind, source_name=doc.source_name,
+    input_sha256=doc.input_sha256, input_profile_sha256=doc.input_profile_sha256,
+    requirements_sha256=doc.requirements_sha256, rows=[])
+for row in doc.requirements:
+    target = dict(requirement_id=row.requirement_id, coordinate=to_dict(row.coordinate),
+                  source_sha256=hashlib.sha256(row.text.encode("utf-8")).hexdigest())
+    mapping["rows"].append(dict(target=target, disposition="unresolved",
+        review_state="draft", reviewed_by=None, reviewed_at=None,
+        reason_ru="Контекст строки ещё не проверен", context_complete=False, links=[]))
+Path("review").mkdir(exist_ok=True)
+Path("review/source-context.json").write_bytes(canonical_json_bytes(mapping))
+```
+
+Проверьте полный исходный текст, заголовки, продолжения, условия после списка,
+исходные поля и hints. Для конкретной проверенной строки выберите:
+
+- `independent`: внешних обязательных условий нет, `links=[]`.
+- `linked`: все обязательные внешние условия представлены прямыми `links`.
+- `unresolved`: контекст не выяснен или не выражается допустимой схемой;
+  `context_complete=false`, вывод остаётся недостаточно доказанным.
+
+Для reviewed-записи заполните `reviewed_by`, `reviewed_at` в UTC
+(`2026-10-08T12:00:00Z`) и содержательное `reason_ru`. У `independent`/`linked`
+поставьте `context_complete=true` только после проверки всего контекста.
+Самоотнесение и циклы reviewed linked запрещены. Транзитивного наследования нет;
+для двух уровней заголовков перечислите обе необходимые прямые ссылки.
+
+Каждая ссылка содержит уникальный `link_id`, `origin.row` с полным SourceRowRef,
+`origin.span={start,end,quote}` и пару `field`/`value`. Смещения — Unicode code
+points, `[start,end)`, в **полном тексте origin-строки**; `text[start:end]` должен
+точно равняться `quote`. Вложенный offset не переносится в локальный span атома.
+Допустимы только `field=interface` со значением `api`/`gui` и `field=constraint`:
+`duration/within/"0"…"999999999999"/ms`, `host_failure/eq/"true"/null`,
+`gpu/eq/"true"/null`. Конфликт интерфейсов или разных значений одного условия
+даёт `SOURCE_CONTEXT_CONFLICT`. Actor, object, action и новые atoms не наследуются.
+Максимум карты — 25 MiB, максимум ссылок строки — 64.
+
+Укажите в CLI- или agent-конфигурации:
+
+```json
+{"source_context_path": "review/source-context.json"}
+```
+
+Это фрагмент существующей конфигурации. Не размещайте карту, `.sig` или
+`allowed_signers` в output/session directories: preflight отвергает пересечение
+до очистки output. Текстовые источники различают source_name: `agent-texts` для
+MCP и `--requirement` для inline CLI; карту нельзя переносить между ними без
+проверки новых refs. Пример полного синтетического набора:
+[`live_eval.json`](tests/fixtures/source_context/live_eval.json).
+
+Для deep сопровождающий подписывает **точные bytes карты** Ed25519:
+
+```bash
+ssh-keygen -Y sign -f /secure/maintainer_ed25519 -n reqmap-source-context review/source-context.json
+```
+
+Получится `source-context.json.sig`. Внешний `knowledge_trust.allowed_signers_path`
+должен разрешать настроенный `signer_identity` и namespace `reqmap-source-context`.
+Если в строке доверия есть ограничение `namespaces`, сопровождающий добавляет
+этот namespace, сохраняя нужные `reqmap-snapshot` и `reqmap-obligation-binding`.
+Reqmap сам не расширяет trust store. После любого изменения bytes подпись нужна
+заново; unsigned deep fallback отсутствует. Пример выше не создаёт ключ и не
+меняет действующий trust store.
+
+Сессия хранит bytes входа, карты, подпись, normalized map (включая draft) и
+вычисленные решения. Restart активной MCP-сессии не читает исходный файл или
+карту заново; текущий trust проверяется, отзыв signer останавливает replay.
+Новый start читает новую карту и создаёт новые context IDs. CLI сохраняет snapshot
+в `.work/<run-signature>/source-context.json`: после удаления карты можно
+возобновить единственный подходящий сохранённый запуск. Если таких карт несколько,
+нужно явно выбрать файл карты. Смена input/profile/map/resolver изолирует новый run.
+
+Старые active-сессии требуют нового запуска; завершённые 1.0/1.1/2.0/2.1 доступны
+с `historical=true`, проверкой исходных hashes и без нового resolver. Историческое
+чтение не подтверждает текущее доверие к подписи. Для deep обязательный атом с
+`insufficient_evidence` оставляет запуск PARTIAL; строгая финализация отклоняется,
+частичный экспорт требует явного `allow_partial=true`.
+
+Для исходных книг сначала нужна утверждённая карта конкретной выборки. Отдельно
+считайте reviewed/unreviewed, unresolved-контекст, неразобранные собственные фразы
+и нехватку evidence. Синтетическая приёмка не подтверждает покрытие 1949 строк.

@@ -111,31 +111,31 @@ validators, versions и прежние тестовые fixtures. Промежу
   `SourceContextMap` содержит schema_version, map_id, source_kind/source_name,
   три source digests и `rows: tuple[SourceContextEntry, ...]`.
 
-- [ ] Зафиксировать synthetic cases до реализации: own text, origin texts,
+- [x] Зафиксировать synthetic cases до реализации: own text, origin texts,
   dispositions, typed links, ожидаемые status/diagnostic codes, количество
   строк/атомов. Включить все классы §7 спецификации; expectations не вычислять
   resolver. На старом коде сохранить воспроизведение detached API `supported`
   против желаемого `insufficient_evidence` в локальный RED log; не закреплять
   ошибку как норму и не оставлять failing/xfail test в основном suite.
-- [ ] Старым кодом изготовить анонимные finalized legacy 1.1/deep 2.1 outputs
+- [x] Старым кодом изготовить анонимные finalized legacy 1.1/deep 2.1 outputs
   и seed/receipt состояния; сохранить пять файлов, hashes, версии и способ
   генерации в fixture README. Не копировать приватные результаты. Имеющиеся
   исторические 1.0/2.0 fixtures сохранить без пересоздания.
-- [ ] Добавить `test_snapshot_preserves_rows_and_ignores_derived_grouping`,
+- [x] Добавить `test_snapshot_preserves_rows_and_ignores_derived_grouping`,
   `test_full_profile_defaults_are_hashed`, `test_snapshot_text_modes_roundtrip`:
   `assert snapshot.requirements == original_rows`; digest не меняется от
   parent/group, меняется от порядка/source_fields/hints/профиля; single/lines
   восстанавливают разные исходные границы без нормализации Unicode.
-- [ ] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_snapshot.py`.
+- [x] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_snapshot.py`.
   Ожидается отсутствие нового API; сохранённый baseline отдельно доказывает дефект.
-- [ ] Реализовать перечисленные immutable типы и capture. Проверять соответствие
+- [x] Реализовать перечисленные immutable типы и capture. Проверять соответствие
   rows повторному импорту из переданных bytes; исключать только derived grouping
   из сравнения/digest. Сохранить text_mode для точного CLI stdin replay.
   Хешировать полный нормализованный профиль, включая defaults, либо null.
   Импорты типов между binding/models/context делать без import cycle.
-- [ ] GREEN: та же команда плюс `tests/test_input_text.py tests/test_input_xlsx.py
+- [x] GREEN: та же команда плюс `tests/test_input_text.py tests/test_input_xlsx.py
   tests/test_input_profiles.py tests/test_agent_input.py`; все проходят.
-- [ ] Commit: `test: freeze source context cases and immutable input contract`.
+- [x] Commit: `test: freeze source context cases and immutable input contract`.
 
 ### Task 2: Строгая карта, конфигурация и deep trust
 
@@ -166,23 +166,23 @@ modify `source_context.py`, `source_context_models.py`, `config.py`,
 - AppConfig/AgentConfig: `source_context_path: Path | None = None`, strict field
   allowlist, путь относительно config. Поле не добавляется в MCP arguments.
 
-- [ ] Тесты `test_map_exact_refs_and_unicode_spans`, `test_map_rejects_ambiguous_json`,
+- [x] Тесты `test_map_exact_refs_and_unicode_spans`, `test_map_rejects_ambiguous_json`,
   `test_map_limits`, `test_map_does_not_accept_semantic_bypass`: проверять точный
   код `SOURCE_CONTEXT_REF_INVALID` для чужой координаты/hash/UTF-16 offsets,
   `SOURCE_CONTEXT_INPUT_MISMATCH` для любого source digest; `INVALID` для
   duplicate JSON key/target/link_id, unknown fields, bool-as-int, неверного UTC,
   пустого reviewer/reason, illegal disposition/links/context_complete.
-- [ ] Проверить границы duration `0`, `999999999999`, запрет `01`, `-1`, дроби,
+- [x] Проверить границы duration `0`, `999999999999`, запрет `01`, `-1`, дроби,
   `1000000000000`; 64 links разрешены, 65 запрещены; ровно 25 MiB и превышение
   на byte. Duplicate link_id запрещён во всей карте. Draft проходит структурную
   проверку, но reviewed_by/at должны быть null; draft не означает reviewed.
-- [ ] `test_deep_signature_exact_bytes_and_namespace`, `test_safe_map_read_and_overlap`:
+- [x] `test_deep_signature_exact_bytes_and_namespace`, `test_safe_map_read_and_overlap`:
   временные test keys; правильная подпись принимается, другая namespace/identity,
   не-Ed25519, изменение bytes, symlink/FIFO/race, map/signature/trust под output
   отклоняются; отсутствие карты допустимо и в deep. Не менять настоящий trust.
-- [ ] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_map.py tests/test_source_context_trust.py tests/test_config.py tests/test_agent_config.py`.
+- [x] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_map.py tests/test_source_context_trust.py tests/test_config.py tests/test_agent_config.py`.
   Новые parser/config/trust assertions падают по отсутствующим возможностям.
-- [ ] Реализовать функции с exact-key JSON decoder и existing safe reader.
+- [x] Реализовать функции с exact-key JSON decoder и existing safe reader.
   Ошибки формы/чтения карты переводить в `SOURCE_CONTEXT_INVALID`, refs/hash
   отдельно; ошибки подписи в `SOURCE_CONTEXT_UNTRUSTED`. Freeze signature и
   allowed_signers bytes перед `ssh-keygen -Y verify`, timeout 10 s, shell=False,
@@ -191,9 +191,9 @@ modify `source_context.py`, `source_context_models.py`, `config.py`,
   Ключевые assertions: `assert loaded.mapping.schema_version == "1.0"`;
   после плохого span `assert error.value.code == "SOURCE_CONTEXT_REF_INVALID"`;
   после подмены подписи `assert error.value.code == "SOURCE_CONTEXT_UNTRUSTED"`.
-- [ ] GREEN: повторить RED-команду и `tests/test_binding_catalog.py
+- [x] GREEN: повторить RED-команду и `tests/test_binding_catalog.py
   tests/test_agent_input.py`; существующий binding trust не меняется.
-- [ ] Commit: `feat: validate reviewed source context maps and trust`.
+- [x] Commit: `feat: validate reviewed source context maps and trust`.
 
 ### Task 3: Чистый resolver и provenance эффективных обязательств
 
@@ -220,26 +220,26 @@ create `tests/test_source_context_resolver.py`.
   loaded: LoadedSourceContext) -> tuple[SourceContextDecision, ...]`;
   `source_context_resolver_sha256() -> str` в `source_context.py`.
 
-- [ ] `test_missing_draft_and_unresolved_have_no_admissible_context`:
+- [x] `test_missing_draft_and_unresolved_have_no_admissible_context`:
   state/codes UNREVIEWED либо UNRESOLVED; own unresolved не становится bound.
   `test_links_apply_to_all_own_atoms_without_rewriting_quotes`:
   ids/quotes/actor/action/object/direction/contour/phase/release равны оригиналу;
   все атомы получают одинаковый проверенный набор external constraints.
-- [ ] `test_conflicts_do_not_choose_nearest_or_stronger_condition`:
+- [x] `test_conflicts_do_not_choose_nearest_or_stronger_condition`:
   own API/external GUI, два external интерфейса, разные duration дают CONFLICT;
   одинаковые semantic keys дают одно constraint и все origin refs;
   разные host_failure/gpu/duration объединяются без удаления своих условий.
-- [ ] `test_no_transitive_or_group_id_inheritance`: grandparent не применяется
+- [x] `test_no_transitive_or_group_id_inheritance`: grandparent не применяется
   без прямой ссылки target; после прямой ссылки присутствуют оба источника.
   Условие после списка/cross-sheet принимается по exact ref; source field
   с непредставимым условием и разные контексты атомов используют unresolved.
-- [ ] `test_cycle_and_self_link_are_preflight_errors`: CYCLE для applicable
+- [x] `test_cycle_and_self_link_are_preflight_errors`: CYCLE для applicable
   reviewed links; draft/unresolved notes не образуют действующий граф.
   `test_context_identity_covers_annotation_and_code`: изменение review/refs/
   value/input/profile/entry/resolver меняет context_id; порядок rows сохранён.
-- [ ] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_resolver.py`.
+- [x] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_resolver.py`.
   Ожидаются отсутствующие resolver/decision API.
-- [ ] Реализовать deterministic resolver: preflight всего графа, затем каждая
+- [x] Реализовать deterministic resolver: preflight всего графа, затем каждая
   строка отдельно; не обходить origin decisions ради наследования. У внешних
   constraints `source_spans=()`; локальные spans остаются только локальными.
   Canonical decision hash включает source identity и typed/provenance данные,
@@ -248,9 +248,9 @@ create `tests/test_source_context_resolver.py`.
   Для GUI-кейса: `assert decision.state == "linked"` и
   `assert decision.effective_obligations[0].obligation.interface == "gui"`;
   для конфликта: `assert decision.state == "conflict"`.
-- [ ] GREEN: повторить команду и `tests/test_binding_source.py`; own grammar
+- [x] GREEN: повторить команду и `tests/test_binding_source.py`; own grammar
   code/hash неизменны. Все synthetic resolver cases имеют независимые expectations.
-- [ ] Commit: `feat: resolve explicit source context without implicit inheritance`.
+- [x] Commit: `feat: resolve explicit source context without implicit inheritance`.
 
 ### Task 4: Переносимый frozen snapshot и строгий replay codec
 
@@ -274,18 +274,18 @@ create `tests/test_source_context_resolver.py`.
   Это граница offline export/crosscheck, не авторизация active acceptance.
   Полный decode вызывает эту проверку и дополнительно проверяет deep подпись.
 
-- [ ] `test_frozen_context_roundtrip_without_external_files`: после freeze
+- [x] `test_frozen_context_roundtrip_without_external_files`: после freeze
   удалить input/map/signature, decode из JSON возвращает те же document,
   normalized map (включая draft), decisions и context_id без чтения этих путей.
   Для deep текущий allowed_signers остаётся внешней обязательной проверкой.
-- [ ] `test_replay_detects_tampered_decision_even_when_status_unchanged`:
+- [x] `test_replay_detects_tampered_decision_even_when_status_unchanged`:
   менять quote/typed value/entry digest/bytes/порядок строк/effective obligation;
   decoder отказывает CHANGED, а не принимает сохранённое вычисление на веру.
   `test_replay_rechecks_revoked_signer`: UNTRUSTED после отзыва; изменение только
   unrelated signers не меняет frozen context_id и не подменяет snapshot bytes.
-- [ ] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_codec.py`.
+- [x] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_codec.py`.
   Ожидается отсутствие freeze/codec, затем проверяемые ошибки tamper cases.
-- [ ] Реализовать exact-key decoder с повторным импортом input, map validation
+- [x] Реализовать exact-key decoder с повторным импортом input, map validation
   и resolver. Сравнивать canonical decisions целиком; сохранённый trust digest
   описывает момент capture, текущая проверка разрешения signer выполняется
   отдельно. Некорректный сохранённый payload — CHANGED; trust — UNTRUSTED;
@@ -293,8 +293,8 @@ create `tests/test_source_context_resolver.py`.
   активного результата под новым кодом. Никаких fallback на external map.
   Основные assertions: `assert restored.decisions == frozen.decisions`;
   после подмены `assert error.value.code == "SOURCE_CONTEXT_CHANGED"`.
-- [ ] GREEN: повторить команду и все `tests/test_source_context_*.py`.
-- [ ] Commit: `feat: freeze and revalidate portable source context snapshots`.
+- [x] GREEN: повторить команду и все `tests/test_source_context_*.py`.
+- [x] Commit: `feat: freeze and revalidate portable source context snapshots`.
 
 ### Task 5: Одновременно включить gate, CLI/MCP persistence и версии
 
@@ -330,7 +330,7 @@ source_context_support}.py` и существующие тесты этих runt
   map и resolver digests. Checkpoint namespace хранит frozen payload и проверяет
   его до использования результатов. Новая карта при новом старте — новый run.
 
-- [ ] Добавить общий параметризованный runtime matrix: CLI/MCP × legacy/deep ×
+- [x] Добавить общий параметризованный runtime matrix: CLI/MCP × legacy/deep ×
   reviewed independent/API link/GUI link/no map/draft/unresolved/conflict.
   `test_context_gate_is_shared_by_all_entrypoints` проверяет exact codes,
   положительные API controls и сохранение всех исходных строк, включая origins.
@@ -338,30 +338,30 @@ source_context_support}.py` и существующие тесты этих runt
   Python accept_mapping/accept_deep_mapping. Старые gates всё ещё могут отказать
   при reviewed карте; supported/partial/not_supported/not_applicable без неё
   все превращаются в insufficient, а не в доказанный отрицательный результат.
-- [ ] `test_model_cannot_approve_or_remove_context`: fake source_context fields
+- [x] `test_model_cannot_approve_or_remove_context`: fake source_context fields
   в proposal/start отклоняются; clarifications/hints/parent_session_id не
   повышают доверие. Canonical selection не разрешает убрать трудный атом;
   origin нельзя выдать за implementation evidence. Snapshot/decision подмена
   через вручную сконструированный BindingContext выявляется до acceptance.
-- [ ] `test_active_session_uses_frozen_map_and_current_trust`: restart после
+- [x] `test_active_session_uses_frozen_map_and_current_trust`: restart после
   удаления/изменения input/map сохраняет digest и решения, новая session видит
   новую карту; revoked signer блокирует active. CLI checkpoint replay не читает
   внешнюю карту повторно после выбора frozen run; новая run signature отделена.
-- [ ] `test_old_active_rejected_and_finalized_returned_historically`: все четыре
+- [x] `test_old_active_rejected_and_finalized_returned_historically`: все четыре
   старых result schema; старые active/checkpoints отвергаются с явной mismatch,
   finalized проходит прежние hashes и `historical=true` без вызова resolver.
   Повторный request_id/receipt, restart во время finalize и sealed publication
   сохраняют прежнюю идемпотентность; SQLite tables/STATE_VERSION не меняются.
-- [ ] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_runtime.py tests/test_source_context_sessions.py`.
+- [x] RED: `PYTHONPATH=src .venv/bin/python -m pytest -q tests/test_source_context_runtime.py tests/test_source_context_sessions.py`.
   Ожидаемый семантический RED: detached/no-map ещё supported; версии/seed старые.
-- [ ] Реализовать перечисленные интерфейсы и все версии Global Constraints
+- [x] Реализовать перечисленные интерфейсы и все версии Global Constraints
   одним изменением. `requirement_context` без snapshot даёт UNREVIEWED; pipeline
   AnalysisRequest без raw snapshot отклоняется preflight с INPUT_MISMATCH,
   чтобы полный run всегда можно было воспроизвести из сохранённых bytes.
   Клиентские inputs всегда получают полный snapshot. Не вводить публичный
   compatibility flag. Binding codec/export validator перепроверяют effective
   source и context_id; промпты показывают ограничения, но модель их не утверждает.
-- [ ] Обновить только синтетические positive fixtures: reviewed independent
+- [x] Обновить только синтетические positive fixtures: reviewed independent
   разрешать явно для конкретных перечисленных строк/bytes. Не делать autouse
   fixture, объявляющую независимыми все входы. Отдельные no-map tests остаются.
   Full snapshot JSON уже экспортируется; human-readable rendering — Task 6.
@@ -369,9 +369,9 @@ source_context_support}.py` и существующие тесты этих runt
   `assert accepted.binding_decision.support_status is SupportStatus.INSUFFICIENT_EVIDENCE`;
   для reviewed API control:
   `assert accepted.binding_decision.support_status is SupportStatus.SUPPORTED`.
-- [ ] GREEN: повторить RED-команду; затем `PYTHONPATH=src .venv/bin/python -m pytest -q`.
+- [x] GREEN: повторить RED-команду; затем `PYTHONPATH=src .venv/bin/python -m pytest -q`.
   Все существующие и новые tests проходят, прежние historical fixtures неизменны.
-- [ ] Commit: `feat: enforce reviewed source context across CLI and MCP contracts`.
+- [x] Commit: `feat: enforce reviewed source context across CLI and MCP contracts`.
 
 ### Task 6: Полный контекст в пяти артефактах и crosscheck
 
@@ -477,3 +477,15 @@ fallback и единый момент включения новых версий
 типами, frozen payload и согласованным обновлением контрактов. Альтернатива —
 Subagent-driven с отдельными implementer/reviewer на каждую задачу. До кода
 пользователь проверяет этот план и выбирает способ исполнения.
+
+
+## Исполнение 08.10.2026
+
+Пользователь выбрал inline-исполнение («давай дальше»). Tasks1–5 реализованы и
+проверены; Task6 реализован, 134 automated export/crosscheck tests проходят,
+ручной GUI gate остаётся открытым из-за ошибок CUA. Task7: frozen15-row eval,
+installed/scripted приёмка и документация подготовлены; результаты полного suite
+и независимого review фиксируются в [отчёте](../../acceptance/2026-10-08-source-context-runtime.md).
+Живой IDE/model eval отдельно не выполнен, весь этап не объявляется завершённым.
+Ни merge, ни push не выполняются. Первоначальные сведения о самопроверке выше
+описывают подготовку плана, а не текущую приёмку реализации.

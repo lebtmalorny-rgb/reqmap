@@ -32,12 +32,12 @@ Atomic claim содержит `atom_id`, `requirement_id`, буквальную 
 Evidence использует polarity `positive` или `negative` и strength `direct`, `indirect` или `none`. Технические коды не переводятся; XLSX рядом показывает русское значение.
 
 Legacy Evidence дополнен полем `claim_scope`: `context` или `specific`.
-Оно передаётся в canonical JSON schema `1.1` и evidence payload MCP.
+Оно передаётся в canonical JSON schema `1.2` и evidence payload MCP.
 Строгие потребители JSON должны разрешить это новое поле. В старой записи
 KB без scope применяется `context`; такие записи не подтверждают поддержку.
 Причина `EVIDENCE_CONTEXT_ONLY` присутствует в diagnostics и обосновании
 пониженного mapping, включая Markdown и лист «Сопоставления» XLSX.
-Deep schema `2.1` использует собственную модель evidence.
+Deep schema `2.2` использует собственную модель evidence.
 
 ## Агрегация support status
 
@@ -76,11 +76,11 @@ Crosscheck повторно строит expected JSON/Markdown/XLSX из canoni
 
 Проверяемые действия оператора приведены в [RUNBOOK.md](RUNBOOK.md), а предметные правила evidence — в [KNOWLEDGE_BASE.md](KNOWLEDGE_BASE.md).
 
-## Deep output schema 2.1
+## Deep output schema 2.2
 
 Описание пяти листов, mappings и runtime/designtime выше относится к legacy
-schema `1.1`. Deep сохраняет те же пять файлов, но сериализует
-`DeepRunResult` с явной `schema_version="2.1"`.
+schema `1.2`. Deep сохраняет те же пять файлов, но сериализует
+`DeepRunResult` с явной `schema_version="2.2"`.
 
 Верхний уровень добавляет `responsibility_records` и `procedure_graphs`.
 У требования вместо `mappings` находятся `responsibility_ids` и
@@ -127,12 +127,12 @@ trust, URL и секреты в deep metadata не публикуются. `run.
 
 ## Происхождение анализа в режиме агента
 
-Агентный режим добавляет optional `metadata.analysis_origin` в текущие схемы 1.1/2.1;
+Агентный режим добавляет optional `metadata.analysis_origin` в текущие схемы 1.2/2.2;
 для отчёта агентного режима это поле обязательно. `analyze` не добавляет `analysis_origin`, но использует те же новые binding-поля. Строгим сторонним потребителям необходимо
 разрешить новое поле перед чтением таких отчётов.
 
 `analysis_origin` содержит `mode=external_agent`, UUID `session_id`, целую
-`revision`, `tool_contract_version=2.0`, `workflow_version=2.0`, SHA-256
+`revision`, `tool_contract_version=3.0`, `workflow_version=3.0`, SHA-256
 `proposal_journal_sha256`, `reported_client` (`codex`, `opencode`, `unknown`) и
 `identity_verified=false`. `reported_model` optional: это безопасная строка,
 заявленная клиентом, а не проверенное backend имя модели. Она присутствует в
@@ -150,16 +150,16 @@ Codex, ни OpenCode не являются именем языковой мод�
 поля в одном из отчётов делает комплект несогласованным.
 
 
-## Source binding: результат 1.1 / 2.1
+## Source binding: результат 1.2 / 2.2
 
 Новые запуски всегда сохраняют `source_binding` в результате каждой строки,
-включая незавершённые строки. JSON 1.0/2.0 из старых finalized-сессий доступен
+включая незавершённые строки. JSON 1.0/1.1/2.0/2.1 из старых finalized-сессий доступен
 только как исторический комплект, без пересчёта или перезаписи.
 
 | Объект | Поля и смысл |
 | --- | --- |
 | `SourceSpan` | `start`, `end`, `quote`: полуинтервал `[start,end)` в Unicode code points, не байты и не UTF-16; `text[start:end] == quote` |
-| `SourceBinding` | `requirement_id`, `coordinate`, полный `source_text`, SHA-256 UTF-8 `source_sha256`, упорядоченные `fragments`, `obligations`, `unresolved_fragments`, `grammar_version`, `grammar_sha256`, `contract_version=1.0` |
+| `SourceBinding` | `requirement_id`, `coordinate`, полный `source_text`, SHA-256 UTF-8 `source_sha256`, упорядоченные `fragments`, `obligations`, `unresolved_fragments`, `grammar_version`, `grammar_sha256`, `contract_version=2.0`, `context_decision` |
 | Fragment | `span`, `kind` (`obligation`, `syntax`, `unresolved`), nullable `rule_id`; последовательность восстанавливает всю строку |
 | Obligation | `obligation_id`, `requirement_id`, `source_spans`, точная `source_quote`, `parse_state` (`bound`, `unresolved`, `ambiguous`), nullable `rule_id`, `mandatory`, `actor`, `action`, `object`, `direction`, `interface`, `contour`, `lifecycle_phase`, `release_scope`, `constraints` |
 | Constraint | `name`, `operator`, `value`, nullable `unit`, `source_spans`; исходное условие сохраняется даже при отсутствии доказательства |
@@ -189,7 +189,7 @@ Codex, ни OpenCode не являются именем языковой мод�
 доказательство функции. Она заменяет общий `EVIDENCE_MISSING` по `prior_status`,
 когда выявлен такой дефект текста; остальные ошибки исходного обязательства
 сохраняются. JSON, XLSX и Markdown содержат эту диагностику. Схемы результатов
-остаются 1.1/2.1; журнал содержит события и версии контракта.
+теперь 1.2/2.2; журнал содержит события и версии контракта.
 
 `metadata.binding_contract`, manifest и событие `analysis_finished` в журнале
 содержат одинаковые `binding_engine_version`, `grammar_version`,
@@ -219,3 +219,32 @@ Markdown содержит полный `SourceBinding` и решения ато�
 Crosscheck сравнивает эти данные с canonical result; изменение одного gap
 делает комплект несогласованным, даже если числа строк и статусы прежние.
 Экспорт не обращается к модели и не выбирает новые доказательства.
+
+
+## Контекст источника в результатах 1.2 / 2.2
+
+`metadata.source_context` хранит полный frozen snapshot: exact input/map/signature
+bytes в base64, полный нормализованный профиль, строки, normalized map и decisions.
+`SourceBinding.context_decision` содержит state, target, map/entry/resolver hashes,
+context_id, applied_links и effective_obligations. `obligations` остаются собственным
+разбором исходной строки. `BindingDecision.context_id`, `uncovered_context_refs` и
+`BindingDiagnostic.source_refs` связывают результат с точными внешними цитатами.
+Supported aspect сохраняет локальную буквальную цитату; применённые условия явно
+представлены ссылками в context_decision и display payload атома.
+
+Версии: binding engine/SourceBinding 2.0; MCP tool/workflow 3.0; seed_version=2;
+source context map/resolver 1.0; prompts 2.1/1.4/2.2. Proposal schema остаётся 2,
+SQLite STATE_VERSION остаётся 1, грамматика остаётся 1.2. Resolver SHA-256 строится
+по отсортированному manifest шести файлов: source_context.py, source_context_models.py,
+source_context_codec.py, binding_models.py, binding_engine.py, binding_runtime.py.
+
+В XLSX сохранены 5/7 листов. Колонка `Source context` у атома показывает state,
+context_id, own_quote, effective_interface/constraints и все origin refs.
+Длинные значения разбиваются на проверяемые части листа «Запуск», без усечения;
+formula-like строки записываются как текст. Тот же display payload присутствует
+в Markdown. Manifest и JSONL содержат source/map/resolver digests,
+`trust_at_capture` и diagnostic_codes. Crosscheck сравнивает полные значения,
+включая контекст и части длинных ячеек, а не только итоговые статусы.
+
+Проверка экспорта подтверждает целостность frozen record; актуальное доверие к
+signer проверяется отдельно в активном CLI/MCP перед acceptance/finalize.

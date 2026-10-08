@@ -176,3 +176,21 @@ evidence: каждое значимое слово описания провер
 Для `analysis_profile=deep`
 преподаватель предоставляет approved signed KBv2 и внешний trust config с `allowed_signers`;
 синтетические fixtures из tests не являются production corpus.
+
+
+## Reviewed source context: контракт 3.0
+
+Клиент продолжает использовать девять прежних инструментов. Карту выбирает
+сопровождающий через `source_context_path` в agent-конфигурации; поля карты в
+`reqmap_start_session` и proposal не принимаются. Передаваемые parent/hints и
+clarifications не утверждают независимость строки. Используйте полные canonical
+atoms и актуальный `context_id`; учитывайте `source_binding.context_decision`
+и effective obligations в `reqmap_get_atom_context`.
+
+Без reviewed-карты backend вернёт `SOURCE_CONTEXT_UNREVIEWED`. Заголовок GUI не
+доказывается API evidence, а source refs не являются evidence implementation.
+При перезапуске продолжайте ту же frozen session; обновлённая карта требует нового
+start. Старые active contracts несовместимы, historical finalized остаются читаемыми.
+[Инструкция оператора](RUNBOOK.md#проверенный-контекст-исходных-строк) и
+[статус новой приёмки](docs/acceptance/2026-10-08-source-context-runtime.md).
+Прежний живой Keystone-eval проверял предыдущий контракт; он не доказывает новый3.0.

@@ -119,3 +119,23 @@ approved status, Ed25519-подпись, внешний allowed_signers, hashes 
 Для обращения к преподавателю передайте код ошибки, session_id, request_id и
 версию reqmap/IDE/клиента. Не прикладывайте ключи клиента. Исходные тексты и SQLite
 могут содержать учебные или служебные данные: передавайте их только при необходимости.
+
+
+## Диагностика контекста источника
+
+| Код | Что проверить |
+| --- | --- |
+| SOURCE_CONTEXT_UNREVIEWED | Нет записи карты или она draft; требуется review полного контекста |
+| SOURCE_CONTEXT_UNRESOLVED | Сопровождающий оставил контекст невыясненным; не дополняйте его догадкой модели |
+| SOURCE_CONTEXT_CONFLICT | Прямые ссылки и собственный текст задают несовместимые интерфейсы/условия |
+| SOURCE_CONTEXT_INPUT_MISMATCH | Сравните bytes, source_name, профиль, порядок, исходные поля и hints |
+| SOURCE_CONTEXT_REF_INVALID | Проверьте точную строку, координаты, SHA-256, Unicode code-point span и quote |
+| SOURCE_CONTEXT_CYCLE | Удалите self-link/цикл в reviewed linked после повторного review |
+| SOURCE_CONTEXT_UNTRUSTED | Проверить Ed25519, namespace reqmap-source-context, identity и текущий allowed_signers |
+| SOURCE_CONTEXT_INVALID | Проверить строгие ключи, дубликаты, лимиты, ordinary file и пересечение с output |
+| SESSION_CONTRACT_MISMATCH | Старый active contract или другой resolver; требуется новая сессия |
+| RESPONSE_TOO_LARGE | Ответ не усечён; уменьшите выборку/страницу или согласованно увеличьте лимит |
+
+Проверяемую карту нельзя «исправить» полем proposal. Для valid frozen session
+удаление исходного map-файла не отменяет snapshot; отзыв signer блокирует active
+replay. Исторические finalized читаются по их hashes без нового semantic review.
