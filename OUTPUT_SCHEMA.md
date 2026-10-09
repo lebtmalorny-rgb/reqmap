@@ -235,7 +235,8 @@ Supported aspect сохраняет локальную буквальную ци
 
 Версии: binding engine/SourceBinding 2.0; MCP tool/workflow 3.0; seed_version=2;
 source context map/resolver 1.0; prompts 2.1/1.4/2.2. Proposal schema остаётся 2,
-SQLite STATE_VERSION остаётся 1, грамматика остаётся 1.2. Resolver SHA-256 строится
+SQLite STATE_VERSION остаётся 1; с API-расширением 09.10.2026 грамматика — 1.3.
+Resolver SHA-256 строится
 по отсортированному manifest шести файлов: source_context.py, source_context_models.py,
 source_context_codec.py, binding_models.py, binding_engine.py, binding_runtime.py.
 Идентичность грамматики дополнительно входит в context_id и ключи кеша.

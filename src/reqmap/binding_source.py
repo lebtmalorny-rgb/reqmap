@@ -12,7 +12,7 @@ from reqmap.models import AtomicClaim, Requirement
 from reqmap.proposals import ProposalError
 
 
-GRAMMAR_VERSION = "1.2"
+GRAMMAR_VERSION = "1.3"
 # The executable grammar is part of context/resume identity, including algorithm changes.
 GRAMMAR_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 _QUALIFIER = r"(?:за одну миллисекунду|за [0-9]{1,12} мс|при отказе узла|с GPU)"
@@ -50,6 +50,45 @@ _OBJECTS = {
     **dict.fromkeys(("роль", "роли"), (None, "role")),
 }
 
+# A closed API-label grammar, not endpoint extraction from arbitrary prose.
+# Both the complete Russian label and the case-sensitive method/path must agree.
+# Keep this table in the executable grammar file so its identity is frozen too.
+_API_ROWS = (
+    ("Создание тома", "POST /v3/{project_id}/volumes", "cinder", "create", "volume"),
+    ("Список доступных томов с деталями", "GET /v3/{project_id}/volumes/detail", "cinder", "list_detail", "volume"),
+    ("Список доступных томов", "GET /v3/{project_id}/volumes", "cinder", "list", "volume"),
+    ("Показ деталей тома", "GET /v3/{project_id}/volumes/{volume_id}", "cinder", "read", "volume"),
+    ("Удаление тома", "DELETE /v3/{project_id}/volumes/{volume_id}", "cinder", "delete", "volume"),
+    ("Создание проекта", "POST /v3/projects", "keystone", "create", "project"),
+    ("Удаление проекта", "DELETE /v3/projects/{project_id}", "keystone", "delete", "project"),
+    ("Создание роли", "POST /v3/roles", "keystone", "create", "role"),
+    ("Удаление роли", "DELETE /v3/roles/{role_id}", "keystone", "delete", "role"),
+    ("Назначение роли пользователю проекта", "PUT /v3/projects/{project_id}/users/{user_id}/roles/{role_id}", "keystone", "assign", "project_user_role"),
+    ("Назначение роли пользователю домена", "PUT /v3/domains/{domain_id}/users/{user_id}/roles/{role_id}", "keystone", "assign", "domain_user_role"),
+    ("Удаление пользователя", "DELETE /v3/users/{user_id}", "keystone", "delete", "user"),
+)
+_API_RULES = tuple((
+    f"api.endpoint.{actor}.{resource}.{action}.1",
+    re.compile(r"(?i:" + re.escape(label) + r"): (?:вызов )?"
+               + re.escape(operation) + r"[.;]?[ \t]*"),
+    actor, action, resource,
+) for label, operation, actor, action, resource in _API_ROWS)
+
+
+def _parse_api_clause(req: Requirement, text: str, offset: int, ordinal: int):
+    matches = [(rule_id, actor, action, resource)
+               for rule_id, pattern, actor, action, resource in _API_RULES
+               if pattern.fullmatch(text)]
+    if len(matches) != 1:
+        return None
+    rule_id, actor, action, resource = matches[0]
+    span = SourceSpan(offset, offset + len(text), text)
+    return BoundObligation(
+        f"{req.requirement_id}-O{ordinal:03d}", req.requirement_id, (span,), text,
+        "bound", rule_id, True, actor, action, resource, "capability", "api",
+        "openstack_runtime", "runtime", "2025.1",
+    )
+
 
 def _placeholder(requirement: Requirement, state="unresolved") -> BoundObligation:
     span = SourceSpan(0, len(requirement.text), requirement.text)
@@ -59,6 +98,9 @@ def _placeholder(requirement: Requirement, state="unresolved") -> BoundObligatio
 
 
 def _parse_clause(req: Requirement, text: str, offset: int, ordinal: int):
+    api_clause = _parse_api_clause(req, text, offset, ordinal)
+    if api_clause is not None:
+        return api_clause
     matches = [(rule_id, pattern.fullmatch(text)) for rule_id, pattern in _RULES]
     matches = [(rule_id, match) for rule_id, match in matches if match is not None]
     if len(matches) != 1:
@@ -105,7 +147,9 @@ def bind_source(requirement: Requirement) -> SourceBinding:
     fragments, obligations = [], []
     offset = 0
     # Only self-contained, completely recognized clauses can form a sequence.
-    clauses = text.split("; ")
+    # A single endpoint row can end in '; ' without creating an empty clause.
+    # Never strip those characters: they belong to the canonical source quote.
+    clauses = [text] if _parse_api_clause(requirement, text, 0, 1) is not None else text.split("; ")
     for ordinal, clause in enumerate(clauses, 1):
         obligation = _parse_clause(requirement, clause, offset, ordinal)
         if obligation is None or obligation == "ambiguous":
