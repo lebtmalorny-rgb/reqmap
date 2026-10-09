@@ -26,6 +26,15 @@ cp config.agent.example.yaml config.agent.yaml
 
 ## Состояние поставки — 09.10.2026
 
+Расширение грамматики 1.3 и API-доказательств опубликовано в
+[`0f43815`](https://github.com/lebtmalorny-rgb/reqmap/commit/0f4381532f851beebf74eccf27dbed20f0b8a754).
+Полный suite: **1896 passed**. Native MCP-проверка на 44 реальных строках
+завершена с `allow_partial=false`: **12 supported, 32 insufficient_evidence**,
+пять файлов сверены с источником и manifest. Это подтверждение документированных
+API-возможностей; GUI, AD, VLAN и полнота продуктовых требований остаются открытыми.
+Масштаб, доказательства и хеши — в
+[приёмке приоритетной выборки](docs/acceptance/2026-10-09-priority-api-expansion.md).
+
 Агентный слой слит в `main` и опубликован:
 [`cb2e21b`](https://github.com/lebtmalorny-rgb/reqmap/commit/cb2e21b66a4e4fcf3b14deaf80339bb0146f0f6e).
 Локальный и удалённый SHA проверены после публикации.
